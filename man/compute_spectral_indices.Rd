@@ -13,7 +13,8 @@ Red, RedEdge and NIR layers.}
 \item{eps}{Small denominator threshold.}
 }
 \value{
-A \code{terra::SpatRaster} with NDVI, NDRE, EVI, SAVI and NDWI.
+A \code{terra::SpatRaster} with NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
+CIrededge, MSAVI2 and VARI.
 }
 \description{
 Compute spectral vegetation indices

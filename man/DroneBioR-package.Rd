@@ -42,8 +42,10 @@ Useful links:
   \item \url{https://github.com/HugoMachadoRodrigues/DroneBioR}
   \item Report bugs at \url{https://github.com/HugoMachadoRodrigues/DroneBioR/issues}
 }
+
 }
 \author{
 \strong{Maintainer}: Hugo Machado Rodrigues \email{rodrigues.machado.hugo@gmail.com} [copyright holder]
+
 }
 \keyword{internal}
