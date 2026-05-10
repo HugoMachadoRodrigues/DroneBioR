@@ -1,0 +1,92 @@
+url: https://hugomachadorodrigues.github.io/DroneBioR/
+
+template:
+  bootstrap: 5
+  bootswatch: cosmo
+
+development:
+  mode: auto
+
+reference:
+  - title: "Project setup"
+    desc: >
+      Build the project description used by the rest of the package and
+      configure PROJ on systems where terra or sf cannot find it.
+    contents:
+      - dronebio_project
+      - configure_proj_database
+
+  - title: "External photogrammetry engines"
+    desc: >
+      Stage MicaSense images for ODM, drive ODM via Docker, and read
+      products from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
+    contents:
+      - list_micasense_images
+      - copy_images_for_odm
+      - build_odm_args
+      - run_odm_project
+      - convert_undistorted_tiffs_for_texturing
+      - odm_product_paths
+      - summarize_odm_products
+
+  - title: "Multispectral orthomosaic"
+    desc: >
+      Read and scale a multispectral orthomosaic, summarize layers and
+      write DroneBioR raster products to disk.
+    contents:
+      - read_multispectral_orthomosaic
+      - scale_to_reflectance
+      - summarize_spatraster
+      - write_dronebio_rasters
+
+  - title: "Vegetation indices and biomass proxy"
+    contents:
+      - compute_spectral_indices
+      - compute_biomass_proxy
+
+  - title: "Field data and baseline biomass model"
+    contents:
+      - read_field_data
+      - extract_field_spectral_data
+      - fit_biomass_lm
+
+  - title: "Point clouds and CHM"
+    desc: >
+      Read dense point clouds, build a canopy height model from
+      DSM/DTM and attach heights to selected points.
+    contents:
+      - read_full_point_cloud
+      - read_las_point_cloud
+      - read_ply_point_cloud
+      - build_chm_from_dsm_dtm
+      - add_chm_heights
+      - add_point_heights
+      - compute_chm_roi_metrics
+
+  - title: "Region of interest and selection metrics"
+    contents:
+      - build_roi_polygon
+      - points_in_roi
+      - filter_points_by_roi
+      - compute_selection_metrics
+      - compute_vertical_profile
+      - derive_tree_candidates
+      - export_point_selection
+
+  - title: "Workflow and Shiny app"
+    contents:
+      - run_dronebio_workflow
+      - run_drone_biomass_studio
+
+articles:
+  - title: "Getting started"
+    navbar: ~
+    contents:
+      - dronebior-overview
+
+  - title: "Topics"
+    navbar: ~
+    contents:
+      - external-engines
+      - spectral-indices
+      - point-clouds-and-chm

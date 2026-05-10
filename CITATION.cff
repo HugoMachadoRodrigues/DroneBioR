@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+title: "DroneBioR: Reproducible Drone Biomass Workflows for Multispectral Imagery"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - given-names: "Hugo Machado"
+    family-names: "Rodrigues"
+    email: "rodrigues.machado.hugo@gmail.com"
+    affiliation: "University of Florida, Range Cattle Research and Education Center (REC-Ona)"
+abstract: >
+  DroneBioR is an R package for reproducible drone biomass research with
+  multispectral imagery from MicaSense cameras such as the RedEdge series.
+  It wraps external photogrammetry engines (OpenDroneMap, WebODM,
+  Pix4Dmapper, Agisoft Metashape) to obtain orthomosaics, DSM/DTM and
+  dense point clouds, then provides the scientific layer in R: alpha and
+  no-data masking, radiometric scaling to reflectance, nine vegetation
+  indices, canopy height models, point-cloud ROI analysis, field sample
+  extraction, baseline biomass models and a Shiny application for
+  interactive exploration.
+keywords:
+  - drone
+  - UAV
+  - biomass
+  - remote-sensing
+  - multispectral
+  - MicaSense
+  - photogrammetry
+  - vegetation-indices
+  - R
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/HugoMachadoRodrigues/DroneBioR"
+url: "https://github.com/HugoMachadoRodrigues/DroneBioR"
+version: "0.2.0"
+date-released: "2026-05-10"

@@ -1,0 +1,62 @@
+name: Bug report
+description: Report something that does not work as documented
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. To help us reproduce
+        and fix it, please include a small reproducible example and the
+        outputs of `sessionInfo()` and `packageVersion("DroneBioR")`.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I call `run_dronebio_workflow(...)` I get ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reprex
+    attributes:
+      label: Reproducible example
+      description: >
+        Minimal R code that reproduces the issue. Wrap with `reprex::reprex()`
+        if possible.
+      render: r
+      placeholder: |
+        library(DroneBioR)
+        # ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: false
+
+  - type: textarea
+    id: session
+    attributes:
+      label: Session info
+      description: >
+        Paste the output of `sessionInfo()` (or `sessioninfo::session_info()`)
+        and `packageVersion("DroneBioR")`.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: engine
+    attributes:
+      label: Photogrammetry engine
+      description: ODM/WebODM/Pix4Dmapper/Agisoft Metashape - only if relevant.
+      placeholder: "e.g., WebODM 2.5.6 via Docker"
+    validations:
+      required: false
