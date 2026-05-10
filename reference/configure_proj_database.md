@@ -24,5 +24,4 @@ Invisibly returns `TRUE` if `proj.db` was found, otherwise `FALSE`.
 
 ``` r
 configure_proj_database(verbose = FALSE)
-#> Warning: Could not find proj.db. Install PROJ or set PROJ_DATA/PROJ_LIB to the directory containing proj.db.
 ```

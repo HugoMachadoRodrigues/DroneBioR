@@ -51,7 +51,6 @@ result <- run_dronebio_workflow(
   orthomosaic = ortho,
   output_dir = tempfile("dronebior-out-")
 )
-#> Warning: Could not find proj.db. Install PROJ or set PROJ_DATA/PROJ_LIB to the directory containing proj.db.
 names(result)
 #>  [1] "project"             "orthomosaic"         "bands"              
 #>  [4] "reflectance"         "indices"             "biomass_proxy"      
