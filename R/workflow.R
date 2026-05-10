@@ -23,7 +23,11 @@ run_dronebio_workflow <- function(project = dronebio_project(),
                                   output_dir = NULL,
                                   band_map = default_micasense_band_map(),
                                   use_alpha = TRUE) {
-  configure_proj_database(verbose = FALSE)
+  # configure_proj_database() is a macOS-focused helper. Inside the workflow
+  # it is purely opportunistic - if it cannot locate proj.db, terra and sf
+  # still work on any properly installed system, so we silence the warning
+  # to avoid polluting downstream output (notably testthat warnings on CI).
+  suppressWarnings(configure_proj_database(verbose = FALSE))
 
   if (is.character(project)) {
     project <- dronebio_project(project)

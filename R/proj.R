@@ -15,10 +15,14 @@ configure_proj_database <- function(verbose = FALSE) {
     current_paths,
     system.file("proj", package = "sf"),
     file.path(R.home("library"), "sf", "proj"),
+    # macOS (Homebrew)
     "/opt/homebrew/opt/proj/share/proj",
     "/opt/homebrew/share/proj",
     "/usr/local/opt/proj/share/proj",
-    "/usr/local/share/proj"
+    "/usr/local/share/proj",
+    # Linux (Debian/Ubuntu libproj-dev)
+    "/usr/share/proj",
+    "/usr/lib/x86_64-linux-gnu/proj"
   ))
   candidate_paths <- candidate_paths[nzchar(candidate_paths)]
   valid_paths <- candidate_paths[file.exists(file.path(candidate_paths, "proj.db"))]
