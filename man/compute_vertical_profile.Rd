@@ -17,3 +17,12 @@ A data frame with height bins and point counts.
 \description{
 Compute a vertical point-density profile
 }
+\examples{
+set.seed(1)
+pts <- data.frame(
+  x = runif(100, 0, 10),
+  y = runif(100, 0, 10),
+  z = runif(100, 50, 55)
+)
+compute_vertical_profile(pts, bin_size = 1)
+}

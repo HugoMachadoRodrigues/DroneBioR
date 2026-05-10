@@ -6,6 +6,8 @@
 #'
 #' @param verbose Logical. Print the selected PROJ path when found.
 #' @return Invisibly returns `TRUE` if `proj.db` was found, otherwise `FALSE`.
+#' @examples
+#' configure_proj_database(verbose = FALSE)
 #' @export
 configure_proj_database <- function(verbose = FALSE) {
   current_paths <- c(Sys.getenv("PROJ_DATA"), Sys.getenv("PROJ_LIB"))

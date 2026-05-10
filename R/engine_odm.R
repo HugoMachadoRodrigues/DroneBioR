@@ -19,6 +19,14 @@
 #' @param end_with Optional ODM end stage.
 #' @param extra_args Additional ODM arguments.
 #' @return Character vector of arguments for `system2("docker", args)`.
+#' @examples
+#' args <- build_odm_args(
+#'   dataset_dir = tempdir(),
+#'   project_name = "demo",
+#'   build_dsm = TRUE,
+#'   build_dtm = TRUE
+#' )
+#' head(args)
 #' @export
 build_odm_args <- function(dataset_dir,
                            project_name = "micasense",
@@ -101,6 +109,10 @@ build_odm_args <- function(dataset_dir,
 #'
 #' @param odm_project_dir ODM project folder.
 #' @return Number of files converted.
+#' @examples
+#' \dontrun{
+#' n <- convert_undistorted_tiffs_for_texturing("/path/to/odm_project")
+#' }
 #' @export
 convert_undistorted_tiffs_for_texturing <- function(odm_project_dir) {
   undistorted_dir <- file.path(odm_project_dir, "opensfm", "undistorted", "images")
@@ -143,6 +155,11 @@ convert_undistorted_tiffs_for_texturing <- function(odm_project_dir) {
 #' @param force Logical. Remove the existing orthomosaic before running.
 #' @param ... Additional arguments passed to `build_odm_args()`.
 #' @return A list with command, status and output orthomosaic path.
+#' @examples
+#' \dontrun{
+#' project <- dronebio_project("/path/to/Drone_Biomass")
+#' run_odm_project(project, build_dsm = TRUE, build_dtm = TRUE)
+#' }
 #' @export
 run_odm_project <- function(project,
                             run = TRUE,

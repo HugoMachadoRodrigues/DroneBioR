@@ -15,3 +15,7 @@ A data frame with product, path, availability and file size.
 \description{
 Summarize available ODM products
 }
+\examples{
+project <- dronebio_project(project_dir = tempdir())
+summarize_odm_products(project)
+}

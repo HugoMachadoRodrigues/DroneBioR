@@ -68,3 +68,12 @@ Character vector of arguments for \code{system2("docker", args)}.
 \description{
 Build an ODM Docker command
 }
+\examples{
+args <- build_odm_args(
+  dataset_dir = tempdir(),
+  project_name = "demo",
+  build_dsm = TRUE,
+  build_dtm = TRUE
+)
+head(args)
+}

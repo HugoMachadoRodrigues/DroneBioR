@@ -26,3 +26,8 @@ The result of \code{shiny::runApp()}.
 \description{
 Start Drone Biomass Studio
 }
+\examples{
+\dontrun{
+run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
+}
+}

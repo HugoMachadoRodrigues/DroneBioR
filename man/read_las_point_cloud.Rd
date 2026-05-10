@@ -30,3 +30,8 @@ when they are present in common LAS point formats. Compressed LAZ/COPC files
 are handled by \code{read_full_point_cloud()} when an uncompressed LAS sidecar is
 available or an external reader is installed.
 }
+\examples{
+\dontrun{
+pc <- read_las_point_cloud("flight.las", max_points = 50000)
+}
+}

@@ -19,3 +19,9 @@ CIrededge, MSAVI2 and VARI.
 \description{
 Compute spectral vegetation indices
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+ix <- compute_spectral_indices(refl)
+names(ix)
+}

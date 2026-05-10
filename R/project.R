@@ -6,6 +6,10 @@
 #' @param odm_dataset_subdir Relative folder mounted into ODM Docker.
 #' @param odm_project_name ODM project name inside the dataset folder.
 #' @return A list with normalized project paths.
+#' @examples
+#' project <- dronebio_project(project_dir = tempdir())
+#' project$project_dir
+#' project$odm_orthomosaic
 #' @export
 dronebio_project <- function(project_dir = getwd(),
                              images_subdir = file.path("imagens", "micasense"),

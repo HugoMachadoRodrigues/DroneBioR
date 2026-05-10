@@ -6,6 +6,17 @@
 #' @param band_map Named band map.
 #' @param use_alpha Logical. Use layer 6 as alpha mask when available.
 #' @return A list with rasters, summaries and output paths.
+#' @examples
+#' \donttest{
+#' project <- dronebio_project(project_dir = tempdir())
+#' ortho <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' result <- run_dronebio_workflow(
+#'   project = project,
+#'   orthomosaic = ortho,
+#'   output_dir = tempfile("dronebior-out-")
+#' )
+#' names(result)
+#' }
 #' @export
 run_dronebio_workflow <- function(project = dronebio_project(),
                                   orthomosaic = NULL,

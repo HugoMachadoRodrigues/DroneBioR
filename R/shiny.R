@@ -5,6 +5,10 @@
 #' @param launch.browser Logical. Open a browser window.
 #' @param ... Additional arguments passed to `shiny::runApp()`.
 #' @return The result of `shiny::runApp()`.
+#' @examples
+#' \dontrun{
+#' run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
+#' }
 #' @export
 run_drone_biomass_studio <- function(project_dir = getwd(),
                                      port = NULL,

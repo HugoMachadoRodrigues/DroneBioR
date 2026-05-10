@@ -31,3 +31,13 @@ This is a preview-grade canopy object detector. It bins high points into a
 regular grid and estimates height, crown diameter and crown volume. Scientific
 tree metrics should later use a CHM from DSM-DTM and validated segmentation.
 }
+\examples{
+set.seed(1)
+n <- 300
+pts <- data.frame(
+  x = c(rnorm(n/3, 5, 0.5), rnorm(n/3, 15, 0.5), rnorm(n/3, 25, 0.5)),
+  y = c(rnorm(n/3, 5, 0.5), rnorm(n/3, 5, 0.5), rnorm(n/3, 15, 0.5)),
+  z = c(rnorm(n/3, 55, 0.2), rnorm(n/3, 57, 0.2), rnorm(n/3, 54, 0.2))
+)
+derive_tree_candidates(pts)
+}

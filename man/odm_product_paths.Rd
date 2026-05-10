@@ -15,3 +15,7 @@ Named character vector of expected product paths.
 \description{
 Return expected ODM product paths
 }
+\examples{
+project <- dronebio_project(project_dir = tempdir())
+odm_product_paths(project)
+}

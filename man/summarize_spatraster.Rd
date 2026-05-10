@@ -17,3 +17,8 @@ A data frame.
 \description{
 Summarize a SpatRaster by layer
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+ortho <- read_multispectral_orthomosaic(ortho_path)
+summarize_spatraster(ortho$bands)
+}

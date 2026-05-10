@@ -7,6 +7,9 @@
 #' @param points Data frame with `z`.
 #' @param ground_quantile Quantile used as a local ground proxy.
 #' @return The input data frame with `height_m`.
+#' @examples
+#' pts <- data.frame(z = c(50, 50.1, 51, 53, 55, 56, 55, 53, 51, 50))
+#' add_point_heights(pts)
 #' @export
 add_point_heights <- function(points, ground_quantile = 0.05) {
   if (!"z" %in% names(points)) {
@@ -44,6 +47,14 @@ max_pairwise_distance <- function(x, y, max_points = 1000) {
 #' @param points Selected points with `x`, `y`, `z` and optionally `height_m`.
 #' @param voxel_size Voxel size in meters for occupied-volume approximation.
 #' @return One-row data frame with distance, area, height and volume metrics.
+#' @examples
+#' set.seed(1)
+#' pts <- data.frame(
+#'   x = runif(100, 0, 10),
+#'   y = runif(100, 0, 10),
+#'   z = runif(100, 50, 55)
+#' )
+#' compute_selection_metrics(pts, voxel_size = 0.5)
 #' @export
 compute_selection_metrics <- function(points, voxel_size = 0.5) {
   if (nrow(points) == 0) {
@@ -100,6 +111,14 @@ compute_selection_metrics <- function(points, voxel_size = 0.5) {
 #' @param points Selected points with `height_m` or `z`.
 #' @param bin_size Height bin size in meters.
 #' @return A data frame with height bins and point counts.
+#' @examples
+#' set.seed(1)
+#' pts <- data.frame(
+#'   x = runif(100, 0, 10),
+#'   y = runif(100, 0, 10),
+#'   z = runif(100, 50, 55)
+#' )
+#' compute_vertical_profile(pts, bin_size = 1)
 #' @export
 compute_vertical_profile <- function(points, bin_size = 1) {
   if (nrow(points) == 0) {
@@ -133,6 +152,17 @@ compute_vertical_profile <- function(points, bin_size = 1) {
 #' @param label ROI label.
 #' @param roi_polygon Optional polygon ROI exported with the point metrics.
 #' @return Named character vector with written file paths.
+#' @examples
+#' set.seed(1)
+#' pts <- data.frame(
+#'   x = runif(50, 0, 10),
+#'   y = runif(50, 0, 10),
+#'   z = runif(50, 50, 55)
+#' )
+#' pts <- add_point_heights(pts)
+#' m <- compute_selection_metrics(pts)
+#' p <- compute_vertical_profile(pts)
+#' export_point_selection(pts, m, p, output_dir = tempfile("sel-"))
 #' @export
 export_point_selection <- function(points,
                                    metrics,

@@ -32,3 +32,15 @@ Named character vector with written file paths.
 \description{
 Export a selected point cloud ROI
 }
+\examples{
+set.seed(1)
+pts <- data.frame(
+  x = runif(50, 0, 10),
+  y = runif(50, 0, 10),
+  z = runif(50, 50, 55)
+)
+pts <- add_point_heights(pts)
+m <- compute_selection_metrics(pts)
+p <- compute_vertical_profile(pts)
+export_point_selection(pts, m, p, output_dir = tempfile("sel-"))
+}

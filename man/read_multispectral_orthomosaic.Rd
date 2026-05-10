@@ -23,3 +23,9 @@ A list containing \code{bands}, \code{alpha}, \code{source} and \code{n_layers}.
 \description{
 Read a multispectral orthomosaic
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+ortho <- read_multispectral_orthomosaic(ortho_path)
+names(ortho$bands)
+ortho$n_layers
+}

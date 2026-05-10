@@ -2,6 +2,10 @@
 #'
 #' @param path CSV path.
 #' @return A data frame.
+#' @examples
+#' field_path <- system.file("extdata", "field_samples.csv", package = "DroneBioR")
+#' field <- read_field_data(field_path)
+#' head(field)
 #' @export
 read_field_data <- function(path) {
   if (!file.exists(path)) {
@@ -27,6 +31,13 @@ read_field_data <- function(path) {
 #' @param predictors Raster stack with bands and indices.
 #' @param predictor_crs CRS of x/y coordinates when x/y are used.
 #' @return A data frame with field columns and extracted raster values.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' field_path <- system.file("extdata", "field_samples.csv", package = "DroneBioR")
+#' refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+#' ix <- compute_spectral_indices(refl)
+#' field <- read_field_data(field_path)
+#' head(extract_field_spectral_data(field, ix))
 #' @export
 extract_field_spectral_data <- function(field_data, predictors, predictor_crs = terra::crs(predictors)) {
   if (all(c("x", "y") %in% names(field_data))) {
@@ -51,6 +62,16 @@ extract_field_spectral_data <- function(field_data, predictors, predictor_crs = 
 #' @param response Response column.
 #' @param predictors Optional predictor columns.
 #' @return An `lm` object.
+#' @examples
+#' set.seed(1)
+#' ndvi <- runif(20, 0.3, 0.9)
+#' field <- data.frame(
+#'   sample_id = sprintf("S%02d", 1:20),
+#'   biomass_kgha = 1000 + 3000 * ndvi + rnorm(20, sd = 200),
+#'   NDVI = ndvi
+#' )
+#' model <- fit_biomass_lm(field, predictors = "NDVI")
+#' coef(model)
 #' @export
 fit_biomass_lm <- function(data,
                            response = "biomass_kgha",

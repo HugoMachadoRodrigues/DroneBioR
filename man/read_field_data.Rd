@@ -15,3 +15,8 @@ A data frame.
 \description{
 Read field biomass data
 }
+\examples{
+field_path <- system.file("extdata", "field_samples.csv", package = "DroneBioR")
+field <- read_field_data(field_path)
+head(field)
+}

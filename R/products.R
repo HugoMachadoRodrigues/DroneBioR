@@ -2,6 +2,9 @@
 #'
 #' @param project A `dronebio_project` object.
 #' @return Named character vector of expected product paths.
+#' @examples
+#' project <- dronebio_project(project_dir = tempdir())
+#' odm_product_paths(project)
 #' @export
 odm_product_paths <- function(project) {
   c(
@@ -21,6 +24,9 @@ odm_product_paths <- function(project) {
 #'
 #' @param project A `dronebio_project` object.
 #' @return A data frame with product, path, availability and file size.
+#' @examples
+#' project <- dronebio_project(project_dir = tempdir())
+#' summarize_odm_products(project)
 #' @export
 summarize_odm_products <- function(project) {
   paths <- odm_product_paths(project)

@@ -17,3 +17,9 @@ A \code{terra::SpatRaster}.
 \description{
 Scale raster values to reflectance-like 0-1 values
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+ortho <- read_multispectral_orthomosaic(ortho_path)
+refl <- scale_to_reflectance(ortho$bands)
+terra::minmax(refl)
+}

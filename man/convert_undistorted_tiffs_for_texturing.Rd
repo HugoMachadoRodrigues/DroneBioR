@@ -18,3 +18,8 @@ produced from MicaSense reflectance TIFFs. This helper rewrites the
 undistorted TIFFs as UInt16 (0-65535) so MVS-Texturing can consume them
 on a re-run from the \code{mvs_texturing} stage.
 }
+\examples{
+\dontrun{
+n <- convert_undistorted_tiffs_for_texturing("/path/to/odm_project")
+}
+}

@@ -17,3 +17,12 @@ One-row data frame with distance, area, height and volume metrics.
 \description{
 Compute selection metrics for a point cloud ROI
 }
+\examples{
+set.seed(1)
+pts <- data.frame(
+  x = runif(100, 0, 10),
+  y = runif(100, 0, 10),
+  z = runif(100, 50, 55)
+)
+compute_selection_metrics(pts, voxel_size = 0.5)
+}

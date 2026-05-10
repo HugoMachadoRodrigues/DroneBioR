@@ -21,3 +21,8 @@ This reader supports the ODM/FPCFilter PLY layout used in the current project:
 float x/y/z followed by uchar red/blue/green/views. It is intentionally small
 and dependency-free for app previews; full LAZ analytics should use PDAL/lidR.
 }
+\examples{
+\dontrun{
+pc <- read_ply_point_cloud("preview.ply", max_points = 50000)
+}
+}

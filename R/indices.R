@@ -9,6 +9,11 @@ safe_ratio <- function(numerator, denominator, eps = 1e-6) {
 #' @param eps Small denominator threshold.
 #' @return A `terra::SpatRaster` with NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
 #'   CIrededge, MSAVI2 and VARI.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+#' ix <- compute_spectral_indices(refl)
+#' names(ix)
 #' @export
 compute_spectral_indices <- function(reflectance, eps = 1e-6) {
   required <- c("Blue", "Green", "Red", "RedEdge", "NIR")
@@ -51,6 +56,11 @@ compute_spectral_indices <- function(reflectance, eps = 1e-6) {
 #'
 #' @param indices Spectral index stack from `compute_spectral_indices()`.
 #' @return A `terra::SpatRaster` named `Biomass_Index_Proxy`.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+#' proxy <- compute_biomass_proxy(compute_spectral_indices(refl))
+#' names(proxy)
 #' @export
 compute_biomass_proxy <- function(indices) {
   required <- c("NDVI", "SAVI", "NDRE")

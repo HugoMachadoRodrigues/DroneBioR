@@ -15,3 +15,10 @@ A data frame with file path, file name, capture id, band id and size.
 \description{
 List MicaSense image files
 }
+\examples{
+tmp <- tempfile("micasense-"); dir.create(tmp)
+for (cap in sprintf("IMG_\%04d", 1:3))
+  for (band in 1:5)
+    file.create(file.path(tmp, paste0(cap, "_", band, ".tif")))
+head(list_micasense_images(tmp))
+}

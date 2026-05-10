@@ -29,3 +29,15 @@ A list with rasters, summaries and output paths.
 \description{
 Run the DroneBioR orthomosaic analysis workflow
 }
+\examples{
+\donttest{
+project <- dronebio_project(project_dir = tempdir())
+ortho <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+result <- run_dronebio_workflow(
+  project = project,
+  orthomosaic = ortho,
+  output_dir = tempfile("dronebior-out-")
+)
+names(result)
+}
+}

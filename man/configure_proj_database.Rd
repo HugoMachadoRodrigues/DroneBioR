@@ -17,3 +17,6 @@ Some macOS R installations can load sf or terra without a valid pointer to
 \code{proj.db}. This helper searches common locations and sets \code{PROJ_DATA} and
 \code{PROJ_LIB} before spatial packages need CRS transformations.
 }
+\examples{
+configure_proj_database(verbose = FALSE)
+}

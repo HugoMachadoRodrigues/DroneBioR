@@ -156,6 +156,10 @@ roi_bbox <- function(roi_polygon) {
 #' @param points Data frame with `x` and `y` coordinates.
 #' @param method `hull` for a convex hull, or `bbox` for an axis-aligned box.
 #' @return Data frame with polygon vertex coordinates.
+#' @examples
+#' set.seed(1)
+#' pts <- data.frame(x = runif(50, 0, 10), y = runif(50, 0, 10))
+#' build_roi_polygon(pts, method = "bbox")
 #' @export
 build_roi_polygon <- function(points, method = c("hull", "bbox")) {
   method <- match.arg(method)
@@ -185,6 +189,9 @@ build_roi_polygon <- function(points, method = c("hull", "bbox")) {
 #' @param y Numeric y coordinates.
 #' @param roi_polygon Data frame with `x` and `y` polygon vertices.
 #' @return Logical vector.
+#' @examples
+#' roi <- data.frame(x = c(0, 5, 5, 0), y = c(0, 0, 5, 5))
+#' points_in_roi(x = c(1, 6), y = c(1, 6), roi_polygon = roi)
 #' @export
 points_in_roi <- function(x, y, roi_polygon) {
   if (nrow(roi_polygon) < 3) {
@@ -213,6 +220,11 @@ points_in_roi <- function(x, y, roi_polygon) {
 #' @param points Data frame with `x` and `y` coordinates.
 #' @param roi_polygon Data frame with `x` and `y` polygon vertices.
 #' @return Filtered data frame.
+#' @examples
+#' set.seed(1)
+#' pts <- data.frame(x = runif(50, 0, 10), y = runif(50, 0, 10), z = runif(50, 0, 5))
+#' roi <- data.frame(x = c(2, 8, 8, 2), y = c(2, 2, 8, 8))
+#' nrow(filter_points_by_roi(pts, roi))
 #' @export
 filter_points_by_roi <- function(points, roi_polygon) {
   if (nrow(points) == 0 || nrow(roi_polygon) < 3) {
@@ -254,6 +266,10 @@ read_las_records_by_index <- function(con, header, point_index) {
 #' @param max_points Maximum number of points to return when no ROI is supplied.
 #' @param chunk_size Number of point records per scan chunk.
 #' @return Data frame with point coordinates and attributes.
+#' @examples
+#' \dontrun{
+#' pc <- read_las_point_cloud("flight.las", max_points = 50000)
+#' }
 #' @export
 read_las_point_cloud <- function(path,
                                  roi_polygon = NULL,
@@ -385,6 +401,10 @@ read_with_optional_lidar_package <- function(path) {
 #' @param max_points Maximum number of points to return when no ROI is supplied.
 #' @param chunk_size Number of point records per scan chunk for LAS files.
 #' @return Data frame with full-resolution point coordinates inside the ROI.
+#' @examples
+#' \dontrun{
+#' pc <- read_full_point_cloud("dense.laz")
+#' }
 #' @export
 read_full_point_cloud <- function(path,
                                   roi_polygon = NULL,
@@ -431,6 +451,11 @@ read_full_point_cloud <- function(path,
 #' @param dsm_path DSM GeoTIFF path.
 #' @param dtm_path DTM GeoTIFF path.
 #' @return A `terra::SpatRaster` with non-negative canopy height in meters.
+#' @examples
+#' dsm <- system.file("extdata", "dsm_subset.tif", package = "DroneBioR")
+#' dtm <- system.file("extdata", "dtm_subset.tif", package = "DroneBioR")
+#' chm <- build_chm_from_dsm_dtm(dsm, dtm)
+#' terra::minmax(chm)
 #' @export
 build_chm_from_dsm_dtm <- function(dsm_path, dtm_path) {
   if (!requireNamespace("terra", quietly = TRUE)) {
@@ -455,6 +480,16 @@ build_chm_from_dsm_dtm <- function(dsm_path, dtm_path) {
 #' @param chm A `terra::SpatRaster` canopy height model.
 #' @param fallback_quantile Local Z quantile used when CHM is missing for a point.
 #' @return Input points with `height_m` derived from the CHM where possible.
+#' @examples
+#' dsm <- system.file("extdata", "dsm_subset.tif", package = "DroneBioR")
+#' dtm <- system.file("extdata", "dtm_subset.tif", package = "DroneBioR")
+#' chm <- build_chm_from_dsm_dtm(dsm, dtm)
+#' pts <- data.frame(
+#'   x = seq(392001, 392015, length.out = 5),
+#'   y = seq(3033001, 3033015, length.out = 5),
+#'   z = c(50, 51, 52, 53, 54)
+#' )
+#' add_chm_heights(pts, chm)
 #' @export
 add_chm_heights <- function(points, chm, fallback_quantile = 0.05) {
   if (nrow(points) == 0) {
@@ -477,6 +512,15 @@ add_chm_heights <- function(points, chm, fallback_quantile = 0.05) {
 #' @param chm A `terra::SpatRaster` canopy height model.
 #' @param roi_polygon Data frame with `x` and `y` polygon vertices.
 #' @return One-row data frame with CHM area, height and volume metrics.
+#' @examples
+#' dsm <- system.file("extdata", "dsm_subset.tif", package = "DroneBioR")
+#' dtm <- system.file("extdata", "dtm_subset.tif", package = "DroneBioR")
+#' chm <- build_chm_from_dsm_dtm(dsm, dtm)
+#' roi <- data.frame(
+#'   x = c(392004, 392012, 392012, 392004),
+#'   y = c(3033004, 3033004, 3033012, 3033012)
+#' )
+#' compute_chm_roi_metrics(chm, roi)
 #' @export
 compute_chm_roi_metrics <- function(chm, roi_polygon) {
   if (!requireNamespace("terra", quietly = TRUE) || nrow(roi_polygon) < 3) {

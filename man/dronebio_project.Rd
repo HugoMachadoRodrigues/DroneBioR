@@ -29,3 +29,8 @@ A list with normalized project paths.
 \description{
 Create a DroneBioR project description
 }
+\examples{
+project <- dronebio_project(project_dir = tempdir())
+project$project_dir
+project$odm_orthomosaic
+}

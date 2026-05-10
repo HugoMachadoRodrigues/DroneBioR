@@ -19,3 +19,7 @@ Photogrammetric point clouds from ODM previews can be in a local vertical
 reference. This helper estimates a local ground proxy from a low Z quantile
 and stores height above that proxy.
 }
+\examples{
+pts <- data.frame(z = c(50, 50.1, 51, 53, 55, 56, 55, 53, 51, 50))
+add_point_heights(pts)
+}

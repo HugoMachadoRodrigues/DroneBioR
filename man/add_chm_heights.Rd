@@ -19,3 +19,14 @@ Input points with \code{height_m} derived from the CHM where possible.
 \description{
 Add CHM-derived heights to selected points
 }
+\examples{
+dsm <- system.file("extdata", "dsm_subset.tif", package = "DroneBioR")
+dtm <- system.file("extdata", "dtm_subset.tif", package = "DroneBioR")
+chm <- build_chm_from_dsm_dtm(dsm, dtm)
+pts <- data.frame(
+  x = seq(392001, 392015, length.out = 5),
+  y = seq(3033001, 3033015, length.out = 5),
+  z = c(50, 51, 52, 53, 54)
+)
+add_chm_heights(pts, chm)
+}

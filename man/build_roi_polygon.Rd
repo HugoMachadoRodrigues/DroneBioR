@@ -17,3 +17,8 @@ Data frame with polygon vertex coordinates.
 \description{
 Build a 2D ROI polygon from selected points
 }
+\examples{
+set.seed(1)
+pts <- data.frame(x = runif(50, 0, 10), y = runif(50, 0, 10))
+build_roi_polygon(pts, method = "bbox")
+}

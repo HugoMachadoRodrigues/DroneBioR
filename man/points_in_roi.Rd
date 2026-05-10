@@ -19,3 +19,7 @@ Logical vector.
 \description{
 Test whether coordinates are inside a polygon ROI
 }
+\examples{
+roi <- data.frame(x = c(0, 5, 5, 0), y = c(0, 0, 5, 5))
+points_in_roi(x = c(1, 6), y = c(1, 6), roi_polygon = roi)
+}

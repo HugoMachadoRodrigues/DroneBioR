@@ -21,3 +21,9 @@ A list with command, status and output orthomosaic path.
 \description{
 Run ODM through Docker for a DroneBioR project
 }
+\examples{
+\dontrun{
+project <- dronebio_project("/path/to/Drone_Biomass")
+run_odm_project(project, build_dsm = TRUE, build_dtm = TRUE)
+}
+}

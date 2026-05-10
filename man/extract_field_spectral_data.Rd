@@ -23,3 +23,11 @@ A data frame with field columns and extracted raster values.
 \description{
 Extract raster values at field sample points
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+field_path <- system.file("extdata", "field_samples.csv", package = "DroneBioR")
+refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+ix <- compute_spectral_indices(refl)
+field <- read_field_data(field_path)
+head(extract_field_spectral_data(field, ix))
+}

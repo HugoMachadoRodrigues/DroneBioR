@@ -15,3 +15,9 @@ A \code{terra::SpatRaster} named \code{Biomass_Index_Proxy}.
 \description{
 Compute an image-only biomass proxy
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+refl <- scale_to_reflectance(read_multispectral_orthomosaic(ortho_path)$bands)
+proxy <- compute_biomass_proxy(compute_spectral_indices(refl))
+names(proxy)
+}

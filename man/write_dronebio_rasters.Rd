@@ -29,3 +29,12 @@ Named character vector of output paths.
 \description{
 Write DroneBioR raster products
 }
+\examples{
+ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+ortho <- read_multispectral_orthomosaic(ortho_path)
+refl <- scale_to_reflectance(ortho$bands)
+ix <- compute_spectral_indices(refl)
+proxy <- compute_biomass_proxy(ix)
+out <- tempfile("dronebior-rasters-")
+write_dronebio_rasters(out, refl, ix, proxy)
+}

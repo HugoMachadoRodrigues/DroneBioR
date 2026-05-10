@@ -17,3 +17,9 @@ A \code{terra::SpatRaster} with non-negative canopy height in meters.
 \description{
 Build a canopy height model from DSM and DTM rasters
 }
+\examples{
+dsm <- system.file("extdata", "dsm_subset.tif", package = "DroneBioR")
+dtm <- system.file("extdata", "dtm_subset.tif", package = "DroneBioR")
+chm <- build_chm_from_dsm_dtm(dsm, dtm)
+terra::minmax(chm)
+}

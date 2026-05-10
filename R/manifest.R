@@ -2,6 +2,12 @@
 #'
 #' @param images_dir Folder containing raw image files.
 #' @return A data frame with file path, file name, capture id, band id and size.
+#' @examples
+#' tmp <- tempfile("micasense-"); dir.create(tmp)
+#' for (cap in sprintf("IMG_%04d", 1:3))
+#'   for (band in 1:5)
+#'     file.create(file.path(tmp, paste0(cap, "_", band, ".tif")))
+#' head(list_micasense_images(tmp))
 #' @export
 list_micasense_images <- function(images_dir) {
   if (!dir.exists(images_dir)) {
@@ -51,6 +57,15 @@ list_micasense_images <- function(images_dir) {
 #' @param manifest Data frame from `list_micasense_images()`.
 #' @param odm_images_dir ODM `images` folder.
 #' @return Invisibly returns the destination paths.
+#' @examples
+#' src <- tempfile("src-"); dir.create(src)
+#' for (cap in sprintf("IMG_%04d", 1:2))
+#'   for (band in 1:5)
+#'     file.create(file.path(src, paste0(cap, "_", band, ".tif")))
+#' manifest <- list_micasense_images(src)
+#' dest <- tempfile("odm-images-")
+#' copy_images_for_odm(manifest, dest)
+#' length(list.files(dest))
 #' @export
 copy_images_for_odm <- function(manifest, odm_images_dir) {
   dir.create(odm_images_dir, recursive = TRUE, showWarnings = FALSE)

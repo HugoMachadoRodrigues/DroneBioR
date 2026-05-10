@@ -20,6 +20,10 @@ find_header_end <- function(raw_file) {
 #' @param max_points Maximum number of points to return.
 #' @param seed Random seed used when sampling.
 #' @return A data frame with x, y, z, RGB values and display color.
+#' @examples
+#' \dontrun{
+#' pc <- read_ply_point_cloud("preview.ply", max_points = 50000)
+#' }
 #' @export
 read_ply_point_cloud <- function(path, max_points = 50000, seed = 42) {
   if (!file.exists(path)) {
@@ -92,6 +96,15 @@ read_ply_point_cloud <- function(path, max_points = 50000, seed = 42) {
 #' @param min_points Minimum number of points per candidate.
 #' @param max_trees Maximum number of candidates to return.
 #' @return A data frame of approximate tree objects.
+#' @examples
+#' set.seed(1)
+#' n <- 300
+#' pts <- data.frame(
+#'   x = c(rnorm(n/3, 5, 0.5), rnorm(n/3, 15, 0.5), rnorm(n/3, 25, 0.5)),
+#'   y = c(rnorm(n/3, 5, 0.5), rnorm(n/3, 5, 0.5), rnorm(n/3, 15, 0.5)),
+#'   z = c(rnorm(n/3, 55, 0.2), rnorm(n/3, 57, 0.2), rnorm(n/3, 54, 0.2))
+#' )
+#' derive_tree_candidates(pts)
 #' @export
 derive_tree_candidates <- function(points,
                                    grid_size = 4,

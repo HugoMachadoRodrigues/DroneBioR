@@ -8,6 +8,11 @@ default_micasense_band_map <- function() {
 #' @param band_map Named integer vector with Red, Green, Blue, NIR and RedEdge.
 #' @param use_alpha Logical. Use layer 6 as an alpha mask when available.
 #' @return A list containing `bands`, `alpha`, `source` and `n_layers`.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' ortho <- read_multispectral_orthomosaic(ortho_path)
+#' names(ortho$bands)
+#' ortho$n_layers
 #' @export
 read_multispectral_orthomosaic <- function(orthomosaic,
                                            band_map = default_micasense_band_map(),
@@ -58,6 +63,11 @@ read_multispectral_orthomosaic <- function(orthomosaic,
 #' @param x A `terra::SpatRaster`.
 #' @param scale_factor Optional numeric scale factor.
 #' @return A `terra::SpatRaster`.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' ortho <- read_multispectral_orthomosaic(ortho_path)
+#' refl <- scale_to_reflectance(ortho$bands)
+#' terra::minmax(refl)
 #' @export
 scale_to_reflectance <- function(x, scale_factor = NULL) {
   max_value <- max(terra::global(x, "max", na.rm = TRUE)$max, na.rm = TRUE)
@@ -78,6 +88,10 @@ scale_to_reflectance <- function(x, scale_factor = NULL) {
 #' @param x A `terra::SpatRaster`.
 #' @param fun Summary functions supported by `terra::global()`.
 #' @return A data frame.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' ortho <- read_multispectral_orthomosaic(ortho_path)
+#' summarize_spatraster(ortho$bands)
 #' @export
 summarize_spatraster <- function(x, fun = c("min", "mean", "max", "sd")) {
   summary <- terra::global(x, fun, na.rm = TRUE)
@@ -92,6 +106,14 @@ summarize_spatraster <- function(x, fun = c("min", "mean", "max", "sd")) {
 #' @param biomass_proxy Biomass proxy raster.
 #' @param valid_mask Optional alpha/valid-data mask.
 #' @return Named character vector of output paths.
+#' @examples
+#' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
+#' ortho <- read_multispectral_orthomosaic(ortho_path)
+#' refl <- scale_to_reflectance(ortho$bands)
+#' ix <- compute_spectral_indices(refl)
+#' proxy <- compute_biomass_proxy(ix)
+#' out <- tempfile("dronebior-rasters-")
+#' write_dronebio_rasters(out, refl, ix, proxy)
 #' @export
 write_dronebio_rasters <- function(output_dir,
                                    reflectance,

@@ -29,3 +29,8 @@ package's built-in reader. If a LAZ or COPC LAZ path is supplied, the function
 first looks for the corresponding ODM \code{.las} sidecar. If no LAS sidecar is
 available, it attempts to use an installed external reader such as \code{lidR}.
 }
+\examples{
+\dontrun{
+pc <- read_full_point_cloud("dense.laz")
+}
+}
