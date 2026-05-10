@@ -20,5 +20,6 @@
 ^\.idea$
 ^codecov\.yml$
 ^revdep$
+^data-raw$
 ^inst/shiny/DroneBiomassStudio/rsconnect$
 ^.*backup.*\.tar\.gz$
