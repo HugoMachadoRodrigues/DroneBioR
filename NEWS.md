@@ -10,9 +10,9 @@ and research community.
 * Documentation, README and metadata overhauled for a public release on
   GitHub.
 * `DESCRIPTION`: declared `terra` and `sf` as `Imports` (they were used by
-  exported functions but listed only in `Suggests`); added `methods` to
-  `Imports`; added `URL`, `BugReports`, `SystemRequirements`, `VignetteBuilder`
-  and `Language`; normalized `Authors@R` to a single canonical entry.
+  exported functions but listed only in `Suggests`); added `URL`, `BugReports`,
+  `SystemRequirements`, `VignetteBuilder` and `Language`; normalized
+  `Authors@R` to a single canonical entry.
 * License file `LICENSE.md` added (full GNU AGPL v3 text). License field
   standardized to `AGPL (>= 3)`.
 * New `.gitignore` and updated `.Rbuildignore`.

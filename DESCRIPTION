@@ -28,7 +28,6 @@ Depends:
     R (>= 4.1)
 Imports:
     grDevices,
-    methods,
     sf,
     stats,
     terra,
