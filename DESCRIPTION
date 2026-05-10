@@ -1,0 +1,50 @@
+Package: DroneBioR
+Title: Reproducible Drone Biomass Workflows for Multispectral Imagery
+Version: 0.2.0
+Authors@R:
+    person(given = "Hugo Machado",
+           family = "Rodrigues",
+           role = c("aut", "cre", "cph"),
+           email = "rodrigues.machado.hugo@gmail.com")
+Description: A reproducible R workflow for drone-based biomass research using
+    multispectral imagery from MicaSense cameras such as the RedEdge series.
+    'DroneBioR' wraps external photogrammetry engines (OpenDroneMap,
+    'WebODM', 'Pix4Dmapper', 'Agisoft Metashape') to produce orthomosaics,
+    digital surface and terrain models, dense point clouds and meshes, and
+    then provides the scientific layer in R: alpha and no-data masking,
+    radiometric scaling to reflectance, vegetation indices (NDVI, NDRE, EVI,
+    SAVI, NDWI, GNDVI, CIrededge, MSAVI2 and VARI), canopy height models,
+    point-cloud region-of-interest analysis, individual tree candidate
+    detection, field sample extraction, baseline biomass models and a Shiny
+    application for interactive exploration. The package targets academic
+    and research use.
+License: AGPL (>= 3)
+URL: https://github.com/HugoMachadoRodrigues/DroneBioR
+BugReports: https://github.com/HugoMachadoRodrigues/DroneBioR/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1)
+Imports:
+    grDevices,
+    methods,
+    sf,
+    stats,
+    terra,
+    utils
+Suggests:
+    bslib,
+    htmltools,
+    jsonlite,
+    knitr,
+    leaflet,
+    lidR,
+    rmarkdown,
+    shiny,
+    testthat (>= 3.0.0)
+SystemRequirements: GDAL (>= 3.0), PROJ (>= 6.0), GEOS (>= 3.8); optional:
+    Docker for OpenDroneMap engine.
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+Language: en-US

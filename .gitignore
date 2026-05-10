@@ -1,0 +1,51 @@
+# --- R / RStudio ---
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+.Renviron
+.Rprofile.user
+
+# --- R CMD check / build artifacts ---
+*.Rcheck/
+*.tar.gz
+src/*.o
+src/*.so
+src/*.dll
+*-Ex.R
+
+# --- macOS / Windows / Linux junk ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- IDE / editors ---
+.vscode/
+.idea/
+.positai/
+.claude/
+*.swp
+*~
+
+# --- pkgdown / docs build ---
+docs/
+inst/doc/
+vignettes/*.html
+vignettes/*.pdf
+vignettes/*.R
+*_cache/
+*_files/
+
+# --- Shiny deployment metadata ---
+inst/shiny/DroneBiomassStudio/rsconnect/
+
+# --- Local raw data (huge, not for repo) ---
+imagens/
+outputs/
+inst/extdata/large/
+
+# --- Coverage / lint ---
+.covr/
+lint_cache/
