@@ -1,0 +1,133 @@
+# DroneBioR
+
+**DroneBioR** is a research-oriented R package and Shiny app for drone
+biomass analysis with MicaSense multispectral imagery. It delegates the
+heavy photogrammetry work (SfM, MVS, mesh, texturing) to external
+engines — **OpenDroneMap**, **WebODM**, **Pix4Dmapper** or **Agisoft
+Metashape** — and contributes the scientific layer in R:
+
+``` text
+Engine outputs (orthomosaic, DSM, DTM, dense point cloud, mesh)
+  -> alpha / no-data masking
+  -> radiometric scaling to reflectance
+  -> 9 vegetation indices (NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
+                           CIrededge, MSAVI2, VARI)
+  -> field sample extraction
+  -> canopy height model + ROI metrics
+  -> baseline biomass model
+  -> Shiny app for interactive exploration
+```
+
+## Installation
+
+DroneBioR is research software distributed through GitHub.
+
+``` r
+
+# install.packages("remotes")
+remotes::install_github("HugoMachadoRodrigues/DroneBioR")
+```
+
+System requirements: **GDAL ≥ 3.0**, **PROJ ≥ 6.0**, **GEOS ≥ 3.8**
+(installed automatically with `terra` and `sf` on most platforms).
+Docker is optional — only needed if you want DroneBioR to drive
+OpenDroneMap directly.
+
+## Quick start
+
+Bring an orthomosaic from any of the four supported engines and run the
+end-to-end scientific workflow:
+
+``` r
+
+library(DroneBioR)
+
+project <- dronebio_project(project_dir = "/path/to/Drone_Biomass")
+
+result <- run_dronebio_workflow(
+  project     = project,
+  use_alpha   = TRUE
+)
+
+names(result)
+#> [1] "project" "orthomosaic" "bands" "reflectance" "indices"
+#> [6] "biomass_proxy" "alpha" "reflectance_summary" "index_summary"
+#> [10] "output_paths"
+```
+
+For a baseline biomass model from field samples:
+
+``` r
+
+field   <- read_field_data("data/field_samples.csv")
+joined  <- extract_field_spectral_data(field, result$indices)
+model   <- fit_biomass_lm(joined)
+summary(model)
+```
+
+Try it without any data of your own — every exported function has a
+runnable `@examples` block that uses the bundled fixtures in
+`inst/extdata/`:
+
+``` r
+
+?compute_spectral_indices
+example(compute_spectral_indices)
+```
+
+## Interactive exploration
+
+``` r
+
+run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
+```
+
+Drone Biomass Studio is a Shiny app for previewing orthomosaics,
+indices, the CHM, and point-cloud ROIs interactively.
+
+## Documentation
+
+Four vignettes cover the workflow in depth:
+
+- [Overview](https://hugomachadorodrigues.github.io/DroneBioR/vignettes/dronebior-overview.Rmd)
+  — end-to-end pipeline.
+- [External
+  engines](https://hugomachadorodrigues.github.io/DroneBioR/vignettes/external-engines.Rmd)
+  — read products from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
+- [Spectral
+  indices](https://hugomachadorodrigues.github.io/DroneBioR/vignettes/spectral-indices.Rmd)
+  — index catalogue and recommended use per crop and canopy density.
+- [Point clouds and
+  CHM](https://hugomachadorodrigues.github.io/DroneBioR/vignettes/point-clouds-and-chm.Rmd)
+  — dense point cloud analyses and CHM ROI metrics.
+
+A browsable site is published at
+<https://hugomachadorodrigues.github.io/DroneBioR/>.
+
+## Scope
+
+DroneBioR is a **wrapper plus scientific layer**: it does not implement
+Structure-from-Motion, Multi-View Stereo, mesh generation or texturing.
+Those algorithms live in the external engine of your choice. This keeps
+the R package focused on the scientific workflow and preserves a clean
+technical and legal boundary with the engine.
+
+## Contributing
+
+Bug reports, feature requests, new indices, new engine readers,
+vignettes, examples, tests and code reviews are all welcome. Please read
+[CONTRIBUTING.md](https://hugomachadorodrigues.github.io/DroneBioR/CONTRIBUTING.md)
+and the [Code of
+Conduct](https://hugomachadorodrigues.github.io/DroneBioR/CODE_OF_CONDUCT.md)
+before opening a pull request.
+
+## Citation
+
+If your work uses DroneBioR, please cite it. Run `citation("DroneBioR")`
+in R or refer to
+[`CITATION.cff`](https://hugomachadorodrigues.github.io/DroneBioR/CITATION.cff).
+
+## License
+
+DroneBioR is released under the [GNU Affero General Public License
+v3](https://hugomachadorodrigues.github.io/DroneBioR/LICENSE.md).
