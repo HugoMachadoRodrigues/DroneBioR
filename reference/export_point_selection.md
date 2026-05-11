@@ -61,9 +61,9 @@ m <- compute_selection_metrics(pts)
 p <- compute_vertical_profile(pts)
 export_point_selection(pts, m, p, output_dir = tempfile("sel-"))
 #>                                                                            points 
-#>           "/tmp/RtmpLJwlfk/sel-22756c1e3e38/selection_20260511_154133_points.csv" 
+#>           "/tmp/RtmpduMYc6/sel-22776a7e289f/selection_20260511_154927_points.csv" 
 #>                                                                           metrics 
-#>          "/tmp/RtmpLJwlfk/sel-22756c1e3e38/selection_20260511_154133_metrics.csv" 
+#>          "/tmp/RtmpduMYc6/sel-22776a7e289f/selection_20260511_154927_metrics.csv" 
 #>                                                                  vertical_profile 
-#> "/tmp/RtmpLJwlfk/sel-22756c1e3e38/selection_20260511_154133_vertical_profile.csv" 
+#> "/tmp/RtmpduMYc6/sel-22776a7e289f/selection_20260511_154927_vertical_profile.csv" 
 ```
