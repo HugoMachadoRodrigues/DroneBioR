@@ -920,10 +920,11 @@ theme <- bs_theme(
 
 ui <- page_navbar(
   title = tags$span(
-    tags$img(src = "logo.png", height = "56px",
-             style = "margin-right: 12px; vertical-align: middle;",
+    style = "display: inline-flex; align-items: center; gap: 14px;",
+    tags$img(src = "logo.png", height = "80px",
+             style = "vertical-align: middle;",
              alt = "DroneBioR logo"),
-    tags$span(style = "vertical-align: middle; font-size: 1.15rem;",
+    tags$span(style = "font-size: 1.25rem; font-weight: 600;",
               "Drone Biomass Studio")
   ),
   theme = theme,
@@ -1274,8 +1275,11 @@ ui <- page_navbar(
         fileInput("load_annotations", "Load annotations (GeoJSON)", accept = c(".geojson", ".json")),
         actionButton("clear_annotations", "Clear annotations", class = "btn-outline-secondary"),
         div(class = "form-label", "ROI comparison"),
+        div(class = "sidebar-note",
+            "How to draw an ROI: (1) click 'Draw new ROI' to switch into polygon mode; (2) click vertices on the map to outline the region; (3) click 'Save ROI' to add it to the comparison table."),
         textInput("roi_name", NULL, placeholder = "ROI name (e.g. plot_3)", value = "roi_1"),
-        actionButton("save_roi", "Save current polygon as ROI", class = "btn-outline-secondary"),
+        actionButton("start_drawing_roi", "Draw new ROI", class = "btn-primary"),
+        actionButton("save_roi", "Save ROI", class = "btn-outline-secondary"),
         actionButton("compute_roi_comparison", "Compute ROI comparison", class = "btn-outline-secondary"),
         actionButton("clear_rois", "Clear ROIs", class = "btn-outline-secondary"),
         actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
@@ -2627,10 +2631,29 @@ server <- function(input, output, session) {
     leafletProxy("gis_map") |> clearGroup("Annotations")
   })
 
+  # "Draw new ROI" puts the user in polygon-drawing mode and tells them
+  # what to do next. This is the discoverable entry point for the ROI
+  # comparison workflow; the existing measurement tools still work for
+  # users who want to come at it the long way.
+  observeEvent(input$start_drawing_roi, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Measure area")
+    gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
+    leafletProxy("gis_map") |> clearGroup("Measurement")
+    showNotification(
+      ui = "ROI drawing mode active. Click polygon vertices on the map, then click 'Save ROI'.",
+      type = "message", duration = 6
+    )
+  })
+
   observeEvent(input$save_roi, {
     pts <- gis_measure_points()
-    validate(need(nrow(pts) >= 3,
-                  "Draw a polygon (at least 3 vertices) with 'Measure area' or 'Measure volume (CHM)' first."))
+    if (nrow(pts) < 3) {
+      showNotification(
+        ui = "No polygon drawn yet. Click 'Draw new ROI' and place at least 3 vertices on the map first.",
+        type = "warning", duration = 6
+      )
+      return()
+    }
     raw_name <- input$roi_name %||% ""
     name <- if (nzchar(raw_name)) raw_name else paste0("roi_", length(roi_collection()) + 1L)
     existing <- roi_collection()
