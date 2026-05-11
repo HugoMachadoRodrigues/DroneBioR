@@ -1186,6 +1186,11 @@ ui <- page_navbar(
         actionButton("save_annotations", "Save annotations (GeoJSON)", class = "btn-outline-secondary"),
         fileInput("load_annotations", "Load annotations (GeoJSON)", accept = c(".geojson", ".json")),
         actionButton("clear_annotations", "Clear annotations", class = "btn-outline-secondary"),
+        div(class = "form-label", "ROI comparison"),
+        textInput("roi_name", NULL, placeholder = "ROI name (e.g. plot_3)", value = "roi_1"),
+        actionButton("save_roi", "Save current polygon as ROI", class = "btn-outline-secondary"),
+        actionButton("compute_roi_comparison", "Compute ROI comparison", class = "btn-outline-secondary"),
+        actionButton("clear_rois", "Clear ROIs", class = "btn-outline-secondary"),
         actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
         actionButton("clear_gis", "Clear overlays", class = "btn-outline-secondary"),
         div(class = "sidebar-note", "The basemap is visible immediately. Selected products are added as transparent overlays when they finish loading.")
@@ -1206,6 +1211,7 @@ ui <- page_navbar(
         ),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
+        card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
         card(card_header("Available processing products"), tableOutput("product_table"))
       )
     )
@@ -1516,6 +1522,12 @@ server <- function(input, output, session) {
     )
   }
   annotations <- reactiveVal(empty_annotations())
+
+  # ROI collection for multi-region comparison. Each entry holds the polygon
+  # vertices in WGS84 alongside the user-given name, so we can replay the
+  # same ROI against different rasters / dates later.
+  roi_collection <- reactiveVal(list())
+  roi_comparison_request <- reactiveVal(0L)
   panel_coefficients <- reactiveVal(data.frame(
     band = c("Blue", "Green", "Red", "RedEdge", "NIR"),
     certified_reflectance = NA_real_,
@@ -2432,6 +2444,140 @@ server <- function(input, output, session) {
     annotations(empty_annotations())
     leafletProxy("gis_map") |> clearGroup("Annotations")
   })
+
+  observeEvent(input$save_roi, {
+    pts <- gis_measure_points()
+    validate(need(nrow(pts) >= 3,
+                  "Draw a polygon (at least 3 vertices) with 'Measure area' or 'Measure volume (CHM)' first."))
+    raw_name <- input$roi_name %||% ""
+    name <- if (nzchar(raw_name)) raw_name else paste0("roi_", length(roi_collection()) + 1L)
+    existing <- roi_collection()
+    existing[[name]] <- list(
+      name = name,
+      lng  = pts$lng,
+      lat  = pts$lat
+    )
+    roi_collection(existing)
+    showNotification(
+      paste0("Saved ROI '", name, "' with ", nrow(pts), " vertices."),
+      type     = "message",
+      duration = 4
+    )
+  })
+
+  observeEvent(input$clear_rois, {
+    roi_collection(list())
+    leafletProxy("gis_map") |> clearGroup("ROIs")
+  })
+
+  observeEvent(input$compute_roi_comparison, {
+    roi_comparison_request(roi_comparison_request() + 1L)
+  })
+
+  # Persist ROI shapes on the map so users can see what they have saved.
+  observe({
+    rois <- roi_collection()
+    proxy <- leafletProxy("gis_map") |> clearGroup("ROIs")
+    if (length(rois) == 0) return()
+    palette <- hcl.colors(max(length(rois), 3), "Dark 3")
+    for (i in seq_along(rois)) {
+      roi <- rois[[i]]
+      poly_df <- data.frame(
+        lng = c(roi$lng, roi$lng[[1]]),
+        lat = c(roi$lat, roi$lat[[1]])
+      )
+      proxy <- proxy |>
+        addPolygons(
+          data        = poly_df,
+          lng         = ~lng,
+          lat         = ~lat,
+          color       = palette[i],
+          weight      = 2,
+          fillColor   = palette[i],
+          fillOpacity = 0.15,
+          label       = roi$name,
+          group       = "ROIs"
+        )
+    }
+  })
+
+  output$roi_comparison_table <- renderTable({
+    # Recompute when the user presses the button. Reading the reactiveVal
+    # also forces invalidation when ROIs are added or cleared.
+    roi_comparison_request()
+    rois <- roi_collection()
+    if (length(rois) == 0) {
+      return(data.frame(
+        roi    = "(no ROIs)",
+        action = "Draw a polygon, then 'Save current polygon as ROI'.",
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    gs <- tryCatch(gis_stack(), error = function(e) NULL)
+    ch <- tryCatch(chm_raster(), error = function(e) NULL)
+    if (is.null(gs) && is.null(ch)) {
+      return(data.frame(
+        roi    = "(no rasters)",
+        action = "Click 'Load selected overlays' to compute the spectral stack first.",
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    rows <- list()
+    for (roi in rois) {
+      ll <- data.frame(lng = roi$lng, lat = roi$lat)
+      row <- list(roi = roi$name, n_vertices = nrow(ll))
+
+      # Spectral means per ROI.
+      if (!is.null(gs)) {
+        proj_xy <- tryCatch({
+          ll_sf  <- sf::st_as_sf(ll, coords = c("lng", "lat"), crs = 4326)
+          proj_s <- sf::st_transform(ll_sf, terra::crs(gs))
+          sf::st_coordinates(proj_s)
+        }, error = function(e) NULL)
+        if (!is.null(proj_xy)) {
+          closed <- rbind(proj_xy, proj_xy[1, , drop = FALSE])
+          vect_poly <- terra::vect(list(closed), type = "polygons", crs = terra::crs(gs))
+          stat_layers <- intersect(c("NDVI", "NDRE", "EVI", "SAVI", "Biomass_Index_Proxy"), names(gs))
+          if (length(stat_layers) > 0) {
+            ext_mean <- terra::extract(gs[[stat_layers]], vect_poly, fun = mean, na.rm = TRUE)
+            ext_mean$ID <- NULL
+            for (lyr in stat_layers) {
+              row[[paste0(lyr, "_mean")]] <- as.numeric(ext_mean[[lyr]])
+            }
+          }
+        }
+      }
+
+      # CHM stats per ROI.
+      if (!is.null(ch)) {
+        proj_xy_chm <- tryCatch({
+          ll_sf  <- sf::st_as_sf(ll, coords = c("lng", "lat"), crs = 4326)
+          proj_s <- sf::st_transform(ll_sf, terra::crs(ch))
+          sf::st_coordinates(proj_s)
+        }, error = function(e) NULL)
+        if (!is.null(proj_xy_chm)) {
+          roi_poly <- data.frame(x = proj_xy_chm[, 1], y = proj_xy_chm[, 2])
+          metrics <- compute_chm_roi_metrics(ch, roi_poly)
+          row$chm_mean_m   <- metrics$chm_height_mean_m
+          row$chm_max_m    <- metrics$chm_height_max_m
+          row$chm_volume_m3 <- metrics$chm_surface_volume_m3
+        }
+      }
+
+      rows[[roi$name]] <- row
+    }
+
+    # Pad rows to a consistent set of columns so do.call(rbind, ...) works.
+    all_cols <- unique(unlist(lapply(rows, names)))
+    rows_padded <- lapply(rows, function(r) {
+      missing <- setdiff(all_cols, names(r))
+      for (m in missing) r[[m]] <- NA
+      r[all_cols]
+    })
+    do.call(rbind, lapply(rows_padded, as.data.frame, stringsAsFactors = FALSE))
+  }, digits = 3)
 
   observeEvent(input$gis_measure_tool, {
     gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
