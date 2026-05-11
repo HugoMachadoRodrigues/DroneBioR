@@ -42,5 +42,5 @@ register_flight(Sys.Date(), project$project_dir, registry_path = reg)
 ts <- flight_time_series(flight_ndvi_mean, registry_path = reg)
 ts
 #>         date     value   flight_id                            project_dir
-#> 1 2026-05-11 0.5848023 20260511-NA /tmp/Rtmphd8vNg/ts-flight-228f7b9b758f
+#> 1 2026-05-11 0.5848023 20260511-NA /tmp/RtmpzYEY8F/ts-flight-227830bce34f
 ```
