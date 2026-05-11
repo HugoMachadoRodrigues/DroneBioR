@@ -853,7 +853,12 @@ theme <- bs_theme(
 )
 
 ui <- page_navbar(
-  title = "Drone Biomass Studio",
+  title = tags$span(
+    tags$img(src = "logo.png", height = "32px",
+             style = "margin-right: 10px; vertical-align: middle;",
+             alt = "DroneBioR logo"),
+    "Drone Biomass Studio"
+  ),
   theme = theme,
   header = tags$head(
     tags$script(src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"),

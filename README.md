@@ -1,4 +1,4 @@
-# DroneBioR
+# DroneBioR <img src="man/figures/logo.png" align="right" height="138" alt="DroneBioR logo" />
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/HugoMachadoRodrigues/DroneBioR/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/HugoMachadoRodrigues/DroneBioR/actions/workflows/R-CMD-check.yaml)
