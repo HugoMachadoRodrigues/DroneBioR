@@ -13,7 +13,9 @@ render_dronebio_report(
   project,
   output_file = NULL,
   field_csv = NULL,
-  use_alpha = TRUE
+  use_alpha = TRUE,
+  roi_geojson = NULL,
+  snapshot_path = NULL
 )
 ```
 
@@ -36,6 +38,25 @@ render_dronebio_report(
 - use_alpha:
 
   Logical. Use the orthomosaic alpha band as a valid-data mask.
+
+- roi_geojson:
+
+  Optional path to a GeoJSON file containing one or more ROI polygons
+  (the format `studio_assets/rois.geojson` produces). When supplied, the
+  report adds a "Survey-grade volumes" section that runs
+  [`compute_survey_volumes()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_survey_volumes.md)
+  with four base-reference methods (DTM, min Z, mean Z, perimeter TIN)
+  for each ROI. Defaults to `<project>/studio_assets/rois.geojson` when
+  that file exists.
+
+- snapshot_path:
+
+  Optional PNG of the 3D viewer (e.g. from the "Screenshot" toolbar
+  button in Drone Biomass Studio). When supplied, the report embeds it
+  in the "3D scene documentation" section. Otherwise the section falls
+  back to a server-side
+  [`persp()`](https://rdrr.io/r/graphics/persp.html) rendering of the
+  DSM.
 
 ## Value
 

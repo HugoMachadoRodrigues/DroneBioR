@@ -61,7 +61,9 @@ the baseline biomass model.</p>
 <span>  <span class="va">project</span>,</span>
 <span>  output_file <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  field_csv <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  use_alpha <span class="op">=</span> <span class="cn">TRUE</span></span>
+<span>  use_alpha <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  roi_geojson <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  snapshot_path <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -86,6 +88,23 @@ the report includes the baseline biomass model section.</p></dd>
 <dt id="arg-use-alpha">use_alpha<a class="anchor" aria-label="anchor" href="#arg-use-alpha"></a></dt>
 <dd><p>Logical. Use the orthomosaic alpha band as a valid-data
 mask.</p></dd>
+
+
+<dt id="arg-roi-geojson">roi_geojson<a class="anchor" aria-label="anchor" href="#arg-roi-geojson"></a></dt>
+<dd><p>Optional path to a GeoJSON file containing one or
+more ROI polygons (the format <code>studio_assets/rois.geojson</code> produces).
+When supplied, the report adds a "Survey-grade volumes" section
+that runs <code><a href="compute_survey_volumes.html">compute_survey_volumes()</a></code> with four base-reference
+methods (DTM, min Z, mean Z, perimeter TIN) for each ROI. Defaults
+to <code>&lt;project&gt;/studio_assets/rois.geojson</code> when that file exists.</p></dd>
+
+
+<dt id="arg-snapshot-path">snapshot_path<a class="anchor" aria-label="anchor" href="#arg-snapshot-path"></a></dt>
+<dd><p>Optional PNG of the 3D viewer (e.g. from the
+"Screenshot" toolbar button in Drone Biomass Studio). When supplied,
+the report embeds it in the "3D scene documentation" section.
+Otherwise the section falls back to a server-side <code><a href="https://rdrr.io/r/graphics/persp.html" class="external-link">persp()</a></code>
+rendering of the DSM.</p></dd>
 
 </dl></div>
     <div class="section level2">

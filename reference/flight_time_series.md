@@ -41,6 +41,6 @@ register_flight(Sys.Date(), project$project_dir, registry_path = reg)
 #> Warning: NAs produced by integer overflow
 ts <- flight_time_series(flight_ndvi_mean, registry_path = reg)
 ts
-#>         date     value   flight_id                           project_dir
-#> 1 2026-05-11 0.5848023 20260511-NA /tmp/RtmpICcyiR/ts-flight-22954ca4e92
+#>         date     value   flight_id                            project_dir
+#> 1 2026-05-11 0.5848023 20260511-NA /tmp/RtmpKPK8wl/ts-flight-227b1bcaedc4
 ```

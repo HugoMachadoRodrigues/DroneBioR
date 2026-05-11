@@ -54,13 +54,13 @@ summarize_odm_products(project)
 #> 8         mesh_ply     FALSE      NA
 #> 9     textured_obj     FALSE      NA
 #>                                                                                                                                        path
-#> 1                   /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
-#> 2                                     /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
-#> 3                                     /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
-#> 4      /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
-#> 5      /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
-#> 6 /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
-#> 7                    /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
-#> 8                         /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
-#> 9        /tmp/RtmpICcyiR/dronebior-sample-2295712c5b73/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
+#> 1                   /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
+#> 2                                     /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
+#> 3                                     /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
+#> 4      /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
+#> 5      /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
+#> 6 /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
+#> 7                    /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
+#> 8                         /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
+#> 9        /tmp/RtmpKPK8wl/dronebior-sample-227b6dbcb36d/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
 ```
