@@ -39,6 +39,22 @@ downsample_raster <- function(x, size = 90000) {
   terra::spatSample(x, size = size, method = "regular", as.raster = TRUE, na.rm = FALSE)
 }
 
+# All user-created GIS Workspace artefacts (annotations and ROIs) are
+# saved under a single subfolder of the project so the user has one
+# obvious place to look in and version-control. Selection exports from
+# the 3D & Tree Metrics tab still go to the user-chosen `output_dir`,
+# because those are larger outputs the user usually wants pinned.
+studio_assets_dir <- function(project_dir) {
+  base <- if (nzchar(project_dir %||% "")) project_dir else tempdir()
+  file.path(base, "studio_assets")
+}
+studio_assets_annotations_path <- function(project_dir) {
+  file.path(studio_assets_dir(project_dir), "annotations.geojson")
+}
+studio_assets_rois_path <- function(project_dir) {
+  file.path(studio_assets_dir(project_dir), "rois.geojson")
+}
+
 # Cache of (raster identity hash -> tile-friendly local path). Re-rendering
 # the map with the same raster reuses the prior temp file so we are not
 # rewriting GeoTIFFs on every load.
@@ -921,10 +937,10 @@ theme <- bs_theme(
 ui <- page_navbar(
   title = tags$span(
     style = "display: inline-flex; align-items: center; gap: 14px;",
-    tags$img(src = "logo.png", height = "80px",
+    tags$img(src = "logo.png", height = "120px",
              style = "vertical-align: middle;",
              alt = "DroneBioR logo"),
-    tags$span(style = "font-size: 1.25rem; font-weight: 600;",
+    tags$span(style = "font-size: 1.35rem; font-weight: 600;",
               "Drone Biomass Studio")
   ),
   theme = theme,
@@ -1269,19 +1285,26 @@ ui <- page_navbar(
         actionButton("clear_gis_measure", "Clear map measurement", class = "btn-outline-secondary"),
         actionButton("recenter_gis_map", "Center map", class = "btn-outline-secondary"),
         div(class = "form-label", "Map annotations"),
-        checkboxInput("annotation_mode", "Annotation mode (click map to pin)", value = FALSE),
+        div(class = "sidebar-note",
+            "How to pin an annotation: (1) type the note text in the field below; (2) check 'Annotation mode'; (3) click a coordinate on the map - a pink marker drops with your text as the popup. Use 'Save annotations' to persist the layer to GeoJSON; 'Load annotations' brings it back later."),
         textInput("annotation_text", NULL, placeholder = "Annotation text..."),
+        checkboxInput("annotation_mode", "Annotation mode (click map to pin)", value = FALSE),
         actionButton("save_annotations", "Save annotations (GeoJSON)", class = "btn-outline-secondary"),
+        verbatimTextOutput("annotations_save_path"),
         fileInput("load_annotations", "Load annotations (GeoJSON)", accept = c(".geojson", ".json")),
         actionButton("clear_annotations", "Clear annotations", class = "btn-outline-secondary"),
         div(class = "form-label", "ROI comparison"),
         div(class = "sidebar-note",
-            "How to draw an ROI: (1) click 'Draw new ROI' to switch into polygon mode; (2) click vertices on the map to outline the region; (3) click 'Save ROI' to add it to the comparison table."),
+            "How to draw an ROI: (1) click 'Draw new ROI' to switch into polygon mode; (2) click vertices on the map to outline the region; (3) click 'Save ROI' to add it to the comparison table. To delete a single ROI, pick its name in the dropdown and click 'Delete selected ROI'. Vertex-by-vertex editing is not supported yet; use 'Redraw selected ROI' to replace one in place."),
         textInput("roi_name", NULL, placeholder = "ROI name (e.g. plot_3)", value = "roi_1"),
         actionButton("start_drawing_roi", "Draw new ROI", class = "btn-primary"),
         actionButton("save_roi", "Save ROI", class = "btn-outline-secondary"),
+        selectInput("selected_roi_name", "Saved ROIs", choices = character(0)),
+        actionButton("redraw_selected_roi", "Redraw selected ROI", class = "btn-outline-secondary"),
+        actionButton("delete_selected_roi", "Delete selected ROI", class = "btn-outline-danger"),
         actionButton("compute_roi_comparison", "Compute ROI comparison", class = "btn-outline-secondary"),
-        actionButton("clear_rois", "Clear ROIs", class = "btn-outline-secondary"),
+        actionButton("clear_rois", "Clear all ROIs", class = "btn-outline-danger"),
+        verbatimTextOutput("rois_save_path"),
         actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
         actionButton("clear_gis", "Clear overlays", class = "btn-outline-secondary"),
         div(class = "sidebar-note", "The basemap is visible immediately. Selected products are added as transparent overlays when they finish loading.")
@@ -2588,9 +2611,8 @@ server <- function(input, output, session) {
     with_error_toast("Save annotations", {
       df <- annotations()
       validate(need(nrow(df) > 0, "No annotations to save."))
-      out_dir <- if (nzchar(input$project_dir %||% "")) input$project_dir else tempdir()
-      dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-      out_path <- file.path(out_dir, "annotations.geojson")
+      out_path <- studio_assets_annotations_path(input$project_dir)
+      dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
       sf_obj <- sf::st_as_sf(df, coords = c("lng", "lat"), crs = 4326)
       sf::st_write(sf_obj, out_path, delete_dsn = TRUE, quiet = TRUE)
       showNotification(
@@ -2599,6 +2621,16 @@ server <- function(input, output, session) {
         duration = 6
       )
     })
+  })
+
+  # Side-by-side path display: the user always sees where Save will write
+  # before clicking, so there is no ambiguity about the destination.
+  output$annotations_save_path <- renderText({
+    paste0("Save target:\n", studio_assets_annotations_path(input$project_dir))
+  })
+
+  output$rois_save_path <- renderText({
+    paste0("ROIs persisted to:\n", studio_assets_rois_path(input$project_dir))
   })
 
   observeEvent(input$load_annotations, {
@@ -2629,6 +2661,105 @@ server <- function(input, output, session) {
   observeEvent(input$clear_annotations, {
     annotations(empty_annotations())
     leafletProxy("gis_map") |> clearGroup("Annotations")
+  })
+
+  # Keep the "Saved ROIs" dropdown in sync with the actual collection.
+  observe({
+    rois <- roi_collection()
+    updateSelectInput(
+      session,
+      "selected_roi_name",
+      choices = if (length(rois) == 0) character(0) else names(rois),
+      selected = isolate(input$selected_roi_name) %||% NULL
+    )
+  })
+
+  # Auto-persist the ROI collection to studio_assets/rois.geojson so the
+  # set survives a session restart. Writes a feature collection in WGS84
+  # with one polygon per ROI plus a `name` attribute.
+  observe({
+    rois <- roi_collection()
+    out_path <- studio_assets_rois_path(input$project_dir)
+    if (length(rois) == 0) {
+      if (file.exists(out_path)) unlink(out_path)
+      return()
+    }
+    tryCatch({
+      dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+      geoms <- lapply(rois, function(r) {
+        coords <- cbind(c(r$lng, r$lng[[1]]), c(r$lat, r$lat[[1]]))
+        sf::st_polygon(list(coords))
+      })
+      sf_obj <- sf::st_sf(
+        name     = names(rois),
+        geometry = sf::st_sfc(geoms, crs = 4326)
+      )
+      sf::st_write(sf_obj, out_path, delete_dsn = TRUE, quiet = TRUE)
+    }, error = function(e) {
+      message("ROI auto-save failed: ", conditionMessage(e))
+    })
+  })
+
+  # Auto-load ROIs from disk on session start (one-shot).
+  observe({
+    in_path <- studio_assets_rois_path(input$project_dir)
+    if (!file.exists(in_path)) return()
+    if (length(isolate(roi_collection())) > 0) return()  # do not overwrite in-session work
+    tryCatch({
+      g <- sf::st_read(in_path, quiet = TRUE)
+      g <- sf::st_transform(g, 4326)
+      loaded <- list()
+      for (i in seq_len(nrow(g))) {
+        nm <- if ("name" %in% names(g)) as.character(g$name[[i]]) else paste0("roi_", i)
+        coords <- sf::st_coordinates(g$geometry[[i]])
+        loaded[[nm]] <- list(name = nm, lng = coords[, 1], lat = coords[, 2])
+      }
+      roi_collection(loaded)
+      showNotification(
+        paste("Loaded", length(loaded), "saved ROIs from", in_path),
+        type = "message", duration = 5
+      )
+    }, error = function(e) {
+      message("ROI auto-load failed: ", conditionMessage(e))
+    })
+  })
+
+  observeEvent(input$delete_selected_roi, {
+    name <- input$selected_roi_name %||% ""
+    if (!nzchar(name)) {
+      showNotification("Select an ROI in the dropdown first.", type = "warning", duration = 4)
+      return()
+    }
+    current <- roi_collection()
+    if (!name %in% names(current)) return()
+    current[[name]] <- NULL
+    roi_collection(current)
+    showNotification(paste("Deleted ROI:", name), type = "message", duration = 3)
+  })
+
+  # Redraw selected ROI: deletes the existing entry and puts the user back
+  # into polygon-drawing mode with the same ROI name pre-filled, so the
+  # next Save ROI replaces it. The closest thing to vertex editing we can
+  # offer without bringing in a JS draw plugin.
+  observeEvent(input$redraw_selected_roi, {
+    name <- input$selected_roi_name %||% ""
+    if (!nzchar(name)) {
+      showNotification("Select an ROI in the dropdown first.", type = "warning", duration = 4)
+      return()
+    }
+    current <- roi_collection()
+    if (name %in% names(current)) {
+      current[[name]] <- NULL
+      roi_collection(current)
+    }
+    updateTextInput(session, "roi_name", value = name)
+    updateSelectInput(session, "gis_measure_tool", selected = "Measure area")
+    gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
+    leafletProxy("gis_map") |> clearGroup("Measurement")
+    showNotification(
+      paste0("Redraw mode for '", name, "'. Click polygon vertices on the map, then 'Save ROI'."),
+      type = "message", duration = 6
+    )
   })
 
   # "Draw new ROI" puts the user in polygon-drawing mode and tells them
