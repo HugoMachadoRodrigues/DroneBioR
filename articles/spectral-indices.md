@@ -90,3 +90,37 @@ summary(model)
   shifts across dates reflect the engine’s scaling, not the canopy.
 - Index choice should follow the canopy stage. NDVI plateaus once LAI is
   above ~3; CIrededge and NDRE keep responding.
+
+## Color stretch in the Shiny app
+
+The GIS Workspace map offers three colour-stretch modes via the “Color
+stretch” selector in the sidebar. The default is **Fixed semantic** for
+a reason worth knowing if you publish or report from these maps.
+
+- **Fixed semantic** (default). The colour scale is pinned to a
+  canonical range per index: `[-1, 1]` for NDVI, NDRE, NDWI, GNDVI, VARI
+  and the biomass proxy; `[0, 1]` for MSAVI2 and raw reflectance bands;
+  the data range for EVI, SAVI and CIrededge (which can exceed those
+  bounds in practice). With the Red-Yellow-Green palette, **yellow falls
+  at zero** — marking the biophysical boundary between non-vegetation
+  pixels (water, bare soil, shadow, asphalt) and vegetation. Identical
+  index values always produce identical colours, which is what makes a
+  time-series panel like the one in the *Time Series* tab actually
+  comparable across dates.
+
+- **Data range**. Linearly stretched between the layer’s own minimum and
+  maximum. Useful for highlighting subtle spatial structure within one
+  scene, but the **same value will get different colours** in different
+  flights if their min/max differs — so this mode is *not* appropriate
+  when you compare multiple dates or sites.
+
+- **Percentile 2-98**. Robust stretch that ignores the tails. Helpful
+  when a few outlier pixels (sun glint, hot edge artefacts) compress the
+  visible contrast under “Data range”.
+
+In remote-sensing publications, fixed semantic ranges are the convention
+for diverging vegetation indices: the colour carries physical meaning
+(green = vegetated, red = non-vegetated), and the reader can compare two
+maps side by side. We keep that as the default; per-scene stretching is
+available when you need it for exploration but is *not* the recommended
+choice for the figures you ship in a paper.

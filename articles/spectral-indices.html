@@ -200,6 +200,43 @@ shifts across dates reflect the engine’s scaling, not the canopy.</li>
 is above ~3; CIrededge and NDRE keep responding.</li>
 </ul>
 </div>
+<div class="section level2">
+<h2 id="color-stretch-in-the-shiny-app">Color stretch in the Shiny app<a class="anchor" aria-label="anchor" href="#color-stretch-in-the-shiny-app"></a>
+</h2>
+<p>The GIS Workspace map offers three colour-stretch modes via the
+“Color stretch” selector in the sidebar. The default is <strong>Fixed
+semantic</strong> for a reason worth knowing if you publish or report
+from these maps.</p>
+<ul>
+<li><p><strong>Fixed semantic</strong> (default). The colour scale is
+pinned to a canonical range per index: <code>[-1, 1]</code> for NDVI,
+NDRE, NDWI, GNDVI, VARI and the biomass proxy; <code>[0, 1]</code> for
+MSAVI2 and raw reflectance bands; the data range for EVI, SAVI and
+CIrededge (which can exceed those bounds in practice). With the
+Red-Yellow-Green palette, <strong>yellow falls at zero</strong> —
+marking the biophysical boundary between non-vegetation pixels (water,
+bare soil, shadow, asphalt) and vegetation. Identical index values
+always produce identical colours, which is what makes a time-series
+panel like the one in the <em>Time Series</em> tab actually comparable
+across dates.</p></li>
+<li><p><strong>Data range</strong>. Linearly stretched between the
+layer’s own minimum and maximum. Useful for highlighting subtle spatial
+structure within one scene, but the <strong>same value will get
+different colours</strong> in different flights if their min/max differs
+— so this mode is <em>not</em> appropriate when you compare multiple
+dates or sites.</p></li>
+<li><p><strong>Percentile 2-98</strong>. Robust stretch that ignores the
+tails. Helpful when a few outlier pixels (sun glint, hot edge artefacts)
+compress the visible contrast under “Data range”.</p></li>
+</ul>
+<p>In remote-sensing publications, fixed semantic ranges are the
+convention for diverging vegetation indices: the colour carries physical
+meaning (green = vegetated, red = non-vegetated), and the reader can
+compare two maps side by side. We keep that as the default; per-scene
+stretching is available when you need it for exploration but is
+<em>not</em> the recommended choice for the figures you ship in a
+paper.</p>
+</div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>
 </div>
