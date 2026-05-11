@@ -7,7 +7,7 @@
 ## Citation
 
 Source:
-[`inst/CITATION`](https://github.com/HugoMachadoRodrigues/DroneBioR/blob/v0.4.0/inst/CITATION)
+[`inst/CITATION`](https://github.com/HugoMachadoRodrigues/DroneBioR/blob/main/inst/CITATION)
 
 Rodrigues H (2026). *DroneBioR: Reproducible Drone Biomass Workflows for
 Multispectral Imagery*. R package version 0.4.0,
