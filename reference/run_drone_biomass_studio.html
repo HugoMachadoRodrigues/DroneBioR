@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -50,6 +50,7 @@
 <span>  project_dir <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/getwd.html" class="external-link">getwd</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  port <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  launch.browser <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  sample <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -59,7 +60,7 @@
 
 
 <dl><dt id="arg-project-dir">project_dir<a class="anchor" aria-label="anchor" href="#arg-project-dir"></a></dt>
-<dd><p>Default project directory.</p></dd>
+<dd><p>Default project directory. Ignored when <code>sample = TRUE</code>.</p></dd>
 
 
 <dt id="arg-port">port<a class="anchor" aria-label="anchor" href="#arg-port"></a></dt>
@@ -68,6 +69,13 @@
 
 <dt id="arg-launch-browser">launch.browser<a class="anchor" aria-label="anchor" href="#arg-launch-browser"></a></dt>
 <dd><p>Logical. Open a browser window.</p></dd>
+
+
+<dt id="arg-sample">sample<a class="anchor" aria-label="anchor" href="#arg-sample"></a></dt>
+<dd><p>Logical. When <code>TRUE</code>, seed and open the bundled sample
+project via <code><a href="dronebio_sample_project.html">dronebio_sample_project()</a></code> so the app is immediately
+clickable without real flight data. Useful for demos and first-time
+users.</p></dd>
 
 
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
@@ -82,6 +90,10 @@
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span></span>
+<span class="r-in"><span><span class="co"># First-time / no data of your own:</span></span></span>
+<span class="r-in"><span><span class="fu">run_drone_biomass_studio</span><span class="op">(</span>sample <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></span>
+<span class="r-in"><span></span></span>
+<span class="r-in"><span><span class="co"># Real project:</span></span></span>
 <span class="r-in"><span><span class="fu">run_drone_biomass_studio</span><span class="op">(</span>project_dir <span class="op">=</span> <span class="st">"/path/to/Drone_Biomass"</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
 </code></pre></div>

@@ -34,13 +34,13 @@ summarize_odm_products(project)
 #> 8         mesh_ply     FALSE      NA
 #> 9     textured_obj     FALSE      NA
 #>                                                                                                          path
-#> 1                   /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
-#> 2                                     /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
-#> 3                                     /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
-#> 4      /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
-#> 5      /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
-#> 6 /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
-#> 7                    /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
-#> 8                         /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
-#> 9        /tmp/RtmpIx39wM/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
+#> 1                   /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
+#> 2                                     /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
+#> 3                                     /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
+#> 4      /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
+#> 5      /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
+#> 6 /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
+#> 7                    /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
+#> 8                         /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
+#> 9        /tmp/RtmpA5fIgk/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
 ```

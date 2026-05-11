@@ -2,11 +2,14 @@
 
 ## Project setup
 
-Build the project description used by the rest of the package and
-configure PROJ on systems where terra or sf cannot find it.
+Build the project description used by the rest of the package, seed a
+clickable sample project from bundled fixtures, and configure PROJ on
+systems where terra or sf cannot find it.
 
 - [`dronebio_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/dronebio_project.md)
   : Create a DroneBioR project description
+- [`dronebio_sample_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/dronebio_sample_project.md)
+  : Seed a clickable sample DroneBioR project from bundled fixtures
 - [`configure_proj_database()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/configure_proj_database.md)
   : Configure PROJ paths for terra and sf
 
@@ -50,6 +53,13 @@ DroneBioR raster products to disk.
   : Compute spectral vegetation indices
 - [`compute_biomass_proxy()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_biomass_proxy.md)
   : Compute an image-only biomass proxy
+
+## Classification
+
+- [`classify_ground_vegetation()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_ground_vegetation.md)
+  : Rule-based ground / vegetation classification from NDVI (and CHM)
+- [`classify_ground_csf()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_ground_csf.md)
+  : Classify ground points in a LAS file using lidR's CSF algorithm
 
 ## Field data and baseline biomass model
 
@@ -97,9 +107,38 @@ attach heights to selected points.
 - [`export_point_selection()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/export_point_selection.md)
   : Export a selected point cloud ROI
 
+## Reports
+
+- [`render_dronebio_report()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/render_dronebio_report.md)
+  : Render a DroneBioR biomass report
+
+## Time series across flights
+
+- [`default_flight_registry()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_flight_registry.md)
+  : Default location of the DroneBioR flight registry
+
+- [`register_flight()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/register_flight.md)
+  : Register a flight in the time-series registry
+
+- [`list_flights()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/list_flights.md)
+  : List flights registered in the time-series registry
+
+- [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_time_series.md)
+  : Compute a time series of a custom flight summary
+
+- [`flight_ndvi_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_summary_helpers.md)
+  [`flight_biomass_proxy_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_summary_helpers.md)
+  [`flight_chm_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_summary_helpers.md)
+  :
+
+  Stock summary helpers for
+  [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_time_series.md)
+
 ## Workflow and Shiny app
 
 - [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_dronebio_workflow.md)
   : Run the DroneBioR orthomosaic analysis workflow
 - [`run_drone_biomass_studio()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_drone_biomass_studio.md)
   : Start Drone Biomass Studio
+- [`with_error_toast()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/with_error_toast.md)
+  : Run an expression and report errors as Shiny toasts

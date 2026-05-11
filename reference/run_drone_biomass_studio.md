@@ -9,6 +9,7 @@ run_drone_biomass_studio(
   project_dir = getwd(),
   port = NULL,
   launch.browser = TRUE,
+  sample = FALSE,
   ...
 )
 ```
@@ -17,7 +18,7 @@ run_drone_biomass_studio(
 
 - project_dir:
 
-  Default project directory.
+  Default project directory. Ignored when `sample = TRUE`.
 
 - port:
 
@@ -26,6 +27,13 @@ run_drone_biomass_studio(
 - launch.browser:
 
   Logical. Open a browser window.
+
+- sample:
+
+  Logical. When `TRUE`, seed and open the bundled sample project via
+  [`dronebio_sample_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/dronebio_sample_project.md)
+  so the app is immediately clickable without real flight data. Useful
+  for demos and first-time users.
 
 - ...:
 
@@ -41,6 +49,10 @@ The result of
 
 ``` r
 if (FALSE) { # \dontrun{
+# First-time / no data of your own:
+run_drone_biomass_studio(sample = TRUE)
+
+# Real project:
 run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
 } # }
 ```

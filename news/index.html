@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -41,6 +41,52 @@
 
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="dronebior-development-version">DroneBioR (development version)<a class="anchor" aria-label="anchor" href="#dronebior-development-version"></a></h2>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.3.0" id="dronebior-030">DroneBioR 0.3.0<a class="anchor" aria-label="anchor" href="#dronebior-030"></a></h2>
+<p>This release focuses on making the Shiny app (Drone Biomass Studio) mature enough for daily research use, and on closing the user-facing feature gap versus Pix4D Mapper and Agisoft Metashape. The scope explicitly excludes SfM / MVS / mesh / texture work (still delegated to ODM / WebODM / Pix4Dmapper / Agisoft Metashape), and focuses on the scientific R layer and the deliverables the user actually consumes from the app.</p>
+<div class="section level3">
+<h3 id="new-features-0-3-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-3-0"></a></h3>
+<ul><li>
+<strong>Sample project for first-run experience.</strong> New <code><a href="../reference/dronebio_sample_project.html">dronebio_sample_project()</a></code> and <code>run_drone_biomass_studio(sample = TRUE)</code> seed a clickable ODM-shaped project from the bundled fixtures so the app works immediately without flight data.</li>
+<li>
+<strong>CHM volume measurement on the GIS map.</strong> New “Measure volume (CHM)” tool: click polygon vertices on the basemap and the summary table reports CHM area, mean and max height, and surface volume - the Pix4D / Metashape volumetric measurement parity item.</li>
+<li>
+<strong>GeoJSON map annotations layer.</strong> New annotation mode in the GIS Workspace sidebar: pin named notes at coordinates and persist them as <code>annotations.geojson</code> in the project directory; reload them in a later session via the file picker.</li>
+<li>
+<strong>Multi-ROI comparison table.</strong> Save the current measurement polygon as a named ROI, then compute side-by-side NDVI / NDRE / EVI / SAVI / biomass-proxy means and CHM mean / max / volume for all saved ROIs.</li>
+<li>
+<strong>Bundled HTML report + one-click render.</strong> New <code><a href="../reference/render_dronebio_report.html">render_dronebio_report()</a></code> exported function and “Render HTML report” button in the Exports panel. The RMarkdown template at <code>inst/report/biomass_report.Rmd</code> includes the ODM inventory, reflectance summary, per-index histograms, the CHM, and an optional field-based biomass model.</li>
+<li>
+<strong>Ground / vegetation classification.</strong> New <code><a href="../reference/classify_ground_vegetation.html">classify_ground_vegetation()</a></code> for rule-based 5-class NDVI + CHM classification, and <code><a href="../reference/classify_ground_csf.html">classify_ground_csf()</a></code> bridging to <code><a href="https://rdrr.io/pkg/lidR/man/classify.html" class="external-link">lidR::classify_ground()</a></code> with the Cloth Simulation Filter.</li>
+<li>
+<strong>Time-series registry and Shiny panel.</strong> Register multiple flights of the same site in a CSV registry, then plot NDVI / biomass / CHM means across dates from a new “Time Series” nav panel. New exported helpers: <code><a href="../reference/default_flight_registry.html">default_flight_registry()</a></code>, <code><a href="../reference/register_flight.html">register_flight()</a></code>, <code><a href="../reference/list_flights.html">list_flights()</a></code>, <code><a href="../reference/flight_time_series.html">flight_time_series()</a></code>, <code><a href="../reference/flight_summary_helpers.html">flight_ndvi_mean()</a></code>, <code><a href="../reference/flight_summary_helpers.html">flight_biomass_proxy_mean()</a></code>, <code><a href="../reference/flight_summary_helpers.html">flight_chm_mean()</a></code>.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="performance-and-robustness-0-3-0">Performance and robustness<a class="anchor" aria-label="anchor" href="#performance-and-robustness-0-3-0"></a></h3>
+<ul><li>
+<strong>COG-style raster tiling.</strong> New <code>tile_raster_on_map()</code> private helper in the app uses <code><a href="https://r-spatial.github.io/leafem/reference/addGeotiff.html" class="external-link">leafem::addGeotiff()</a></code> when the <code>leafem</code> package is installed, with a process-scoped temp-file cache keyed by raster fingerprint. Pan/zoom on large orthomosaics is now incremental rather than re-rendering a downsampled image each interaction. Falls back cleanly to the existing <code>addRasterImage()</code> path when <code>leafem</code> is not available.</li>
+<li>
+<strong>Async workflow execution.</strong> <code><a href="../reference/run_dronebio_workflow.html">run_dronebio_workflow()</a></code> now runs in a background R session via <code><a href="https://rstudio.github.io/promises/reference/future_promise.html" class="external-link">promises::future_promise()</a></code> when both <code>future</code> and <code>promises</code> are installed. The Shiny UI stays responsive while the workflow writes products to disk; falls back to synchronous execution otherwise.</li>
+<li>
+<strong>Toast-based error UI.</strong> New exported <code><a href="../reference/with_error_toast.html">with_error_toast()</a></code> helper catches errors inside Shiny reactives and renders them as notifications instead of the default red traceback. Applied to the six event-driven reactives (mosaic, gis_stack, point_cloud, extracted_field, model, workflow). <code>validate()</code> / <code>req()</code> inline messages still work because the helper re-throws <code>shiny.silent.error</code>.</li>
+<li>
+<strong>Reactive caching.</strong> <code>bindCache()</code> applied to the mosaic, gis_stack, point_cloud and hillshade reactives so re-loading the same inputs is an in-memory hit rather than a re-read.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="ux-0-3-0">UX<a class="anchor" aria-label="anchor" href="#ux-0-3-0"></a></h3>
+<ul><li>
+<strong>Per-panel help cards.</strong> Each of the (now seven) nav panels opens with a Bootstrap info card that explains what the panel does and links to the relevant pkgdown vignette.</li>
+<li>
+<strong>Hillshade overlay.</strong> “Hillshade” added to the GIS overlay choices, computed from the DSM via <code><a href="https://rspatial.github.io/terra/reference/terrain.html" class="external-link">terra::terrain()</a></code> + <code><a href="https://rspatial.github.io/terra/reference/shade.html" class="external-link">terra::shade()</a></code>, rendered in grayscale beneath the colored overlays. <code>viridis</code> remains the default for non-vegetation layers; <code>YlGn</code> for the greenness indices.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="new-optional-dependencies-suggests-0-3-0">New optional dependencies (Suggests)<a class="anchor" aria-label="anchor" href="#new-optional-dependencies-suggests-0-3-0"></a></h3>
+<ul><li>
+<code>future</code>, <code>promises</code> - enable the async workflow path.</li>
+<li>
+<code>leafem</code> - enables COG-style raster tiling.</li>
+</ul></div>
 </div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="dronebior-020">DroneBioR 0.2.0<a class="anchor" aria-label="anchor" href="#dronebior-020"></a></h2>

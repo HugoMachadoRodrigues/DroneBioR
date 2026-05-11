@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -41,7 +41,7 @@
     <div class="section level2">
       <h2 id="project-setup">Project setup<a class="anchor" aria-label="anchor" href="#project-setup"></a></h2>
 
-      <div class="section-desc"><p>Build the project description used by the rest of the package and configure PROJ on systems where terra or sf cannot find it.</p></div>
+      <div class="section-desc"><p>Build the project description used by the rest of the package, seed a clickable sample project from bundled fixtures, and configure PROJ on systems where terra or sf cannot find it.</p></div>
 
       <dl></dl></div><div class="section level2">
 
@@ -54,6 +54,13 @@
 
         </dt>
         <dd>Create a DroneBioR project description</dd>
+
+        <dt>
+
+          <code><a href="dronebio_sample_project.html">dronebio_sample_project()</a></code>
+
+        </dt>
+        <dd>Seed a clickable sample DroneBioR project from bundled fixtures</dd>
 
         <dt>
 
@@ -179,6 +186,29 @@
 
         </dt>
         <dd>Compute an image-only biomass proxy</dd>
+      </dl></div><div class="section level2">
+      <h2 id="classification">Classification<a class="anchor" aria-label="anchor" href="#classification"></a></h2>
+
+
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="classify_ground_vegetation.html">classify_ground_vegetation()</a></code>
+
+        </dt>
+        <dd>Rule-based ground / vegetation classification from NDVI (and CHM)</dd>
+
+        <dt>
+
+          <code><a href="classify_ground_csf.html">classify_ground_csf()</a></code>
+
+        </dt>
+        <dd>Classify ground points in a LAS file using lidR's CSF algorithm</dd>
       </dl></div><div class="section level2">
       <h2 id="field-data-and-baseline-biomass-model">Field data and baseline biomass model<a class="anchor" aria-label="anchor" href="#field-data-and-baseline-biomass-model"></a></h2>
 
@@ -326,6 +356,66 @@
         </dt>
         <dd>Export a selected point cloud ROI</dd>
       </dl></div><div class="section level2">
+      <h2 id="reports">Reports<a class="anchor" aria-label="anchor" href="#reports"></a></h2>
+
+
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="render_dronebio_report.html">render_dronebio_report()</a></code>
+
+        </dt>
+        <dd>Render a DroneBioR biomass report</dd>
+      </dl></div><div class="section level2">
+      <h2 id="time-series-across-flights">Time series across flights<a class="anchor" aria-label="anchor" href="#time-series-across-flights"></a></h2>
+
+
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="default_flight_registry.html">default_flight_registry()</a></code>
+
+        </dt>
+        <dd>Default location of the DroneBioR flight registry</dd>
+
+        <dt>
+
+          <code><a href="register_flight.html">register_flight()</a></code>
+
+        </dt>
+        <dd>Register a flight in the time-series registry</dd>
+
+        <dt>
+
+          <code><a href="list_flights.html">list_flights()</a></code>
+
+        </dt>
+        <dd>List flights registered in the time-series registry</dd>
+
+        <dt>
+
+          <code><a href="flight_time_series.html">flight_time_series()</a></code>
+
+        </dt>
+        <dd>Compute a time series of a custom flight summary</dd>
+
+        <dt>
+
+          <code><a href="flight_summary_helpers.html">flight_ndvi_mean()</a></code> <code><a href="flight_summary_helpers.html">flight_biomass_proxy_mean()</a></code> <code><a href="flight_summary_helpers.html">flight_chm_mean()</a></code>
+
+        </dt>
+        <dd>Stock summary helpers for <code><a href="../reference/flight_time_series.html">flight_time_series()</a></code></dd>
+      </dl></div><div class="section level2">
       <h2 id="workflow-and-shiny-app">Workflow and Shiny app<a class="anchor" aria-label="anchor" href="#workflow-and-shiny-app"></a></h2>
 
 
@@ -348,6 +438,13 @@
 
         </dt>
         <dd>Start Drone Biomass Studio</dd>
+
+        <dt>
+
+          <code><a href="with_error_toast.html">with_error_toast()</a></code>
+
+        </dt>
+        <dd>Run an expression and report errors as Shiny toasts</dd>
       </dl></div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>
