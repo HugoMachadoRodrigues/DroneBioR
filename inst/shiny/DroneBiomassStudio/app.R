@@ -2031,22 +2031,43 @@ server <- function(input, output, session) {
   # orthomosaic" feature. Returns a list with the Z grid (row-major, north
   # to south, west to east) plus geo bounds, ready for the JS three.js
   # PlaneGeometry displacement loop.
-  build_dsm_heightmap <- function(dsm_path, grid_size = 180) {
+  #
+  # When an orthomosaic with a 6th alpha band is supplied, the DSM is
+  # masked by that alpha before sampling - which is what stops the
+  # white margins of the ortho from rising into tall white columns
+  # (ODM extrapolates the DSM to its bounding box, so the "no flight
+  # coverage" pixels also carry valid-looking high Z values).
+  build_dsm_heightmap <- function(dsm_path, orthomosaic_path = NULL, grid_size = 180) {
     if (!file.exists(dsm_path)) return(NULL)
     tryCatch({
       dsm <- terra::rast(dsm_path)
-      ds  <- terra::spatSample(dsm, size = grid_size * grid_size,
-                               method = "regular", as.raster = TRUE, na.rm = FALSE)
-      z   <- terra::as.matrix(ds, wide = TRUE)
-      # Replace NA with the column-wise minimum to avoid spikes; the
-      # alpha plane handles "no data" visually anyway.
+      if (terra::nlyr(dsm) > 1) dsm <- dsm[[1]]
+
+      if (!is.null(orthomosaic_path) && file.exists(orthomosaic_path)) {
+        ortho_r <- tryCatch(terra::rast(orthomosaic_path), error = function(e) NULL)
+        if (!is.null(ortho_r) && terra::nlyr(ortho_r) >= 6) {
+          alpha <- ortho_r[[6]]
+          if (!terra::compareGeom(dsm, alpha, stopOnError = FALSE)) {
+            alpha <- terra::resample(alpha, dsm, method = "near")
+          }
+          dsm <- terra::mask(dsm, alpha, maskvalues = 0, updatevalue = NA)
+        }
+      }
+
+      ds <- terra::spatSample(dsm, size = grid_size * grid_size,
+                              method = "regular", as.raster = TRUE, na.rm = FALSE)
+      z  <- terra::as.matrix(ds, wide = TRUE)
       bad <- !is.finite(z)
-      if (any(bad)) {
+      if (any(bad) && any(!bad)) {
+        # Flatten no-data cells to the lowest valid DSM value, so the
+        # masked fringe is a low pedestal instead of a forest of spikes.
         floor_z <- min(z[!bad], na.rm = TRUE)
         z[bad] <- floor_z
+      } else if (all(bad)) {
+        return(NULL)
       }
+
       e <- terra::ext(ds)
-      # JSON serialisation: pass the matrix as a list of rows.
       list(
         z_rows = lapply(seq_len(nrow(z)), function(i) as.numeric(z[i, ])),
         nrow   = nrow(z),
@@ -4115,7 +4136,9 @@ server <- function(input, output, session) {
     draped_dsm <- NULL
     if (isTRUE(input$show_draped_dsm)) {
       dsm_p <- odm_product_paths(project())[["dsm"]]
-      draped_dsm <- build_dsm_heightmap(dsm_p, grid_size = 180)
+      # Pass the orthomosaic so build_dsm_heightmap can mask the DSM
+      # by its alpha band; that flattens the white-margin spikes.
+      draped_dsm <- build_dsm_heightmap(dsm_p, input$orthomosaic, grid_size = 180)
     }
     draped_dsm_json <- jsonlite::toJSON(draped_dsm %||% list(),
                                         auto_unbox = TRUE, null = "null", na = "null")
