@@ -1484,15 +1484,18 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 320,
-        actionButton("run_workflow", "Run R analysis workflow", class = "btn-primary")
+        actionButton("run_workflow", "Run R analysis workflow", class = "btn-primary"),
+        actionButton("render_report", "Render HTML report", class = "btn-outline-secondary"),
+        fileInput("report_field_csv", "Field CSV for report (optional)", accept = ".csv")
       ),
       panel_intro_card(
         "Exports",
-        "Re-runs the full pipeline through run_dronebio_workflow() and writes the reflectance bands, spectral indices, biomass proxy and (when present) the valid-data mask to your project's output folder. Use this as the one-click reproducible run after you have validated settings in the other panels.",
+        "Re-runs the full pipeline through run_dronebio_workflow() and writes the reflectance bands, spectral indices, biomass proxy and (when present) the valid-data mask to your project's output folder. Render HTML report produces a self-contained DroneBioR_report.html with the ODM inventory, index histograms, the CHM and an optional field-based biomass model.",
         vignette = "dronebior-overview"
       ),
       card(card_header("Workflow status"), verbatimTextOutput("workflow_status")),
-      card(card_header("Output files"), verbatimTextOutput("workflow_outputs"))
+      card(card_header("Output files"), verbatimTextOutput("workflow_outputs")),
+      card(card_header("Report"), verbatimTextOutput("report_status"))
     )
   )
 )
@@ -4371,6 +4374,44 @@ server <- function(input, output, session) {
       req(result)
       paste(result$output_paths, collapse = "\n")
     }
+  })
+
+  # Report rendering. Uses the bundled biomass_report.Rmd template via
+  # render_dronebio_report(). Caches the last produced path so the
+  # "Report" card can show it after a successful render.
+  report_output_path <- reactiveVal(NULL)
+  observeEvent(input$render_report, {
+    with_error_toast("Render report", {
+      out <- file.path(input$project_dir, "DroneBioR_report.html")
+      field_csv <- if (!is.null(input$report_field_csv)) input$report_field_csv$datapath else NULL
+      render_dronebio_report(
+        project     = project(),
+        output_file = out,
+        field_csv   = field_csv,
+        use_alpha   = isTRUE(input$use_alpha)
+      )
+      report_output_path(out)
+      showNotification(
+        paste("Report saved to:", out),
+        type     = "message",
+        duration = 8
+      )
+    })
+  })
+
+  output$report_status <- renderText({
+    path <- report_output_path()
+    if (is.null(path)) {
+      return("No report rendered yet. Click 'Render HTML report' to produce one.")
+    }
+    if (!file.exists(path)) {
+      return("Report file not found at expected path.")
+    }
+    paste0(
+      "Report:   ", path, "\n",
+      "Bytes:    ", format(file.info(path)$size, big.mark = ","), "\n",
+      "Modified: ", format(file.info(path)$mtime, "%Y-%m-%d %H:%M:%S")
+    )
   })
 }
 

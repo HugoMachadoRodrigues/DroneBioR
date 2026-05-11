@@ -1,0 +1,194 @@
+---
+title: "DroneBioR Biomass Report"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    df_print: paged
+params:
+  project_dir: !r getwd()
+  field_csv: !r NULL
+  use_alpha: true
+  output_dir: !r tempfile("dronebior-report-")
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+project <- DroneBioR::dronebio_project(project_dir = params$project_dir)
+suppressWarnings(DroneBioR::configure_proj_database(verbose = FALSE))
+```
+
+## Project
+
+- **Directory:** `` `r project$project_dir` ``
+- **Generated:** `r format(Sys.time(), "%Y-%m-%d %H:%M %Z")`
+- **R session:** `r paste(R.version$major, R.version$minor, sep = ".")`
+- **DroneBioR:** `r as.character(utils::packageVersion("DroneBioR"))`
+
+### ODM / engine products
+
+```{r products}
+products <- DroneBioR::summarize_odm_products(project)
+knitr::kable(products, caption = "Engine products discovered in the project directory.")
+```
+
+## Scientific workflow
+
+```{r run-workflow}
+result <- tryCatch(
+  DroneBioR::run_dronebio_workflow(
+    project    = project,
+    use_alpha  = params$use_alpha,
+    output_dir = params$output_dir
+  ),
+  error = function(e) {
+    message("run_dronebio_workflow() failed: ", conditionMessage(e))
+    NULL
+  }
+)
+```
+
+```{r workflow-status, results = "asis"}
+if (is.null(result)) {
+  cat("> The scientific workflow could not be executed. Spectral analysis sections are skipped.\n")
+} else {
+  cat("Workflow executed. Outputs written under: `", result$output_paths[["indices"]] |> dirname(), "`\n", sep = "")
+}
+```
+
+### Reflectance summary
+
+```{r refl-summary}
+if (!is.null(result)) {
+  knitr::kable(
+    result$reflectance_summary,
+    digits  = 4,
+    caption = "Per-band reflectance summary."
+  )
+}
+```
+
+### Spectral index summary
+
+```{r index-summary}
+if (!is.null(result)) {
+  knitr::kable(
+    result$index_summary,
+    digits  = 4,
+    caption = "Per-index summary statistics."
+  )
+}
+```
+
+### Index histograms
+
+```{r index-hist, fig.width = 9, fig.height = 7}
+if (!is.null(result)) {
+  layers <- names(result$indices)
+  n <- length(layers)
+  rows <- ceiling(n / 3)
+  par(mfrow = c(rows, 3), mar = c(3, 3, 2, 1))
+  for (lyr in layers) {
+    vals <- terra::values(result$indices[[lyr]], mat = FALSE)
+    vals <- vals[is.finite(vals)]
+    if (length(vals) > 1) {
+      hist(vals, main = lyr, xlab = "", col = "#9bdbcf", border = "white", breaks = 30)
+    } else {
+      plot.new(); title(main = paste(lyr, "(no data)"))
+    }
+  }
+}
+```
+
+### Biomass proxy
+
+```{r biomass-proxy, fig.width = 7, fig.height = 5}
+if (!is.null(result) && !is.null(result$biomass_proxy)) {
+  terra::plot(
+    result$biomass_proxy,
+    col  = hcl.colors(50, "YlGn"),
+    main = "Biomass proxy (rescaled, image-only)"
+  )
+}
+```
+
+## Canopy height model
+
+```{r chm, fig.width = 8, fig.height = 5}
+dsm_path <- file.path(project$odm_project_dir, "odm_dem", "dsm.tif")
+dtm_path <- file.path(project$odm_project_dir, "odm_dem", "dtm.tif")
+chm <- tryCatch(
+  DroneBioR::build_chm_from_dsm_dtm(dsm_path, dtm_path),
+  error = function(e) NULL
+)
+if (!is.null(chm)) {
+  terra::plot(
+    chm,
+    col  = hcl.colors(50, "viridis"),
+    main = "Canopy Height Model (m)"
+  )
+}
+```
+
+```{r chm-summary}
+if (!is.null(chm)) {
+  vals <- terra::values(chm, mat = FALSE)
+  vals <- vals[is.finite(vals) & vals > 0]
+  if (length(vals) > 0) {
+    knitr::kable(
+      data.frame(
+        metric = c("cells with height > 0", "min height (m)", "mean height (m)",
+                   "max height (m)", "sd (m)"),
+        value  = c(
+          length(vals),
+          formatC(min(vals), digits = 3, format = "f"),
+          formatC(mean(vals), digits = 3, format = "f"),
+          formatC(max(vals), digits = 3, format = "f"),
+          formatC(stats::sd(vals), digits = 3, format = "f")
+        )
+      ),
+      caption = "CHM summary."
+    )
+  }
+}
+```
+
+## Field-based biomass model
+
+```{r field-model, results = "asis"}
+if (!is.null(params$field_csv) && nzchar(params$field_csv) &&
+    file.exists(params$field_csv) && !is.null(result)) {
+  field   <- DroneBioR::read_field_data(params$field_csv)
+  joined  <- DroneBioR::extract_field_spectral_data(field, result$indices)
+  model   <- DroneBioR::fit_biomass_lm(joined)
+  r2      <- summary(model)$r.squared
+  cat("**Predictors used:** ", paste(names(coef(model))[-1], collapse = ", "), "\n\n")
+  cat("**Adjusted R^2:** ", round(summary(model)$adj.r.squared, 4), "\n\n")
+  cat("**Multiple R^2:** ", round(r2, 4), "\n\n")
+  print(knitr::kable(
+    as.data.frame(summary(model)$coefficients),
+    digits  = 4,
+    caption = "Linear model coefficients."
+  ))
+} else {
+  cat("> No field samples supplied (`field_csv` parameter). Add a CSV with ",
+      "`sample_id`, `biomass_kgha` and x/y or longitude/latitude columns to ",
+      "include a baseline biomass model in this report.\n", sep = "")
+}
+```
+
+## About this report
+
+This report was generated by `DroneBioR::render_dronebio_report()`. The
+package wraps external photogrammetry engines (OpenDroneMap, WebODM,
+Pix4Dmapper or Agisoft Metashape) and provides the scientific R layer:
+radiometric scaling, vegetation indices, canopy height models, region
+of interest analysis, and baseline biomass modelling.
+
+Citation: run `citation("DroneBioR")` in R.
