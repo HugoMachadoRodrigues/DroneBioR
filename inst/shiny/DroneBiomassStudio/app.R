@@ -359,6 +359,12 @@ product_metadata <- list(
     formula = "ODM MicaSense Blue band after alpha masking and reflectance scaling",
     unit = "Reflectance, displayed as 0 to 1",
     use = "Visible blue reflectance used in EVI and RGB visualization."
+  ),
+  Hillshade = list(
+    label = "Hillshade",
+    formula = "terra::shade(slope, aspect, angle = 45, direction = 315) on the DSM",
+    unit = "Grayscale shading, 0 (dark) to 1 (bright)",
+    use = "Adds relief shading under colored overlays so terrain structure is readable."
   )
 )
 
@@ -2278,16 +2284,17 @@ server <- function(input, output, session) {
       )
   })
 
-  observeEvent(input$load_gis, {
-    all_selected <- intersect(selected_overlay_layers(), overlay_choices)
-    validate(need(length(all_selected) > 0, "Select at least one overlay product."))
+  # Tracks whether the GIS overlays have been loaded at least once in this
+  # session. Used by the opacity-slider observer to decide whether it has
+  # any layers to re-render.
+  gis_loaded <- reactiveVal(FALSE)
 
-    note_id <- showNotification(
-      "Loading overlay products. The basemap remains visible while rasters are processed.",
-      type = "message",
-      duration = NULL
-    )
-    on.exit(removeNotification(note_id), add = TRUE)
+  # Core render path. Factored out so we can call it from two places:
+  #   - the "Load selected overlays" button (fits the map to the overlays);
+  #   - the layer-opacity slider (re-renders existing overlays at the new
+  #     opacity, without resetting pan/zoom).
+  render_gis_overlays <- function(all_selected, opacity, fit_to_bounds = TRUE) {
+    validate(need(length(all_selected) > 0, "Select at least one overlay product."))
 
     # Hillshade is sourced from the DSM, not from gis_stack(), so peel it
     # off first and process the spectral layers afterwards.
@@ -2318,13 +2325,10 @@ server <- function(input, output, session) {
     if (hillshade_selected) {
       h <- hillshade_raster()
       if (!is.null(h)) {
-        # leafem::colorOptions accepts a palette character vector; the
-        # grayscale ramp lives directly in tile_raster_on_map via the
-        # palette_name fall-through, so we pass it explicitly here.
         proxy <- tile_raster_on_map(
           proxy, h,
           group        = "Hillshade",
-          opacity      = min(0.75, 0.85 * input$map_opacity),
+          opacity      = min(0.75, 0.85 * opacity),
           palette_name = "Grays"
         )
         if (is.null(first_layer)) first_layer <- h
@@ -2337,7 +2341,7 @@ server <- function(input, output, session) {
       proxy <- tile_raster_on_map(
         proxy, raster,
         group        = layer_name,
-        opacity      = input$map_opacity,
+        opacity      = opacity,
         palette_name = palette_name
       )
 
@@ -2361,11 +2365,19 @@ server <- function(input, output, session) {
     }
     selected_layers <- if (hillshade_selected) c(spectral_selected, "Hillshade") else spectral_selected
 
-    bounds <- raster_bounds_4326(first_layer)
-    proxy |>
+    proxy <- proxy |>
       addScaleBar(position = "bottomleft") |>
-      addControl(html = HTML(overlay_legend_html(legend_items)), position = "bottomright") |>
-      fitBounds(bounds[["lng1"]], bounds[["lat1"]], bounds[["lng2"]], bounds[["lat2"]]) |>
+      # Legend on bottomleft (above the scale bar) - keeps it clear of the
+      # layers control which lives in the top-right corner.
+      addControl(html = HTML(overlay_legend_html(legend_items)), position = "bottomleft")
+
+    if (isTRUE(fit_to_bounds) && !is.null(first_layer)) {
+      bounds <- raster_bounds_4326(first_layer)
+      proxy <- proxy |>
+        fitBounds(bounds[["lng1"]], bounds[["lat1"]], bounds[["lng2"]], bounds[["lat2"]])
+    }
+
+    proxy |>
       addLayersControl(
         baseGroups = c("Satellite", "Light basemap"),
         overlayGroups = c(
@@ -2376,7 +2388,35 @@ server <- function(input, output, session) {
         ),
         options = layersControlOptions(collapsed = FALSE)
       )
+  }
+
+  observeEvent(input$load_gis, {
+    note_id <- showNotification(
+      "Loading overlay products. The basemap remains visible while rasters are processed.",
+      type = "message",
+      duration = NULL
+    )
+    on.exit(removeNotification(note_id), add = TRUE)
+
+    render_gis_overlays(
+      all_selected   = intersect(selected_overlay_layers(), overlay_choices),
+      opacity        = input$map_opacity,
+      fit_to_bounds  = TRUE
+    )
+    gis_loaded(TRUE)
   })
+
+  # When the opacity slider moves after the user has already loaded overlays,
+  # re-render the layers at the new opacity. We skip fit_to_bounds so the
+  # user's pan/zoom is preserved.
+  observeEvent(input$map_opacity, {
+    if (!isTRUE(gis_loaded())) return()
+    render_gis_overlays(
+      all_selected   = intersect(isolate(selected_overlay_layers()), overlay_choices),
+      opacity        = input$map_opacity,
+      fit_to_bounds  = FALSE
+    )
+  }, ignoreInit = TRUE)
 
   observeEvent(input$gis_map_click, {
     click <- input$gis_map_click
