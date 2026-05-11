@@ -1,6 +1,6 @@
 Package: DroneBioR
 Title: Reproducible Drone Biomass Workflows for Multispectral Imagery
-Version: 0.2.0
+Version: 0.3.0
 Authors@R:
     person(given = "Hugo Machado",
            family = "Rodrigues",
