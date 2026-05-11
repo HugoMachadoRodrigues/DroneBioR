@@ -23,7 +23,7 @@
 
     <a class="navbar-brand me-2" href="index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -63,16 +63,41 @@
 </div>
 <!-- badges: start -->
 
-<p><strong>DroneBioR</strong> is a research-oriented R package and Shiny app for drone biomass analysis with MicaSense multispectral imagery. It delegates the heavy photogrammetry work (SfM, MVS, mesh, texturing) to external engines — <strong>OpenDroneMap</strong>, <strong>WebODM</strong>, <strong>Pix4Dmapper</strong> or <strong>Agisoft Metashape</strong> — and contributes the scientific layer in R:</p>
-<pre class="text"><code>Engine outputs (orthomosaic, DSM, DTM, dense point cloud, mesh)
+<p><strong>DroneBioR</strong> is a research-oriented R package and Shiny app (Drone Biomass Studio) for drone biomass analysis with MicaSense multispectral imagery. It delegates the heavy photogrammetry work (SfM, MVS, mesh, texturing) to external engines — <strong>OpenDroneMap</strong>, <strong>WebODM</strong>, <strong>Pix4Dmapper</strong> or <strong>Agisoft Metashape</strong> — and contributes the scientific layer in R:</p>
+<pre class="text"><code>Engine outputs (orthomosaic, DSM, DTM, dense point cloud, textured mesh)
   -&gt; alpha / no-data masking
   -&gt; radiometric scaling to reflectance
   -&gt; 9 vegetation indices (NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
                            CIrededge, MSAVI2, VARI)
-  -&gt; field sample extraction
+  -&gt; ground / vegetation classification
   -&gt; canopy height model + ROI metrics
-  -&gt; baseline biomass model
-  -&gt; Shiny app for interactive exploration</code></pre>
+  -&gt; survey-grade volume math (DTM / min-Z / mean-Z / quantile /
+                               user-plane / Pix4D-style perimeter TIN)
+  -&gt; field sample extraction + baseline biomass model
+  -&gt; time-series tracking across flights
+  -&gt; HTML report (RMarkdown template)
+  -&gt; Drone Biomass Studio: 7-panel Shiny app for interactive
+     GIS + 3D modeling + spectral + survey + reporting</code></pre>
+<div class="section level3">
+<h3 id="whats-in-the-shiny-app">What’s in the Shiny app<a class="anchor" aria-label="anchor" href="#whats-in-the-shiny-app"></a>
+</h3>
+<ul>
+<li>
+<strong>GIS Workspace</strong> — basemap + index overlays with COG-style tiling (smooth pan/zoom on big orthomosaics), distance / area / CHM-volume measurement tools, named ROI comparison table, GeoJSON annotation pinning, hillshade-from-DSM overlay.</li>
+<li>
+<strong>Processing Engine</strong> — drives OpenDroneMap via Docker.</li>
+<li>
+<strong>3D Modeling</strong> — full-width WebGL viewport with OrbitControls, XYZ orientation gizmo, live scale bar, and an opt-in textured-OBJ mesh loader (loads ODM’s <code>odm_textured_model_geo.obj</code> straight into three.js). Survey-grade volume calculations over the convex hull of the currently-selected points, with six base-reference methods (Pix4D / ContextCapture / Trimble convention).</li>
+<li>
+<strong>Spectral Analytics</strong> — orthomosaic reading, radiometric scaling, panel calibration, the 9-index stack, application maps.</li>
+<li>
+<strong>Field Models</strong> — extract spectral values at field samples, fit a baseline biomass linear model.</li>
+<li>
+<strong>Time Series</strong> — register multiple flights of the same site and plot NDVI / biomass / CHM across dates.</li>
+<li>
+<strong>Exports</strong> — <code><a href="reference/run_dronebio_workflow.html">run_dronebio_workflow()</a></code> one-click; HTML report via <code><a href="reference/render_dronebio_report.html">render_dronebio_report()</a></code>.</li>
+</ul>
+</div>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>

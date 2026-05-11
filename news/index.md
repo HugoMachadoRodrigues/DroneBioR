@@ -2,6 +2,187 @@
 
 ## DroneBioR (development version)
 
+## DroneBioR 0.4.0
+
+A second pass of feature work on top of 0.3.0, focused on the 3D
+Modeling panel of Drone Biomass Studio and on the scientific volume math
+used by the survey-grade workflow. Same scope rule as before: the
+package stays out of SfM / MVS / mesh / texturing, and reaches the
+deliverables a Pix4D Mapper or Metashape user would expect on the
+analysis side.
+
+### New features
+
+- **Survey-grade volume calculations.** New exported
+  `compute_survey_volumes(top, roi, method, ...)` implements the six
+  base-reference methods photogrammetric surveyors use - DTM (canopy
+  biomass), min Z (classic stockpile), mean Z, ground quantile,
+  user-defined plane, and Delaunay TIN through the perimeter vertices
+  (the Pix4D / ContextCapture / Trimble standard for stockpiles). The
+  result reports cut / fill / net volumes, planimetric area, the 3D
+  draped surface area via the secant-of-slope formula, perimeter, cell
+  area and count, and per-surface min / median / mean / max summaries.
+  `interp` added to Suggests for the TIN method. Wired into the 3D
+  Modeling panel as a new “Survey volumes” card driven by the convex
+  hull of the currently-selected points.
+
+- **3D Modeling panel redesign.** Renamed from “3D & Tree Metrics”
+  (which buried everything that is not tree work). The 3D viewport now
+  spans the full panel width at clamp(520px, 70vh, 820px) height;
+  metrics moved into a
+  [`bslib::navset_card_tab`](https://rstudio.github.io/bslib/reference/navset.html)
+  below with nine tabs (Selection / Survey volumes / Trees / Vertical
+  profile / Manual crowns / Distance / 2D context / Export / Tool
+  reference). New toolbar above the viewer: Browse files / Load 3D scene
+  / Reset view / Zoom + / Zoom -. The Reset / Zoom buttons drive
+  OrbitControls via a `window.__dronebior_viewer` global so R-side
+  actionButtons can re-frame the camera.
+
+- **Textured OBJ mesh loader for the 3D viewer.** New opt-in checkbox in
+  the 3D Modeling sidebar registers the ODM textured output directory as
+  a Shiny resource path and pulls `odm_textured_model_geo.obj` plus its
+  MTL plus all referenced texture PNGs via three.js OBJLoader /
+  MTLLoader. Vertex positions are rewritten into the viewer’s local
+  coordinate frame so the mesh and the point cloud share a single
+  transform. Falls back to a plain MeshLambertMaterial if the MTL fails.
+
+- **Live scale bar in the 3D viewer.** Projects two world points 1 m
+  apart at the OrbitControls target depth, measures the pixel distance,
+  picks a nice round meter value (1 / 2 / 5 / 10 / 20 / 50 / 100 / …) so
+  the bar lands near 110 px, and updates the bottom-left overlay DOM ~10
+  Hz from the animation loop. Re-scales smoothly as the user pans /
+  zooms.
+
+- **Corner XYZ orientation gizmo.** Separate three.js scene with an
+  AxesHelper plus coloured sphere tips (X red, Y green, Z blue). A
+  112x112 transparent WebGL renderer is overlaid on the viewer
+  bottom-right; its camera is reoriented every frame to match the main
+  camera’s view direction. Same convention Pix4D / Blender use; users
+  get a fast orientation cue without a separate viewport.
+
+- **Color stretch toggle on the GIS map.** New selector “Color stretch”:
+  “Fixed semantic” (default), “Data range”, “Percentile 2-98”. Fixed
+  semantic pins NDVI / NDRE / NDWI / GNDVI / VARI / Biomass_Index_Proxy
+  to \[-1, 1\] (yellow = 0 is the biophysical vegetation boundary),
+  MSAVI2 and reflectance bands to \[0, 1\], EVI / SAVI / CIrededge fall
+  through to the data range (no canonical bounded range). Same value on
+  two flights always produces the same colour, which is the convention
+  for time-series panels in remote-sensing publications. The bottom-left
+  legend reflects the active domain exactly.
+
+- **GIS Workspace measurement and annotation tools.** “Measure volume
+  (CHM)” picks polygon vertices, reprojects into the CHM CRS and routes
+  through
+  [`compute_chm_roi_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_chm_roi_metrics.md).
+  Annotation mode pins named markers on the basemap and persists them as
+  GeoJSON. Multi-ROI comparison table averages NDVI / NDRE / EVI / SAVI
+  / Biomass_Index_Proxy plus CHM mean / max / volume across named
+  regions. Annotations and ROIs now both save under
+  `<project_dir>/studio_assets/` for consistency, with the path
+  displayed in the sidebar. ROIs auto-load on session start.
+
+- **ROI delete / redraw workflow.** “Saved ROIs” dropdown plus “Redraw
+  selected ROI” (deletes and re-enters draw mode with the same name) and
+  “Delete selected ROI” (named-only delete that leaves the rest of the
+  collection intact). Vertex-by-vertex editing is still not supported;
+  the new redraw flow is the pragmatic replacement.
+
+- **PDF / HTML report.** New exported
+  [`render_dronebio_report()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/render_dronebio_report.md)
+  and a one-click “Render HTML report” button in the Exports panel. The
+  bundled `inst/report/biomass_report.Rmd` template includes the ODM
+  inventory, per-band reflectance summary, per-index histograms, CHM
+  map, optional field-based biomass model.
+
+- **Time-series tracking across flights.** New registry-based workflow:
+  [`register_flight()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/register_flight.md),
+  [`list_flights()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/list_flights.md),
+  [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_time_series.md)
+  with three stock summary helpers (`flight_ndvi_mean`,
+  `flight_biomass_proxy_mean`, `flight_chm_mean`). New “Time Series” nav
+  panel in the Shiny app with a metric selector and a plot across the
+  registered dates.
+
+- **Ground / vegetation classification.** New
+  [`classify_ground_vegetation()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_ground_vegetation.md)
+  for rule-based 5-class NDVI + CHM classification, and
+  [`classify_ground_csf()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_ground_csf.md)
+  bridging to
+  [`lidR::classify_ground()`](https://rdrr.io/pkg/lidR/man/classify.html)
+  with the Cloth Simulation Filter.
+
+### Performance and robustness
+
+- **Async workflow execution.**
+  [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_dronebio_workflow.md)
+  runs in a background R session via
+  [`promises::future_promise()`](https://rstudio.github.io/promises/reference/future_promise.html)
+  when both `future` and `promises` are installed. UI stays responsive
+  while the workflow writes products to disk.
+
+- **COG-style raster tiling.** New `tile_raster_on_map()` private helper
+  uses
+  [`leafem::addGeotiff()`](https://r-spatial.github.io/leafem/reference/addGeotiff.html)
+  when `leafem` is installed, with a process-scoped temp-file cache
+  keyed by raster fingerprint. Pan/zoom on large orthomosaics is
+  incremental rather than re-rendering a downsampled image.
+
+- **Toast-based error UI.** New exported
+  [`with_error_toast()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/with_error_toast.md)
+  helper catches errors inside Shiny reactives and renders them as
+  notifications. Applied to the six event-driven reactives.
+  `shiny.silent.error` re-thrown so existing `validate()` / `req()`
+  inline messages keep working.
+
+- **Reactive caching.** `bindCache()` applied to the IO reactives in the
+  GIS Workspace (mosaic, gis_stack, point_cloud, hillshade).
+
+### UX
+
+- **Branded navbar.** New 400-px DroneBioR logo at 120 px height in the
+  Drone Biomass Studio navbar. Matching `man/figures/logo.png` is
+  auto-picked up by pkgdown for the doc site.
+
+- **Per-panel help cards.** Each of the seven nav panels opens with a
+  Bootstrap info card explaining what the panel does and linking to the
+  relevant pkgdown vignette.
+
+- **Hillshade overlay.** “Hillshade” added to the GIS overlay choices,
+  computed from the DSM via
+  [`terra::terrain()`](https://rspatial.github.io/terra/reference/terrain.html) +
+  [`terra::shade()`](https://rspatial.github.io/terra/reference/shade.html),
+  rendered in grayscale beneath the colour overlays.
+
+- **Hover values formatted to 2 decimals.** Configured leafem’s
+  imagequery so the per-raster readout stops bleeding 15 decimal places
+  of floating-point noise; moved to bottom-right so it stays clear of
+  the top-right layers control. A custom message handler also sweeps the
+  widgets on overlay reload / clear so they never accumulate across
+  cycles.
+
+### Bug fixes
+
+- `bindCache()` must be called before `bindEvent()`, not after; the
+  earlier ordering crashed the server function during init, which
+  silently broke unrelated observers (file browser, etc.).
+- [`configure_proj_database()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/configure_proj_database.md)
+  no longer warns inside
+  [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_dronebio_workflow.md)
+  when proj.db is reachable through other channels (Debian/Ubuntu apt
+  PROJ paths added).
+- [`terra::extract()`](https://rspatial.github.io/terra/reference/extract.html)
+  on a matrix does not accept `ID = FALSE`; removed for the
+  perimeter-TIN path.
+- `compute_survey_volumes(top, roi)` returns an NA-filled object when
+  the ROI does not intersect the raster, rather than the default
+  [`terra::crop()`](https://rspatial.github.io/terra/reference/crop.html)
+  error.
+
+### New optional dependencies (Suggests)
+
+- `interp` - perimeter-TIN base for
+  [`compute_survey_volumes()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_survey_volumes.md).
+
 ## DroneBioR 0.3.0
 
 This release focuses on making the Shiny app (Drone Biomass Studio)

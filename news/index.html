@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -40,6 +40,54 @@
 
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="dronebior-development-version">DroneBioR (development version)<a class="anchor" aria-label="anchor" href="#dronebior-development-version"></a></h2>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.4.0" id="dronebior-040">DroneBioR 0.4.0<a class="anchor" aria-label="anchor" href="#dronebior-040"></a></h2>
+<p>A second pass of feature work on top of 0.3.0, focused on the 3D Modeling panel of Drone Biomass Studio and on the scientific volume math used by the survey-grade workflow. Same scope rule as before: the package stays out of SfM / MVS / mesh / texturing, and reaches the deliverables a Pix4D Mapper or Metashape user would expect on the analysis side.</p>
+<div class="section level3">
+<h3 id="new-features-0-4-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-4-0"></a></h3>
+<ul><li><p><strong>Survey-grade volume calculations.</strong> New exported <code>compute_survey_volumes(top, roi, method, ...)</code> implements the six base-reference methods photogrammetric surveyors use - DTM (canopy biomass), min Z (classic stockpile), mean Z, ground quantile, user-defined plane, and Delaunay TIN through the perimeter vertices (the Pix4D / ContextCapture / Trimble standard for stockpiles). The result reports cut / fill / net volumes, planimetric area, the 3D draped surface area via the secant-of-slope formula, perimeter, cell area and count, and per-surface min / median / mean / max summaries. <code>interp</code> added to Suggests for the TIN method. Wired into the 3D Modeling panel as a new “Survey volumes” card driven by the convex hull of the currently-selected points.</p></li>
+<li><p><strong>3D Modeling panel redesign.</strong> Renamed from “3D &amp; Tree Metrics” (which buried everything that is not tree work). The 3D viewport now spans the full panel width at clamp(520px, 70vh, 820px) height; metrics moved into a <code><a href="https://rstudio.github.io/bslib/reference/navset.html" class="external-link">bslib::navset_card_tab</a></code> below with nine tabs (Selection / Survey volumes / Trees / Vertical profile / Manual crowns / Distance / 2D context / Export / Tool reference). New toolbar above the viewer: Browse files / Load 3D scene / Reset view / Zoom + / Zoom -. The Reset / Zoom buttons drive OrbitControls via a <code>window.__dronebior_viewer</code> global so R-side actionButtons can re-frame the camera.</p></li>
+<li><p><strong>Textured OBJ mesh loader for the 3D viewer.</strong> New opt-in checkbox in the 3D Modeling sidebar registers the ODM textured output directory as a Shiny resource path and pulls <code>odm_textured_model_geo.obj</code> plus its MTL plus all referenced texture PNGs via three.js OBJLoader / MTLLoader. Vertex positions are rewritten into the viewer’s local coordinate frame so the mesh and the point cloud share a single transform. Falls back to a plain MeshLambertMaterial if the MTL fails.</p></li>
+<li><p><strong>Live scale bar in the 3D viewer.</strong> Projects two world points 1 m apart at the OrbitControls target depth, measures the pixel distance, picks a nice round meter value (1 / 2 / 5 / 10 / 20 / 50 / 100 / …) so the bar lands near 110 px, and updates the bottom-left overlay DOM ~10 Hz from the animation loop. Re-scales smoothly as the user pans / zooms.</p></li>
+<li><p><strong>Corner XYZ orientation gizmo.</strong> Separate three.js scene with an AxesHelper plus coloured sphere tips (X red, Y green, Z blue). A 112x112 transparent WebGL renderer is overlaid on the viewer bottom-right; its camera is reoriented every frame to match the main camera’s view direction. Same convention Pix4D / Blender use; users get a fast orientation cue without a separate viewport.</p></li>
+<li><p><strong>Color stretch toggle on the GIS map.</strong> New selector “Color stretch”: “Fixed semantic” (default), “Data range”, “Percentile 2-98”. Fixed semantic pins NDVI / NDRE / NDWI / GNDVI / VARI / Biomass_Index_Proxy to [-1, 1] (yellow = 0 is the biophysical vegetation boundary), MSAVI2 and reflectance bands to [0, 1], EVI / SAVI / CIrededge fall through to the data range (no canonical bounded range). Same value on two flights always produces the same colour, which is the convention for time-series panels in remote-sensing publications. The bottom-left legend reflects the active domain exactly.</p></li>
+<li><p><strong>GIS Workspace measurement and annotation tools.</strong> “Measure volume (CHM)” picks polygon vertices, reprojects into the CHM CRS and routes through <code><a href="../reference/compute_chm_roi_metrics.html">compute_chm_roi_metrics()</a></code>. Annotation mode pins named markers on the basemap and persists them as GeoJSON. Multi-ROI comparison table averages NDVI / NDRE / EVI / SAVI / Biomass_Index_Proxy plus CHM mean / max / volume across named regions. Annotations and ROIs now both save under <code>&lt;project_dir&gt;/studio_assets/</code> for consistency, with the path displayed in the sidebar. ROIs auto-load on session start.</p></li>
+<li><p><strong>ROI delete / redraw workflow.</strong> “Saved ROIs” dropdown plus “Redraw selected ROI” (deletes and re-enters draw mode with the same name) and “Delete selected ROI” (named-only delete that leaves the rest of the collection intact). Vertex-by-vertex editing is still not supported; the new redraw flow is the pragmatic replacement.</p></li>
+<li><p><strong>PDF / HTML report.</strong> New exported <code><a href="../reference/render_dronebio_report.html">render_dronebio_report()</a></code> and a one-click “Render HTML report” button in the Exports panel. The bundled <code>inst/report/biomass_report.Rmd</code> template includes the ODM inventory, per-band reflectance summary, per-index histograms, CHM map, optional field-based biomass model.</p></li>
+<li><p><strong>Time-series tracking across flights.</strong> New registry-based workflow: <code><a href="../reference/register_flight.html">register_flight()</a></code>, <code><a href="../reference/list_flights.html">list_flights()</a></code>, <code><a href="../reference/flight_time_series.html">flight_time_series()</a></code> with three stock summary helpers (<code>flight_ndvi_mean</code>, <code>flight_biomass_proxy_mean</code>, <code>flight_chm_mean</code>). New “Time Series” nav panel in the Shiny app with a metric selector and a plot across the registered dates.</p></li>
+<li><p><strong>Ground / vegetation classification.</strong> New <code><a href="../reference/classify_ground_vegetation.html">classify_ground_vegetation()</a></code> for rule-based 5-class NDVI + CHM classification, and <code><a href="../reference/classify_ground_csf.html">classify_ground_csf()</a></code> bridging to <code><a href="https://rdrr.io/pkg/lidR/man/classify.html" class="external-link">lidR::classify_ground()</a></code> with the Cloth Simulation Filter.</p></li>
+</ul></div>
+<div class="section level3">
+<h3 id="performance-and-robustness-0-4-0">Performance and robustness<a class="anchor" aria-label="anchor" href="#performance-and-robustness-0-4-0"></a></h3>
+<ul><li><p><strong>Async workflow execution.</strong> <code><a href="../reference/run_dronebio_workflow.html">run_dronebio_workflow()</a></code> runs in a background R session via <code><a href="https://rstudio.github.io/promises/reference/future_promise.html" class="external-link">promises::future_promise()</a></code> when both <code>future</code> and <code>promises</code> are installed. UI stays responsive while the workflow writes products to disk.</p></li>
+<li><p><strong>COG-style raster tiling.</strong> New <code>tile_raster_on_map()</code> private helper uses <code><a href="https://r-spatial.github.io/leafem/reference/addGeotiff.html" class="external-link">leafem::addGeotiff()</a></code> when <code>leafem</code> is installed, with a process-scoped temp-file cache keyed by raster fingerprint. Pan/zoom on large orthomosaics is incremental rather than re-rendering a downsampled image.</p></li>
+<li><p><strong>Toast-based error UI.</strong> New exported <code><a href="../reference/with_error_toast.html">with_error_toast()</a></code> helper catches errors inside Shiny reactives and renders them as notifications. Applied to the six event-driven reactives. <code>shiny.silent.error</code> re-thrown so existing <code>validate()</code> / <code>req()</code> inline messages keep working.</p></li>
+<li><p><strong>Reactive caching.</strong> <code>bindCache()</code> applied to the IO reactives in the GIS Workspace (mosaic, gis_stack, point_cloud, hillshade).</p></li>
+</ul></div>
+<div class="section level3">
+<h3 id="ux-0-4-0">UX<a class="anchor" aria-label="anchor" href="#ux-0-4-0"></a></h3>
+<ul><li><p><strong>Branded navbar.</strong> New 400-px DroneBioR logo at 120 px height in the Drone Biomass Studio navbar. Matching <code>man/figures/logo.png</code> is auto-picked up by pkgdown for the doc site.</p></li>
+<li><p><strong>Per-panel help cards.</strong> Each of the seven nav panels opens with a Bootstrap info card explaining what the panel does and linking to the relevant pkgdown vignette.</p></li>
+<li><p><strong>Hillshade overlay.</strong> “Hillshade” added to the GIS overlay choices, computed from the DSM via <code><a href="https://rspatial.github.io/terra/reference/terrain.html" class="external-link">terra::terrain()</a></code> + <code><a href="https://rspatial.github.io/terra/reference/shade.html" class="external-link">terra::shade()</a></code>, rendered in grayscale beneath the colour overlays.</p></li>
+<li><p><strong>Hover values formatted to 2 decimals.</strong> Configured leafem’s imagequery so the per-raster readout stops bleeding 15 decimal places of floating-point noise; moved to bottom-right so it stays clear of the top-right layers control. A custom message handler also sweeps the widgets on overlay reload / clear so they never accumulate across cycles.</p></li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes-0-4-0">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-4-0"></a></h3>
+<ul><li>
+<code>bindCache()</code> must be called before <code>bindEvent()</code>, not after; the earlier ordering crashed the server function during init, which silently broke unrelated observers (file browser, etc.).</li>
+<li>
+<code><a href="../reference/configure_proj_database.html">configure_proj_database()</a></code> no longer warns inside <code><a href="../reference/run_dronebio_workflow.html">run_dronebio_workflow()</a></code> when proj.db is reachable through other channels (Debian/Ubuntu apt PROJ paths added).</li>
+<li>
+<code><a href="https://rspatial.github.io/terra/reference/extract.html" class="external-link">terra::extract()</a></code> on a matrix does not accept <code>ID = FALSE</code>; removed for the perimeter-TIN path.</li>
+<li>
+<code>compute_survey_volumes(top, roi)</code> returns an NA-filled object when the ROI does not intersect the raster, rather than the default <code><a href="https://rspatial.github.io/terra/reference/crop.html" class="external-link">terra::crop()</a></code> error.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="new-optional-dependencies-suggests-0-4-0">New optional dependencies (Suggests)<a class="anchor" aria-label="anchor" href="#new-optional-dependencies-suggests-0-4-0"></a></h3>
+<ul><li>
+<code>interp</code> - perimeter-TIN base for <code><a href="../reference/compute_survey_volumes.html">compute_survey_volumes()</a></code>.</li>
+</ul></div>
 </div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.3.0" id="dronebior-030">DroneBioR 0.3.0<a class="anchor" aria-label="anchor" href="#dronebior-030"></a></h2>
