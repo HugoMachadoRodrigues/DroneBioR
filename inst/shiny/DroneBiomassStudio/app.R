@@ -2344,9 +2344,18 @@ server <- function(input, output, session) {
       }
     }
 
+    # Diverging Red-Yellow-Green palette for any layer that conceptually
+    # spans negative -> 0 -> positive: red at the low end (water/bare/soil
+    # for negative NDVI etc.), yellow at zero (transition), dark green at
+    # the high end (vigorous vegetation). Raw reflectance bands stay on
+    # viridis since they are bounded 0..1 with no semantic midpoint.
+    index_palette_layers <- c(
+      "NDVI", "NDRE", "EVI", "SAVI", "NDWI",
+      "GNDVI", "CIrededge", "MSAVI2", "VARI", "Biomass_Index_Proxy"
+    )
     for (layer_name in spectral_selected) {
       raster <- x[[layer_name]]
-      palette_name <- if (layer_name %in% c("NDVI", "NDRE", "SAVI", "Biomass_Index_Proxy")) "YlGn" else "viridis"
+      palette_name <- if (layer_name %in% index_palette_layers) "RdYlGn" else "viridis"
       proxy <- tile_raster_on_map(
         proxy, raster,
         group        = layer_name,
@@ -3054,7 +3063,9 @@ server <- function(input, output, session) {
     zlim <- index_zlim(input$index_layer, isTRUE(input$fixed_index_limits), layer)
     terra::plot(
       display_layer,
-      col = hcl.colors(100, "YlGn"),
+      # Diverging Red-Yellow-Green palette: red at low values (negative
+      # vegetation indices), yellow near zero, dark green at the high end.
+      col = hcl.colors(100, "RdYlGn"),
       main = input$index_layer,
       xlab = "Easting (m)",
       ylab = "Northing (m)",
