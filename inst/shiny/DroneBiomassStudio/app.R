@@ -949,6 +949,7 @@ ui <- page_navbar(
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"),
+    tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"),
     tags$script(HTML("
       document.addEventListener('shown.bs.tab', function() {
         window.setTimeout(function() {
@@ -986,6 +987,66 @@ ui <- page_navbar(
         dir.multiplyScalar(factor);
         v.camera.position.copy(v.controls.target.clone().add(dir));
         v.controls.update();
+      });
+
+      // Screenshot the WebGL canvas as PNG and trigger a browser download.
+      // HTML overlays (legend, scale bar, gizmo) are NOT included - this
+      // captures the actual 3D scene as the camera sees it, which is
+      // what one would put in a paper figure.
+      Shiny.addCustomMessageHandler('dronebior_3d_screenshot', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.renderer) return;
+        // Force a fresh render so the framebuffer is up to date even if
+        // preserveDrawingBuffer was not set. Calling toDataURL() in the
+        // same synchronous task right after render() works reliably.
+        v.renderer.render(v.scene, v.camera);
+        var dataUrl = v.renderer.domElement.toDataURL('image/png');
+        var ts = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+        var a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = (msg && msg.label ? msg.label : 'dronebior_3d_view') + '_' + ts + '.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      });
+
+      // Export the full three.js scene as a binary glTF (.glb). The
+      // exporter walks the scene graph: textured OBJ mesh, point cloud,
+      // basemap plane, axes, gizmo - everything visible in the viewer.
+      // .glb opens in Blender / ContextCapture / MeshLab / web 3D
+      // viewers without conversion.
+      Shiny.addCustomMessageHandler('dronebior_3d_export_gltf', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.scene || !THREE.GLTFExporter) {
+          if (window.Shiny) {
+            Shiny.setInputValue('point_cloud_export_status',
+              'GLTFExporter not available in this browser session.',
+              { priority: 'event' });
+          }
+          return;
+        }
+        var exporter = new THREE.GLTFExporter();
+        exporter.parse(v.scene, function(result) {
+          var ts = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+          var blob, ext;
+          if (result instanceof ArrayBuffer) {
+            blob = new Blob([result], { type: 'application/octet-stream' });
+            ext = '.glb';
+          } else {
+            blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+            ext = '.gltf';
+          }
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = (msg && msg.label ? msg.label : 'dronebior_3d_scene') + '_' + ts + ext;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+        }, function(err) {
+          console.warn('GLTFExporter failed:', err);
+        }, { binary: true });
       });
     ")),
     tags$style(HTML("
@@ -1554,6 +1615,8 @@ ui <- page_navbar(
           actionButton("reset_3d_view", "Reset view", class = "btn-outline-secondary"),
           actionButton("zoom_in_3d",  "Zoom +",     class = "btn-outline-secondary"),
           actionButton("zoom_out_3d", "Zoom -",     class = "btn-outline-secondary"),
+          actionButton("screenshot_3d",   "Screenshot",     class = "btn-outline-secondary"),
+          actionButton("export_3d_gltf",  "Export glTF",    class = "btn-outline-secondary"),
           span(class = "viewer-status", textOutput("point_cloud_status", inline = TRUE))
         ),
         # Large 3D viewport with overlays (legend + scale bar + axis hint).
@@ -4043,7 +4106,11 @@ server <- function(input, output, session) {
           container.appendChild(badge);
 
           const camera = new THREE.PerspectiveCamera(55, width / height, 0.01, 1000);
-          const renderer = new THREE.WebGLRenderer({ antialias: true });
+          // preserveDrawingBuffer = true keeps the WebGL framebuffer
+          // intact between renders so the Screenshot toolbar button can
+          // do renderer.domElement.toDataURL() reliably across browsers.
+          // Small perf hit, acceptable for this app's use case.
+          const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
           renderer.setSize(width, height);
           renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
           renderer.domElement.style.position = 'absolute';
@@ -4702,6 +4769,15 @@ server <- function(input, output, session) {
   })
   observeEvent(input$zoom_out_3d, {
     session$sendCustomMessage("dronebior_3d_zoom", list(factor = 1.25))
+  })
+
+  observeEvent(input$screenshot_3d, {
+    session$sendCustomMessage("dronebior_3d_screenshot",
+                              list(label = input$selection_label %||% "dronebior_3d_view"))
+  })
+  observeEvent(input$export_3d_gltf, {
+    session$sendCustomMessage("dronebior_3d_export_gltf",
+                              list(label = input$selection_label %||% "dronebior_3d_scene"))
   })
 
   # Dynamic legend driven by the currently selected point symbology.
