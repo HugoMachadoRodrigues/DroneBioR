@@ -1180,6 +1180,12 @@ ui <- page_navbar(
         ),
         actionButton("clear_gis_measure", "Clear map measurement", class = "btn-outline-secondary"),
         actionButton("recenter_gis_map", "Center map", class = "btn-outline-secondary"),
+        div(class = "form-label", "Map annotations"),
+        checkboxInput("annotation_mode", "Annotation mode (click map to pin)", value = FALSE),
+        textInput("annotation_text", NULL, placeholder = "Annotation text..."),
+        actionButton("save_annotations", "Save annotations (GeoJSON)", class = "btn-outline-secondary"),
+        fileInput("load_annotations", "Load annotations (GeoJSON)", accept = c(".geojson", ".json")),
+        actionButton("clear_annotations", "Clear annotations", class = "btn-outline-secondary"),
         actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
         actionButton("clear_gis", "Clear overlays", class = "btn-outline-secondary"),
         div(class = "sidebar-note", "The basemap is visible immediately. Selected products are added as transparent overlays when they finish loading.")
@@ -1497,6 +1503,19 @@ server <- function(input, output, session) {
   browser_dir <- reactiveVal(set_browser_dir(default_project$project_dir))
   browser_selected <- reactiveVal(set_browser_dir(default_project$project_dir))
   gis_measure_points <- reactiveVal(data.frame(lng = numeric(), lat = numeric()))
+
+  # Persistent map annotations. Stored as a tidy data frame in WGS84 so the
+  # save format (GeoJSON) and the leaflet markers share the same coords.
+  empty_annotations <- function() {
+    data.frame(
+      lng        = numeric(),
+      lat        = numeric(),
+      label      = character(),
+      created_at = character(),
+      stringsAsFactors = FALSE
+    )
+  }
+  annotations <- reactiveVal(empty_annotations())
   panel_coefficients <- reactiveVal(data.frame(
     band = c("Blue", "Green", "Red", "RedEdge", "NIR"),
     certified_reflectance = NA_real_,
@@ -2310,14 +2329,109 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$gis_map_click, {
+    click <- input$gis_map_click
+
+    # Annotation mode takes precedence over measurement: a single click in
+    # annotation mode pins the current text to that coordinate, regardless
+    # of which measurement tool is selected.
+    if (isTRUE(input$annotation_mode)) {
+      text <- input$annotation_text %||% ""
+      if (!nzchar(text)) {
+        showNotification("Type annotation text first.", type = "warning", duration = 4)
+        return()
+      }
+      annotations(rbind(
+        annotations(),
+        data.frame(
+          lng        = click$lng,
+          lat        = click$lat,
+          label      = text,
+          created_at = as.character(Sys.time()),
+          stringsAsFactors = FALSE
+        )
+      ))
+      return()
+    }
+
     if (identical(input$gis_measure_tool, "Navigate")) {
       return()
     }
-    click <- input$gis_map_click
     pts <- gis_measure_points()
     pts <- rbind(pts, data.frame(lng = click$lng, lat = click$lat))
     gis_measure_points(pts)
   }, ignoreInit = TRUE)
+
+  # Render annotations as their own leaflet group so they are independent
+  # of the measurement layer and survive overlay reloads.
+  observe({
+    df <- annotations()
+    proxy <- leafletProxy("gis_map") |> clearGroup("Annotations")
+    if (nrow(df) == 0) return()
+    proxy |>
+      addCircleMarkers(
+        data         = df,
+        lng          = ~lng,
+        lat          = ~lat,
+        radius       = 6,
+        color        = "#0f172a",
+        weight       = 1.5,
+        fillColor    = "#f472b6",
+        fillOpacity  = 0.9,
+        label        = ~label,
+        popup        = ~paste0(
+          "<strong>", htmltools::htmlEscape(label), "</strong><br>",
+          "<small>", htmltools::htmlEscape(created_at), "</small>"
+        ),
+        group        = "Annotations"
+      )
+  })
+
+  observeEvent(input$save_annotations, {
+    with_error_toast("Save annotations", {
+      df <- annotations()
+      validate(need(nrow(df) > 0, "No annotations to save."))
+      out_dir <- if (nzchar(input$project_dir %||% "")) input$project_dir else tempdir()
+      dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+      out_path <- file.path(out_dir, "annotations.geojson")
+      sf_obj <- sf::st_as_sf(df, coords = c("lng", "lat"), crs = 4326)
+      sf::st_write(sf_obj, out_path, delete_dsn = TRUE, quiet = TRUE)
+      showNotification(
+        paste("Annotations saved to", out_path),
+        type     = "message",
+        duration = 6
+      )
+    })
+  })
+
+  observeEvent(input$load_annotations, {
+    with_error_toast("Load annotations", {
+      file <- input$load_annotations
+      validate(need(!is.null(file), "Select a GeoJSON file."))
+      g <- sf::st_read(file$datapath, quiet = TRUE)
+      validate(need(nrow(g) > 0, "GeoJSON file is empty."))
+      coords <- sf::st_coordinates(sf::st_transform(g, 4326))
+      label_col <- if ("label" %in% names(g)) as.character(g$label) else rep("", nrow(g))
+      created_col <- if ("created_at" %in% names(g)) as.character(g$created_at) else rep("", nrow(g))
+      new_df <- data.frame(
+        lng        = coords[, 1],
+        lat        = coords[, 2],
+        label      = label_col,
+        created_at = created_col,
+        stringsAsFactors = FALSE
+      )
+      annotations(rbind(annotations(), new_df))
+      showNotification(
+        paste("Loaded", nrow(new_df), "annotations."),
+        type     = "message",
+        duration = 4
+      )
+    })
+  })
+
+  observeEvent(input$clear_annotations, {
+    annotations(empty_annotations())
+    leafletProxy("gis_map") |> clearGroup("Annotations")
+  })
 
   observeEvent(input$gis_measure_tool, {
     gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
