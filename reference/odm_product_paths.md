@@ -24,21 +24,21 @@ Named character vector of expected product paths.
 project <- dronebio_project(project_dir = tempdir())
 odm_product_paths(project)
 #>                                                                                                   orthomosaic 
-#>                   "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif" 
+#>                   "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif" 
 #>                                                                                                           dsm 
-#>                                     "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif" 
+#>                                     "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif" 
 #>                                                                                                           dtm 
-#>                                     "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif" 
+#>                                     "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif" 
 #>                                                                                               point_cloud_las 
-#>      "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las" 
+#>      "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las" 
 #>                                                                                               point_cloud_laz 
-#>      "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz" 
+#>      "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz" 
 #>                                                                                              point_cloud_copc 
-#> "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz" 
+#> "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz" 
 #>                                                                                               point_cloud_ply 
-#>                    "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply" 
+#>                    "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply" 
 #>                                                                                                      mesh_ply 
-#>                         "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply" 
+#>                         "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply" 
 #>                                                                                                  textured_obj 
-#>        "/tmp/Rtmpl65Emj/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj" 
+#>        "/tmp/RtmpHeCnen/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj" 
 ```

@@ -177,6 +177,75 @@ downstream segmentation, not a final crown delineation.</p>
 the Shiny 3D viewer.</p>
 </div>
 <div class="section level2">
+<h2 id="survey-grade-volumes">Survey-grade volumes<a class="anchor" aria-label="anchor" href="#survey-grade-volumes"></a>
+</h2>
+<p><code><a href="../reference/compute_survey_volumes.html">compute_survey_volumes()</a></code> computes the volume between a
+“top” surface (a DSM, or any height raster) and a chosen base reference
+over a 2D ROI. It is the function the Drone Biomass Studio app calls
+behind the “Survey volumes” card in the 3D &amp; Tree Metrics panel, and
+it can be used directly from R for batch reporting.</p>
+<p>Choose the base reference per use case:</p>
+<table class="table">
+<colgroup>
+<col width="13%">
+<col width="86%">
+</colgroup>
+<thead><tr class="header">
+<th>Method</th>
+<th>When to use it</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td><code>"dtm"</code></td>
+<td>Canopy biomass when you have a separate DTM. Reduces to integrating
+CHM over the ROI - the standard biomass volume.</td>
+</tr>
+<tr class="even">
+<td><code>"min_z"</code></td>
+<td>Classic stockpile - bare ground assumed to be at the lowest point
+inside the ROI.</td>
+</tr>
+<tr class="odd">
+<td><code>"mean_z"</code></td>
+<td>Mean-Z plane; good as a sanity check, but rarely the right
+answer.</td>
+</tr>
+<tr class="even">
+<td><code>"ground_quantile"</code></td>
+<td>Robust low-Z plane (default 5th percentile). Useful when
+<code>"min_z"</code> is too sensitive to a single noisy pixel.</td>
+</tr>
+<tr class="odd">
+<td><code>"user_plane"</code></td>
+<td>Constant plane at a user-supplied Z. Use this when comparing flights
+against a fixed datum.</td>
+</tr>
+<tr class="even">
+<td><code>"perimeter_tin"</code></td>
+<td>Industry standard for stockpile surveys (Pix4D Mapper,
+ContextCapture, Trimble Business Center). Builds a Delaunay TIN through
+the perimeter vertices and integrates <code>top - TIN</code> inside the
+ROI. Requires the optional <code>interp</code> package.</td>
+</tr>
+</tbody>
+</table>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">dsm</span> <span class="op">&lt;-</span> <span class="fu">terra</span><span class="fu">::</span><span class="fu"><a href="https://rspatial.github.io/terra/reference/rast.html" class="external-link">rast</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/system.file.html" class="external-link">system.file</a></span><span class="op">(</span><span class="st">"extdata"</span>, <span class="st">"dsm_subset.tif"</span>, package <span class="op">=</span> <span class="st">"DroneBioR"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">dtm</span> <span class="op">&lt;-</span> <span class="fu">terra</span><span class="fu">::</span><span class="fu"><a href="https://rspatial.github.io/terra/reference/rast.html" class="external-link">rast</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/system.file.html" class="external-link">system.file</a></span><span class="op">(</span><span class="st">"extdata"</span>, <span class="st">"dtm_subset.tif"</span>, package <span class="op">=</span> <span class="st">"DroneBioR"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">roi</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  x <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">392004</span>, <span class="fl">392012</span>, <span class="fl">392012</span>, <span class="fl">392004</span><span class="op">)</span>,</span>
+<span>  y <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">3033004</span>, <span class="fl">3033004</span>, <span class="fl">3033012</span>, <span class="fl">3033012</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="va">canopy</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/compute_survey_volumes.html">compute_survey_volumes</a></span><span class="op">(</span>top <span class="op">=</span> <span class="va">dsm</span>, roi <span class="op">=</span> <span class="va">roi</span>, method <span class="op">=</span> <span class="st">"dtm"</span>, dtm <span class="op">=</span> <span class="va">dtm</span><span class="op">)</span></span>
+<span><span class="va">stockpile</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/compute_survey_volumes.html">compute_survey_volumes</a></span><span class="op">(</span>top <span class="op">=</span> <span class="va">dsm</span>, roi <span class="op">=</span> <span class="va">roi</span>, method <span class="op">=</span> <span class="st">"perimeter_tin"</span><span class="op">)</span></span>
+<span><span class="va">canopy</span><span class="op">$</span><span class="va">cut_volume_m3</span></span>
+<span><span class="va">stockpile</span><span class="op">$</span><span class="va">cut_volume_m3</span></span></code></pre></div>
+<p>The result is a <code>list</code> with class
+<code>"dronebio_survey_volume"</code>. Print it to see all the reported
+quantities (cut / fill / net volumes, planimetric and 3D draped surface
+areas, perimeter, cell area and count, and per-surface Z summaries).</p>
+</div>
+<div class="section level2">
 <h2 id="when-to-reach-for-lidr">When to reach for <code>lidR</code><a class="anchor" aria-label="anchor" href="#when-to-reach-for-lidr"></a>
 </h2>
 <p>For full LAZ analytics — tiled processing, advanced ground

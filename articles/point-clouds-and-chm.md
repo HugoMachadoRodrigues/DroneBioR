@@ -133,6 +133,45 @@ export_point_selection(
 Output files include a CSV table and a small PLY preview suitable for
 the Shiny 3D viewer.
 
+## Survey-grade volumes
+
+[`compute_survey_volumes()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_survey_volumes.md)
+computes the volume between a “top” surface (a DSM, or any height
+raster) and a chosen base reference over a 2D ROI. It is the function
+the Drone Biomass Studio app calls behind the “Survey volumes” card in
+the 3D & Tree Metrics panel, and it can be used directly from R for
+batch reporting.
+
+Choose the base reference per use case:
+
+| Method | When to use it |
+|----|----|
+| `"dtm"` | Canopy biomass when you have a separate DTM. Reduces to integrating CHM over the ROI - the standard biomass volume. |
+| `"min_z"` | Classic stockpile - bare ground assumed to be at the lowest point inside the ROI. |
+| `"mean_z"` | Mean-Z plane; good as a sanity check, but rarely the right answer. |
+| `"ground_quantile"` | Robust low-Z plane (default 5th percentile). Useful when `"min_z"` is too sensitive to a single noisy pixel. |
+| `"user_plane"` | Constant plane at a user-supplied Z. Use this when comparing flights against a fixed datum. |
+| `"perimeter_tin"` | Industry standard for stockpile surveys (Pix4D Mapper, ContextCapture, Trimble Business Center). Builds a Delaunay TIN through the perimeter vertices and integrates `top - TIN` inside the ROI. Requires the optional `interp` package. |
+
+``` r
+
+dsm <- terra::rast(system.file("extdata", "dsm_subset.tif", package = "DroneBioR"))
+dtm <- terra::rast(system.file("extdata", "dtm_subset.tif", package = "DroneBioR"))
+roi <- data.frame(
+  x = c(392004, 392012, 392012, 392004),
+  y = c(3033004, 3033004, 3033012, 3033012)
+)
+canopy <- compute_survey_volumes(top = dsm, roi = roi, method = "dtm", dtm = dtm)
+stockpile <- compute_survey_volumes(top = dsm, roi = roi, method = "perimeter_tin")
+canopy$cut_volume_m3
+stockpile$cut_volume_m3
+```
+
+The result is a `list` with class `"dronebio_survey_volume"`. Print it
+to see all the reported quantities (cut / fill / net volumes,
+planimetric and 3D draped surface areas, perimeter, cell area and count,
+and per-surface Z summaries).
+
 ## When to reach for `lidR`
 
 For full LAZ analytics — tiled processing, advanced ground

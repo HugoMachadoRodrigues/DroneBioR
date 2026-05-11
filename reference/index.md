@@ -102,6 +102,8 @@ attach heights to selected points.
   : Compute selection metrics for a point cloud ROI
 - [`compute_vertical_profile()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_vertical_profile.md)
   : Compute a vertical point-density profile
+- [`compute_survey_volumes()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_survey_volumes.md)
+  : Survey-grade volume calculations over a region of interest
 - [`derive_tree_candidates()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/derive_tree_candidates.md)
   : Derive approximate tree candidates from a point cloud
 - [`export_point_selection()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/export_point_selection.md)
