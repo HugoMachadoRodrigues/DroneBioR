@@ -2078,7 +2078,7 @@ server <- function(input, output, session) {
     )
   })
 
-  mosaic <- eventReactive(input$load_mosaic, {
+  mosaic <- reactive({
     with_error_toast("Load orthomosaic", {
       validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
       masked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = isTRUE(input$spectral_use_alpha))
@@ -2087,7 +2087,8 @@ server <- function(input, output, session) {
       masked
     })
   }) |>
-    bindCache(input$orthomosaic, input$spectral_use_alpha)
+    bindCache(input$orthomosaic, input$spectral_use_alpha) |>
+    bindEvent(input$load_mosaic)
 
   radiometric_scale_info <- reactive({
     req(mosaic())
@@ -2153,7 +2154,7 @@ server <- function(input, output, session) {
     selectInput("application_index", "Application map index", choices = choices, selected = "NDVI")
   })
 
-  gis_stack <- eventReactive(input$load_gis, {
+  gis_stack <- reactive({
     with_error_toast("Load GIS stack", {
       validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
       ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
@@ -2163,7 +2164,8 @@ server <- function(input, output, session) {
       c(refl, idx, proxy)
     })
   }) |>
-    bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance)
+    bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance) |>
+    bindEvent(input$load_gis)
 
   # Hillshade is derived from the DSM, independently of the gis_stack. We
   # compute it on demand and cache by project_dir so repeated map renders
@@ -3235,7 +3237,7 @@ server <- function(input, output, session) {
     points
   }
 
-  point_cloud <- eventReactive(point_cloud_event(), {
+  point_cloud <- reactive({
     with_error_toast("Load point cloud", {
       use_full_sample <- identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") &&
         file.exists(input$full_cloud_path)
@@ -3270,7 +3272,8 @@ server <- function(input, output, session) {
       input$full_cloud_path,
       input$ply_path,
       input$max_points
-    )
+    ) |>
+    bindEvent(point_cloud_event())
 
   observeEvent(input$selected_point_ids, {
     ids <- input$selected_point_ids %||% integer()
