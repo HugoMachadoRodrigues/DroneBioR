@@ -1416,6 +1416,26 @@ ui <- page_navbar(
       sidebar = sidebar(
         width = 380,
         selectInput(
+          "processing_engine",
+          "Engine",
+          choices = c(
+            "ODM Docker (local)" = "odm_docker",
+            "WebODM REST (remote)" = "webodm"
+          ),
+          selected = "odm_docker"
+        ),
+        conditionalPanel(
+          "input.processing_engine == 'webodm'",
+          textInput("webodm_url", "WebODM URL", value = "http://localhost:8000",
+                    placeholder = "e.g. http://localhost:8000 or https://webodm.example.org"),
+          textInput("webodm_user", "WebODM username"),
+          passwordInput("webodm_pass", "WebODM password"),
+          numericInput("webodm_poll_seconds", "Status poll interval (s)",
+                       value = 60, min = 15, max = 600, step = 15),
+          div(class = "sidebar-note small text-muted",
+              "WebODM runs the same opendronemap/odm engine remotely. Set up an instance at https://github.com/WebODM/WebODM or use the cloud service at https://webodm.net/.")
+        ),
+        selectInput(
           "camera_type",
           "Camera type",
           choices = c(
@@ -3404,23 +3424,53 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$run_odm, {
-    showNotification("ODM processing started. This can take a long time and will block this prototype Shiny session.", type = "message", duration = 8)
-    run_odm_project(
-      project(),
-      run = TRUE,
-      camera_type = input$camera_type %||% "multispectral",
+    engine <- input$processing_engine %||% "odm_docker"
+    cam    <- input$camera_type        %||% "multispectral"
+    common_args <- list(
+      project()                            ,
+      camera_type             = cam        ,
       orthophoto_resolution_cm = input$resolution,
-      fast_orthophoto = input$fast_orthophoto,
-      build_dsm = input$build_dsm,
-      build_dtm = input$build_dtm,
-      pc_las = input$pc_las,
-      pc_copc = input$pc_copc,
-      pc_csv = input$pc_csv,
-      tiles = input$tiles,
-      three_d_tiles = input$three_d_tiles,
-      gltf = input$gltf
+      fast_orthophoto         = input$fast_orthophoto,
+      build_dsm               = input$build_dsm,
+      build_dtm               = input$build_dtm,
+      pc_las                  = input$pc_las,
+      pc_copc                 = input$pc_copc,
+      pc_csv                  = input$pc_csv,
+      tiles                   = input$tiles,
+      three_d_tiles           = input$three_d_tiles,
+      gltf                    = input$gltf
     )
-    showNotification("ODM processing finished.", type = "message", duration = 8)
+
+    with_error_toast("Run processing engine", {
+      if (identical(engine, "webodm")) {
+        validate(need(nzchar(input$webodm_url  %||% ""), "WebODM URL is required."))
+        validate(need(nzchar(input$webodm_user %||% ""), "WebODM username is required."))
+        validate(need(nzchar(input$webodm_pass %||% ""), "WebODM password is required."))
+        showNotification(
+          paste0("Submitting to WebODM at ", input$webodm_url,
+                 ". This can take many hours; status updates appear in the R console."),
+          type = "message", duration = 10
+        )
+        do.call(run_webodm_project, c(
+          common_args,
+          list(
+            base_url     = input$webodm_url,
+            username     = input$webodm_user,
+            password     = input$webodm_pass,
+            poll_seconds = input$webodm_poll_seconds %||% 60
+          )
+        ))
+        showNotification("WebODM task completed; outputs downloaded.",
+                         type = "message", duration = 8)
+      } else {
+        showNotification(
+          "ODM Docker processing started. This blocks this Shiny session until ODM exits.",
+          type = "message", duration = 8
+        )
+        do.call(run_odm_project, c(common_args, list(run = TRUE)))
+        showNotification("ODM processing finished.", type = "message", duration = 8)
+      }
+    })
   })
 
   output$mosaic_meta <- renderTable({

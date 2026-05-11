@@ -313,7 +313,7 @@ as_webodm_options <- function(camera_type             = c("multispectral", "rgb"
     opts[["radiometric-calibration"]] <- "camera+sun"
   }
   if (length(extra) > 0L) {
-    opts <- modifyList(opts, extra)
+    opts <- utils::modifyList(opts, extra)
   }
   opts
 }
