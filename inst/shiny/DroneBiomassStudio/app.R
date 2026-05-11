@@ -1497,6 +1497,34 @@ ui <- page_navbar(
       card(card_header("Output files"), verbatimTextOutput("workflow_outputs")),
       card(card_header("Report"), verbatimTextOutput("report_status"))
     )
+  ),
+  nav_panel(
+    "Time Series",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 320,
+        textInput("ts_registry_path", "Registry path", value = default_flight_registry()),
+        dateInput("ts_flight_date", "Flight date", value = Sys.Date()),
+        textInput("ts_flight_project_dir", "Flight project dir",
+                  placeholder = "/path/to/Drone_Biomass/2026-05-01"),
+        textInput("ts_flight_notes", "Notes (optional)"),
+        actionButton("ts_register", "Register flight", class = "btn-outline-secondary"),
+        selectInput("ts_metric", "Metric",
+                    choices = c("NDVI mean"            = "ndvi",
+                                "Biomass proxy mean"   = "biomass",
+                                "CHM mean (m)"         = "chm")),
+        actionButton("ts_refresh", "Refresh plot", class = "btn-primary"),
+        actionButton("ts_clear_registry", "Clear registry", class = "btn-outline-danger"),
+        div(class = "sidebar-note", "Each registered flight is one row in the CSV at the registry path. Register a flight by entering its date and project directory, then refresh.")
+      ),
+      panel_intro_card(
+        "Time Series",
+        "Track NDVI, biomass proxy or canopy height across multiple flights of the same site. Register one row per flight (date + project directory), then pick a metric to plot it across time. The registry is a plain CSV under ~/.dronebior/flights.csv by default, so you can edit or version it manually.",
+        vignette = "dronebior-overview"
+      ),
+      card(card_header("Registered flights"), tableOutput("ts_flights_table")),
+      card(card_header("Time series plot"), plotOutput("ts_plot", height = "320px"))
+    )
   )
 )
 
@@ -4412,6 +4440,73 @@ server <- function(input, output, session) {
       "Bytes:    ", format(file.info(path)$size, big.mark = ","), "\n",
       "Modified: ", format(file.info(path)$mtime, "%Y-%m-%d %H:%M:%S")
     )
+  })
+
+  # Time-series panel: registry CRUD + metric plot.
+  ts_refresh_trigger <- reactiveVal(0L)
+
+  observeEvent(input$ts_register, {
+    with_error_toast("Register flight", {
+      validate(need(nzchar(input$ts_flight_project_dir),
+                    "Enter the project directory for the flight."))
+      validate(need(dir.exists(input$ts_flight_project_dir),
+                    paste("Project directory not found:", input$ts_flight_project_dir)))
+      register_flight(
+        date          = input$ts_flight_date,
+        project_dir   = input$ts_flight_project_dir,
+        notes         = input$ts_flight_notes %||% "",
+        registry_path = input$ts_registry_path
+      )
+      showNotification("Flight registered.", type = "message", duration = 3)
+      ts_refresh_trigger(ts_refresh_trigger() + 1L)
+    })
+  })
+
+  observeEvent(input$ts_clear_registry, {
+    if (file.exists(input$ts_registry_path)) {
+      unlink(input$ts_registry_path)
+    }
+    showNotification("Registry cleared.", type = "warning", duration = 3)
+    ts_refresh_trigger(ts_refresh_trigger() + 1L)
+  })
+
+  observeEvent(input$ts_refresh, {
+    ts_refresh_trigger(ts_refresh_trigger() + 1L)
+  })
+
+  output$ts_flights_table <- renderTable({
+    ts_refresh_trigger()
+    list_flights(input$ts_registry_path)
+  })
+
+  output$ts_plot <- renderPlot({
+    ts_refresh_trigger()
+    fn <- switch(input$ts_metric,
+                 ndvi    = flight_ndvi_mean,
+                 biomass = flight_biomass_proxy_mean,
+                 chm     = flight_chm_mean,
+                 flight_ndvi_mean)
+    label <- switch(input$ts_metric,
+                    ndvi    = "NDVI mean",
+                    biomass = "Biomass proxy mean",
+                    chm     = "CHM mean (m)",
+                    "NDVI mean")
+    ts <- flight_time_series(fn, registry_path = input$ts_registry_path)
+    if (nrow(ts) == 0) {
+      plot.new(); title(main = paste(label, "- register at least one flight first."))
+      return(invisible(NULL))
+    }
+    par(mar = c(4, 4, 2, 1))
+    plot(ts$date, ts$value,
+         type = "b", pch = 19, col = "#0f766e", lwd = 2, cex = 1.4,
+         xlab = "Date", ylab = label,
+         main = paste("Time series:", label))
+    grid(col = "#e2e8f0")
+    if (nrow(ts) > 0) {
+      labs <- ts$flight_id
+      if (any(nchar(labs) > 14)) labs <- substr(labs, 1, 14)
+      text(ts$date, ts$value, labs, pos = 3, cex = 0.75, col = "#475569")
+    }
   })
 }
 
