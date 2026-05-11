@@ -26,6 +26,30 @@ downsample_raster <- function(x, size = 90000) {
   terra::spatSample(x, size = size, method = "regular", as.raster = TRUE, na.rm = FALSE)
 }
 
+# A small info card that appears at the top of every nav_panel main area,
+# explaining what the panel does and linking to the relevant vignette.
+# Keeps onboarding consistent across panels without depending on each
+# user reading the README first.
+panel_intro_card <- function(title, body_text, vignette = NULL) {
+  vignette_link <- NULL
+  if (!is.null(vignette)) {
+    vignette_link <- tags$a(
+      href   = paste0("https://hugomachadorodrigues.github.io/DroneBioR/articles/", vignette, ".html"),
+      target = "_blank",
+      class  = "ms-1",
+      "Open the vignette ↗"
+    )
+  }
+  card(
+    class = "border-info mb-3 panel-intro",
+    card_header(class = "bg-light", tags$strong(title)),
+    card_body(
+      class = "py-2",
+      tags$p(class = "small mb-0 text-muted", body_text, " ", vignette_link)
+    )
+  )
+}
+
 raster_bounds_4326 <- function(x) {
   e <- terra::ext(x)
   corners <- data.frame(
@@ -1043,6 +1067,11 @@ ui <- page_navbar(
       ),
       div(
         class = "main-scroll",
+        panel_intro_card(
+          "GIS Workspace",
+          "Choose product overlays in the sidebar and click 'Load' to render them on the basemap. Use the measurement tool to draw distances or areas on the map; results land in the 'Map measurement' card below. New here? Try 'run_drone_biomass_studio(sample = TRUE)' to open a clickable demo project.",
+          vignette = "dronebior-overview"
+        ),
         div(
           class = "metric-strip",
           div(class = "metric", div(class = "label", "Image folder"), div(class = "value", uiOutput("metric_images", inline = TRUE))),
@@ -1085,6 +1114,11 @@ ui <- page_navbar(
         actionButton("refresh_command", "Build command", class = "btn-primary"),
         actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
         div(class = "sidebar-note", "For full 3D textured products, turn off fast orthophoto. ODM uses fast orthophoto to prioritize rapid orthomosaic generation.")
+      ),
+      panel_intro_card(
+        "Processing Engine",
+        "Drives OpenDroneMap inside Docker. Pick a preset (the recommended one builds DSM + DTM + LAS point cloud), then 'Build command' to inspect the docker arguments before running. If you bring orthomosaics from WebODM, Pix4Dmapper or Metashape, skip this panel and point GIS Workspace at the existing GeoTIFF.",
+        vignette = "external-engines"
       ),
       card(card_header("Processing workflow"), uiOutput("processing_workflow")),
       card(card_header("What this preset creates"), tableOutput("preset_outputs")),
@@ -1151,6 +1185,11 @@ ui <- page_navbar(
       ),
       div(
         class = "main-scroll",
+        panel_intro_card(
+          "3D & Tree Metrics",
+          "Loads a dense point cloud (LAS/LAZ/COPC or a PLY preview) and lets you select ROIs by box, lasso or polygon. The R-side metrics include canopy height (from DSM-DTM), vertical profile, occupied voxel volume and approximate tree candidates. Switch the 3D viewer source to PLY for fast iteration; LAS gives full georeferenced metrics.",
+          vignette = "point-clouds-and-chm"
+        ),
         div(
           class = "viewer-toolbar",
           actionButton("open_file_browser_3d_main", "Browse PLY / project files", class = "btn-outline-secondary"),
@@ -1249,6 +1288,11 @@ ui <- page_navbar(
         ),
         div(
           class = "spectral-workspace spectral-stack",
+          panel_intro_card(
+            "Spectral Analytics",
+            "Loads the multispectral orthomosaic, applies your chosen radiometric scaling (auto-detect / divide by 32768 / etc.) and optional panel-ROI calibration, then computes the nine indices (NDVI, NDRE, EVI, SAVI, NDWI, GNDVI, CIrededge, MSAVI2, VARI) plus a biomass proxy. Use this panel to inspect band histograms and pick a meaningful threshold before exporting application maps.",
+            vignette = "spectral-indices"
+          ),
           layout_columns(
             col_widths = c(4, 8),
             card(card_header("Orthomosaic metadata"), tableOutput("mosaic_meta")),
@@ -1295,6 +1339,11 @@ ui <- page_navbar(
         actionButton("fit_model", "Fit baseline model", class = "btn-outline-secondary"),
         div(class = "sidebar-note", "Expected columns: sample_id, biomass_kgha, and either x/y or longitude/latitude.")
       ),
+      panel_intro_card(
+        "Field Models",
+        "Upload your field biomass CSV, extract spectral values at each sample point, and fit a baseline linear model. The default model picks whichever of NDVI, NDRE, EVI, SAVI, NDWI, NIR and RedEdge are available - constrain the predictor set in R via fit_biomass_lm(predictors = ...) if you need a specific specification.",
+        vignette = "dronebior-overview"
+      ),
       card(card_header("Extracted samples"), tableOutput("field_preview")),
       card(card_header("Baseline model"), verbatimTextOutput("model_summary"))
     )
@@ -1305,6 +1354,11 @@ ui <- page_navbar(
       sidebar = sidebar(
         width = 320,
         actionButton("run_workflow", "Run R analysis workflow", class = "btn-primary")
+      ),
+      panel_intro_card(
+        "Exports",
+        "Re-runs the full pipeline through run_dronebio_workflow() and writes the reflectance bands, spectral indices, biomass proxy and (when present) the valid-data mask to your project's output folder. Use this as the one-click reproducible run after you have validated settings in the other panels.",
+        vignette = "dronebior-overview"
       ),
       card(card_header("Workflow status"), verbatimTextOutput("workflow_status")),
       card(card_header("Output files"), verbatimTextOutput("workflow_outputs"))
@@ -1320,7 +1374,7 @@ server <- function(input, output, session) {
     p
   })
 
-  overlay_choices <- c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "Biomass_Index_Proxy", "NIR", "RedEdge", "Red", "Green", "Blue")
+  overlay_choices <- c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "Biomass_Index_Proxy", "NIR", "RedEdge", "Red", "Green", "Blue", "Hillshade")
   browser_dir <- reactiveVal(set_browser_dir(default_project$project_dir))
   browser_selected <- reactiveVal(set_browser_dir(default_project$project_dir))
   gis_measure_points <- reactiveVal(data.frame(lng = numeric(), lat = numeric()))
@@ -1930,6 +1984,26 @@ server <- function(input, output, session) {
   }) |>
     bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance)
 
+  # Hillshade is derived from the DSM, independently of the gis_stack. We
+  # compute it on demand and cache by project_dir so repeated map renders
+  # do not redo the terrain math.
+  hillshade_raster <- reactive({
+    with_error_toast("Compute hillshade", {
+      products <- odm_product_paths(project())
+      validate(need(
+        file.exists(products[["dsm"]]),
+        "DSM not available - hillshade needs odm_dem/dsm.tif."
+      ))
+      dsm <- terra::rast(products[["dsm"]])[[1]]
+      slope <- terra::terrain(dsm, "slope", unit = "radians", neighbors = 8)
+      aspect <- terra::terrain(dsm, "aspect", unit = "radians", neighbors = 8)
+      h <- terra::shade(slope, aspect, angle = 45, direction = 315)
+      names(h) <- "Hillshade"
+      h
+    })
+  }) |>
+    bindCache(input$project_dir)
+
   output$gis_map <- renderLeaflet({
     m <- leaflet() |>
       add_esri_imagery_tiles(group = "Satellite") |>
@@ -2017,8 +2091,8 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$load_gis, {
-    selected_layers <- intersect(selected_overlay_layers(), overlay_choices)
-    validate(need(length(selected_layers) > 0, "Select at least one overlay product."))
+    all_selected <- intersect(selected_overlay_layers(), overlay_choices)
+    validate(need(length(all_selected) > 0, "Select at least one overlay product."))
 
     note_id <- showNotification(
       "Loading overlay products. The basemap remains visible while rasters are processed.",
@@ -2027,9 +2101,19 @@ server <- function(input, output, session) {
     )
     on.exit(removeNotification(note_id), add = TRUE)
 
-    x <- gis_stack()
-    selected_layers <- intersect(selected_layers, names(x))
-    validate(need(length(selected_layers) > 0, "Selected products are not available in the current raster stack."))
+    # Hillshade is sourced from the DSM, not from gis_stack(), so peel it
+    # off first and process the spectral layers afterwards.
+    hillshade_selected <- "Hillshade" %in% all_selected
+    spectral_selected <- setdiff(all_selected, "Hillshade")
+
+    x <- if (length(spectral_selected) > 0) gis_stack() else NULL
+    if (!is.null(x)) {
+      spectral_selected <- intersect(spectral_selected, names(x))
+    }
+    validate(need(
+      hillshade_selected || length(spectral_selected) > 0,
+      "Selected products are not available in the current raster stack."
+    ))
 
     proxy <- leafletProxy("gis_map")
     for (group in overlay_choices) {
@@ -2039,7 +2123,29 @@ server <- function(input, output, session) {
 
     first_layer <- NULL
     legend_items <- list()
-    for (layer_name in selected_layers) {
+
+    # Render hillshade first so it sits beneath color overlays. We use a
+    # neutral black-to-white ramp and slightly reduced opacity so colored
+    # indices on top remain readable.
+    if (hillshade_selected) {
+      h <- hillshade_raster()
+      if (!is.null(h)) {
+        h_ds <- downsample_raster(h)
+        h_vals <- terra::values(h_ds, mat = FALSE)
+        h_pal <- colorNumeric(c("#000000", "#FFFFFF"), h_vals, na.color = "transparent")
+        proxy <- proxy |>
+          addRasterImage(
+            h_ds,
+            colors  = h_pal,
+            opacity = min(0.75, 0.85 * input$map_opacity),
+            project = TRUE,
+            group   = "Hillshade"
+          )
+        if (is.null(first_layer)) first_layer <- h_ds
+      }
+    }
+
+    for (layer_name in spectral_selected) {
       layer <- downsample_raster(x[[layer_name]])
       vals <- terra::values(layer, mat = FALSE)
       palette_name <- if (layer_name %in% c("NDVI", "NDRE", "SAVI", "Biomass_Index_Proxy")) "YlGn" else "viridis"
@@ -2060,6 +2166,7 @@ server <- function(input, output, session) {
         first_layer <- layer
       }
     }
+    selected_layers <- if (hillshade_selected) c(spectral_selected, "Hillshade") else spectral_selected
 
     bounds <- raster_bounds_4326(first_layer)
     proxy |>
