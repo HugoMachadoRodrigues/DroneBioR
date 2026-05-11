@@ -4,20 +4,34 @@
 \alias{compute_spectral_indices}
 \title{Compute spectral vegetation indices}
 \usage{
-compute_spectral_indices(reflectance, eps = 1e-06)
+compute_spectral_indices(reflectance, eps = 1e-06, strict = FALSE)
 }
 \arguments{
-\item{reflectance}{A reflectance-scale \code{terra::SpatRaster} with Blue, Green,
-Red, RedEdge and NIR layers.}
+\item{reflectance}{A reflectance-scale \code{terra::SpatRaster}. Must
+contain at least Blue, Green, Red; RedEdge and NIR enable the
+remaining indices.}
 
 \item{eps}{Small denominator threshold.}
+
+\item{strict}{Logical. When \code{TRUE}, error if RedEdge / NIR are
+missing instead of returning the partial index stack.}
 }
 \value{
-A \code{terra::SpatRaster} with NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
-CIrededge, MSAVI2 and VARI.
+A \code{terra::SpatRaster} with whatever indices the bands
+support.
 }
 \description{
-Compute spectral vegetation indices
+Computes the subset of indices the input bands actually support.
+Multispectral input (Blue + Green + Red + RedEdge + NIR) yields all
+nine: NDVI, NDRE, EVI, SAVI, NDWI, GNDVI, CIrededge, MSAVI2 and VARI.
+RGB-only input (Blue + Green + Red) yields just VARI - the other
+indices need NIR / RedEdge.
+}
+\details{
+Pass \code{strict = TRUE} to keep the legacy behaviour where missing
+RedEdge / NIR raises an error; the default is to silently compute
+whatever is possible, which is what Drone Biomass Studio needs to
+degrade gracefully for RGB datasets.
 }
 \examples{
 ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")

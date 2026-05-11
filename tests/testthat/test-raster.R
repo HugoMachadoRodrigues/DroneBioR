@@ -12,11 +12,27 @@ test_that("read_multispectral_orthomosaic errors on missing file", {
   expect_error(read_multispectral_orthomosaic(tempfile()), "Orthomosaic not found")
 })
 
-test_that("read_multispectral_orthomosaic errors on incomplete band_map", {
-  expect_error(
-    read_multispectral_orthomosaic(ortho_fixture(), band_map = c(Red = 1, Green = 2)),
-    "band_map is missing"
-  )
+test_that("read_multispectral_orthomosaic honours an explicit band_map subset", {
+  # User-supplied band_map drives which bands come back. Passing only
+  # Red and Green should yield a 2-layer SpatRaster, not an error.
+  ortho <- read_multispectral_orthomosaic(ortho_fixture(),
+                                          band_map  = c(Red = 1, Green = 2),
+                                          use_alpha = FALSE)
+  expect_equal(names(ortho$bands), c("Green", "Red"))
+})
+
+test_that("read_multispectral_orthomosaic auto-detects RGB orthos (3 layers)", {
+  # Build a synthetic 3-band RGB raster on disk, no alpha, no NIR.
+  r <- terra::rast(nrows = 4, ncols = 4)
+  terra::values(r) <- runif(16, 0, 1)
+  rgb <- c(r, r * 0.5, r * 0.25)
+  names(rgb) <- c("b1", "b2", "b3")
+  tmp <- tempfile(fileext = ".tif")
+  terra::writeRaster(rgb, tmp, datatype = "FLT4S")
+  out <- read_multispectral_orthomosaic(tmp)
+  expect_equal(out$n_layers, 3L)
+  expect_equal(names(out$bands), c("Blue", "Green", "Red"))
+  expect_null(out$alpha)
 })
 
 test_that("scale_to_reflectance clamps integer-scale values into 0-1", {

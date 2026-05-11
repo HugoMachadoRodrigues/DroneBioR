@@ -2,26 +2,40 @@
 % Please edit documentation in R/raster.R
 \name{read_multispectral_orthomosaic}
 \alias{read_multispectral_orthomosaic}
-\title{Read a multispectral orthomosaic}
+\title{Read a multispectral or RGB orthomosaic}
 \usage{
-read_multispectral_orthomosaic(
-  orthomosaic,
-  band_map = default_micasense_band_map(),
-  use_alpha = TRUE
-)
+read_multispectral_orthomosaic(orthomosaic, band_map = NULL, use_alpha = TRUE)
 }
 \arguments{
-\item{orthomosaic}{Path to a multispectral GeoTIFF.}
+\item{orthomosaic}{Path to an orthomosaic GeoTIFF.}
 
-\item{band_map}{Named integer vector with Red, Green, Blue, NIR and RedEdge.}
+\item{band_map}{Optional named integer vector. Default \code{NULL} =
+auto-detect: 3-4 layer inputs use \code{\link[=default_rgb_band_map]{default_rgb_band_map()}}; 5+
+layer inputs use the internal MicaSense default
+(\verb{Red=1, Green=2, Blue=3, NIR=4, RedEdge=5}). Override with a
+custom named integer vector.}
 
-\item{use_alpha}{Logical. Use layer 6 as an alpha mask when available.}
+\item{use_alpha}{Logical. Treat the layer immediately after the
+highest band-map index as an alpha mask if available.}
 }
 \value{
 A list containing \code{bands}, \code{alpha}, \code{source} and \code{n_layers}.
 }
 \description{
-Read a multispectral orthomosaic
+Reads an orthomosaic produced by OpenDroneMap / WebODM / Pix4Dmapper /
+Agisoft Metashape. The function adapts to two common layouts:
+}
+\details{
+\itemize{
+\item \strong{Multispectral} (MicaSense / Sequoia, 5 bands +/- alpha) -
+returned bands are Red, Green, Blue, RedEdge, NIR. Alpha is read
+from layer 6 when present.
+\item \strong{RGB} (3 bands +/- alpha) - returned bands are Red, Green,
+Blue. Alpha is read from layer 4 when present.
+}
+
+Layout is auto-detected from \code{terra::nlyr()} when \code{band_map} is left
+as \code{NULL}; explicit band maps are honoured otherwise.
 }
 \examples{
 ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")

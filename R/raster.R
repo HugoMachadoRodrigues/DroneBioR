@@ -2,11 +2,38 @@ default_micasense_band_map <- function() {
   c(Red = 1, Green = 2, Blue = 3, NIR = 4, RedEdge = 5)
 }
 
-#' Read a multispectral orthomosaic
+#' Default band map for a 3-band RGB orthomosaic (Sony / DJI / Phantom)
 #'
-#' @param orthomosaic Path to a multispectral GeoTIFF.
-#' @param band_map Named integer vector with Red, Green, Blue, NIR and RedEdge.
-#' @param use_alpha Logical. Use layer 6 as an alpha mask when available.
+#' @return Named integer vector with `Red`, `Green`, `Blue`.
+#' @export
+default_rgb_band_map <- function() {
+  c(Red = 1, Green = 2, Blue = 3)
+}
+
+#' Read a multispectral or RGB orthomosaic
+#'
+#' Reads an orthomosaic produced by OpenDroneMap / WebODM / Pix4Dmapper /
+#' Agisoft Metashape. The function adapts to two common layouts:
+#'
+#' \itemize{
+#'   \item **Multispectral** (MicaSense / Sequoia, 5 bands +/- alpha) -
+#'     returned bands are Red, Green, Blue, RedEdge, NIR. Alpha is read
+#'     from layer 6 when present.
+#'   \item **RGB** (3 bands +/- alpha) - returned bands are Red, Green,
+#'     Blue. Alpha is read from layer 4 when present.
+#' }
+#'
+#' Layout is auto-detected from `terra::nlyr()` when `band_map` is left
+#' as `NULL`; explicit band maps are honoured otherwise.
+#'
+#' @param orthomosaic Path to an orthomosaic GeoTIFF.
+#' @param band_map Optional named integer vector. Default `NULL` =
+#'   auto-detect: 3-4 layer inputs use [default_rgb_band_map()]; 5+
+#'   layer inputs use the internal MicaSense default
+#'   (`Red=1, Green=2, Blue=3, NIR=4, RedEdge=5`). Override with a
+#'   custom named integer vector.
+#' @param use_alpha Logical. Treat the layer immediately after the
+#'   highest band-map index as an alpha mask if available.
 #' @return A list containing `bands`, `alpha`, `source` and `n_layers`.
 #' @examples
 #' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
@@ -15,34 +42,38 @@ default_micasense_band_map <- function() {
 #' ortho$n_layers
 #' @export
 read_multispectral_orthomosaic <- function(orthomosaic,
-                                           band_map = default_micasense_band_map(),
+                                           band_map = NULL,
                                            use_alpha = TRUE) {
   if (!file.exists(orthomosaic)) {
     stop("Orthomosaic not found: ", orthomosaic, call. = FALSE)
   }
 
-  required <- c("Red", "Green", "Blue", "NIR", "RedEdge")
-  missing_names <- setdiff(required, names(band_map))
-  if (length(missing_names) > 0) {
-    stop("band_map is missing: ", paste(missing_names, collapse = ", "), call. = FALSE)
+  raw <- terra::rast(orthomosaic)
+  n_layers <- terra::nlyr(raw)
+
+  if (is.null(band_map)) {
+    band_map <- if (n_layers >= 5L) default_micasense_band_map() else default_rgb_band_map()
   }
 
-  raw <- terra::rast(orthomosaic)
-  if (terra::nlyr(raw) < max(band_map[required])) {
+  required <- names(band_map)
+  if (n_layers < max(band_map[required])) {
     stop(
-      "The orthomosaic has ", terra::nlyr(raw), " layer(s), but the band map ",
+      "The orthomosaic has ", n_layers, " layer(s), but the band map ",
       "requires layer ", max(band_map[required]), ".",
       call. = FALSE
     )
   }
 
   alpha <- NULL
-  if (isTRUE(use_alpha) && terra::nlyr(raw) >= 6) {
-    alpha <- raw[[6]]
+  alpha_position <- max(band_map[required]) + 1L
+  if (isTRUE(use_alpha) && n_layers >= alpha_position) {
+    alpha <- raw[[alpha_position]]
     names(alpha) <- "valid_data_mask"
   }
 
-  order_out <- c("Blue", "Green", "Red", "RedEdge", "NIR")
+  # Output order: Blue, Green, Red, then RedEdge / NIR when available.
+  full_order <- c("Blue", "Green", "Red", "RedEdge", "NIR")
+  order_out  <- intersect(full_order, required)
   bands <- raw[[as.integer(band_map[order_out])]]
   names(bands) <- order_out
 
@@ -51,10 +82,10 @@ read_multispectral_orthomosaic <- function(orthomosaic,
   }
 
   list(
-    bands = bands,
-    alpha = alpha,
-    source = normalizePath(orthomosaic, mustWork = FALSE),
-    n_layers = terra::nlyr(raw)
+    bands    = bands,
+    alpha    = alpha,
+    source   = normalizePath(orthomosaic, mustWork = FALSE),
+    n_layers = n_layers
   )
 }
 
