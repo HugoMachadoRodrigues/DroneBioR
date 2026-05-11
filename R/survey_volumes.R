@@ -291,7 +291,9 @@ print.dronebio_survey_volume <- function(x, ...) {
       call. = FALSE
     )
   }
-  vertex_z <- as.numeric(terra::extract(template, coords, ID = FALSE)[[1L]])
+  # terra::extract() on a matrix returns a single-column data frame without
+  # an ID column; the ID argument is only valid for SpatVector inputs.
+  vertex_z <- as.numeric(terra::extract(template, coords)[[1L]])
   finite   <- is.finite(vertex_z)
   if (sum(finite) < 3L) {
     stop(

@@ -962,6 +962,29 @@ ui <- page_navbar(
           el.remove();
         });
       });
+
+      // 3D Modeling viewer remote controls. The Shiny app exposes
+      // window.__dronebior_viewer = { camera, controls, defaultPosition,
+      // defaultTarget } from inside the three.js render function. These
+      // handlers let sidebar buttons drive the camera without forcing the
+      // user to learn the OrbitControls mouse gestures.
+      Shiny.addCustomMessageHandler('dronebior_3d_reset', function(_msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.camera || !v.controls) return;
+        v.camera.position.copy(v.defaultPosition);
+        v.controls.target.copy(v.defaultTarget);
+        v.controls.update();
+      });
+      Shiny.addCustomMessageHandler('dronebior_3d_zoom', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.camera || !v.controls) return;
+        var factor = (msg && typeof msg.factor === 'number') ? msg.factor : 0.8;
+        // Dolly the camera toward / away from the controls target.
+        var dir = v.camera.position.clone().sub(v.controls.target);
+        dir.multiplyScalar(factor);
+        v.camera.position.copy(v.controls.target.clone().add(dir));
+        v.controls.update();
+      });
     ")),
     tags$style(HTML("
       :root {
@@ -1113,27 +1136,88 @@ ui <- page_navbar(
         overflow: hidden;
       }
       .map-frame { background: #e5ede8; }
-      .viewer-frame { background: #101828; }
-      .viewer-frame { height: clamp(390px, 52vh, 560px); min-height: 390px; }
-      .tree-workspace-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1.9fr) minmax(320px, 0.9fr);
-        gap: 14px;
-        align-items: start;
+      .viewer-frame { background: #101828; position: relative; }
+      .viewer-frame { height: clamp(520px, 70vh, 820px); min-height: 520px; }
+      .viewer-overlay {
+        position: absolute;
+        background: rgba(15, 23, 42, 0.82);
+        color: #f8fafc;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 0.78rem;
+        pointer-events: none;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+        z-index: 5;
       }
-      .tree-main-column,
-      .tree-side-column {
-        display: grid;
-        gap: 12px;
-        align-content: start;
+      .viewer-overlay.legend {
+        top: 10px;
+        left: 10px;
+        min-width: 130px;
+        pointer-events: none;
       }
-      .tree-workspace-grid .card {
+      .viewer-overlay.scale {
+        bottom: 12px;
+        left: 12px;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+      }
+      .viewer-overlay.scale .scale-bar {
+        display: inline-block;
+        width: 60px;
+        height: 3px;
+        background: #f8fafc;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .viewer-overlay .legend-heading {
+        font-weight: 700;
+        margin-bottom: 5px;
+      }
+      .viewer-overlay .legend-gradient {
+        height: 10px;
+        border-radius: 4px;
+        margin: 4px 0;
+        background: linear-gradient(to right, #ffffe5, #f7fcb9, #addd8e, #41ab5d, #006837);
+      }
+      .viewer-overlay .legend-scale {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.7rem;
+      }
+      .viewer-action-bar {
+        display: flex;
+        gap: 6px;
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 6;
+        pointer-events: auto;
+      }
+      .viewer-action-bar .btn {
+        padding: 4px 9px;
+        font-size: 0.8rem;
+        background: rgba(15, 23, 42, 0.88);
+        color: #f8fafc;
+        border: 1px solid rgba(255,255,255,0.18);
+      }
+      .viewer-action-bar .btn:hover {
+        background: rgba(15, 23, 42, 1);
+        border-color: rgba(255,255,255,0.35);
+      }
+      .modeling-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .modeling-toolbar .viewer-status {
+        margin-left: auto;
+        color: var(--db-text-soft);
+        font-size: 0.85rem;
+      }
+      .modeling-metrics-tabs .card {
         margin-bottom: 0;
-      }
-      @media (max-width: 1100px) {
-        .tree-workspace-grid {
-          grid-template-columns: 1fr;
-        }
       }
       #point-cloud-viewer canvas.selection-layer {
         position: absolute;
@@ -1373,7 +1457,7 @@ ui <- page_navbar(
     )
   ),
   nav_panel(
-    "3D & Tree Metrics",
+    "3D Modeling",
     layout_sidebar(
       sidebar = sidebar(
         width = 340,
@@ -1448,59 +1532,99 @@ ui <- page_navbar(
       div(
         class = "main-scroll",
         panel_intro_card(
-          "3D & Tree Metrics",
-          "Loads a dense point cloud (LAS/LAZ/COPC or a PLY preview) and lets you select ROIs by box, lasso or polygon. The R-side metrics include canopy height (from DSM-DTM), vertical profile, occupied voxel volume and approximate tree candidates. Switch the 3D viewer source to PLY for fast iteration; LAS gives full georeferenced metrics.",
+          "3D Modeling",
+          "Loads a dense point cloud (LAS/LAZ/COPC or a PLY preview) and lets you select ROIs by box, lasso or polygon. Computes survey-grade volumes (canopy biomass via DTM, or Pix4D-style perimeter-TIN stockpile), per-selection metrics, vertical profile, and approximate tree candidates. Switch the source to PLY for fast iteration; LAS gives full georeferenced metrics.",
           vignette = "point-clouds-and-chm"
         ),
         div(
-          class = "viewer-toolbar",
-          actionButton("open_file_browser_3d_main", "Browse PLY / project files", class = "btn-outline-secondary"),
-          actionButton("load_3d_scene_main", "Load 3D scene now", class = "btn-primary"),
+          class = "modeling-toolbar",
+          actionButton("open_file_browser_3d_main", "Browse files", class = "btn-outline-secondary"),
+          actionButton("load_3d_scene_main", "Load 3D scene", class = "btn-primary"),
+          actionButton("reset_3d_view", "Reset view", class = "btn-outline-secondary"),
+          actionButton("zoom_in_3d",  "Zoom +",     class = "btn-outline-secondary"),
+          actionButton("zoom_out_3d", "Zoom -",     class = "btn-outline-secondary"),
           span(class = "viewer-status", textOutput("point_cloud_status", inline = TRUE))
         ),
+        # Large 3D viewport with overlays (legend + scale bar + axis hint).
         div(
-          class = "tree-workspace-grid",
+          class = "viewer-frame",
+          uiOutput("point_cloud_viewer"),
           div(
-            class = "tree-main-column",
-            card(card_header("Interactive point cloud preview"), div(class = "viewer-frame", uiOutput("point_cloud_viewer"))),
-            card(
-              card_header("3D tool documentation"),
-              tags$ul(
-                tags$li(tags$strong("Box selection: "), "drag a rectangle over visible points in the 3D canvas."),
-                tags$li(tags$strong("Lasso selection: "), "drag a freehand polygon over visible points."),
-                tags$li(tags$strong("Polygon selection: "), "click vertices and double-click to close the polygon."),
-                tags$li(tags$strong("Measure distance: "), "click two visible points; distance is reported in meters."),
-                tags$li(tags$strong("Manual crown edit: "), "lasso a crown/ROI, then save it with the current Selection / ROI label."),
-                tags$li(tags$strong("Volume: "), "reported as occupied voxel volume using the selected voxel size.")
-              )
+            class = "viewer-overlay legend",
+            div(class = "legend-heading", textOutput("viewer_legend_heading", inline = TRUE)),
+            div(class = "legend-gradient"),
+            div(class = "legend-scale",
+                tags$span(textOutput("viewer_legend_min", inline = TRUE)),
+                tags$span(textOutput("viewer_legend_max", inline = TRUE))
             ),
-            card(card_header("Vertical profile"), plotOutput("vertical_profile_plot", height = "220px")),
-            card(card_header("Point classification summary"), tableOutput("classification_summary")),
-            card(card_header("Selected tree"), tableOutput("selected_tree")),
-            card(card_header("Distance measurement"), tableOutput("distance_measurement")),
-            card(card_header("Full-resolution ROI source"), verbatimTextOutput("full_roi_status")),
-            card(card_header("Manual crown / ROI layer"), tableOutput("manual_crowns_table")),
-            card(card_header("Approximate tree candidates"), tableOutput("tree_metrics")),
-            card(card_header("Selection export"), verbatimTextOutput("selection_export_paths"))
+            tags$div(
+              style = "margin-top: 6px; font-size: 0.72rem; color: #94a3b8;",
+              "Axes: ", tags$span(style = "color:#ef4444;", "X"), " ",
+              tags$span(style = "color:#22c55e;", "Y"), " ",
+              tags$span(style = "color:#3b82f6;", "Z")
+            )
           ),
           div(
-            class = "tree-side-column",
-            card(
-              card_header(
-                div(
-                  class = "map-card-header",
-                  span("2D context map"),
-                  actionButton("recenter_context_map", "Center map", class = "btn-outline-secondary btn-sm map-center-btn")
-                )
-              ),
-              leafletOutput("point_cloud_context_map", height = "280px")
+            class = "viewer-overlay scale",
+            span(class = "scale-bar"),
+            tags$span(id = "viewer_scale_label", "~10 m")
+          )
+        ),
+        # Tools / measurements / metrics in a compact tabset BELOW the
+        # viewer so the 3D viewport itself owns most of the screen.
+        div(
+          class = "modeling-metrics-tabs mt-3",
+          navset_card_tab(
+            id = "modeling_tabs",
+            nav_panel(
+              "Selection",
+              tableOutput("selection_metrics"),
+              tableOutput("classification_summary")
             ),
-            card(card_header("Selection measurements"), tableOutput("selection_metrics")),
-            card(
-              card_header("Survey volumes"),
+            nav_panel(
+              "Survey volumes",
               tableOutput("survey_volume_table"),
-              div(class = "sidebar-note small text-muted px-3 pb-2",
-                  "Computed between the DSM and the chosen base reference, over the convex hull of the currently-selected points. Switch base reference in the sidebar to match the survey use case: 'External DTM' for canopy biomass, 'Perimeter TIN' for stockpile-style earthworks, 'User-defined plane' for fixed-Z analyses.")
+              div(class = "small text-muted",
+                  "DSM - base over the convex hull of the selected points. Choose base reference in the sidebar (DTM / min Z / mean Z / quantile / user plane / perimeter TIN).")
+            ),
+            nav_panel(
+              "Trees",
+              card(card_header("Approximate tree candidates"), tableOutput("tree_metrics")),
+              card(card_header("Selected tree"),               tableOutput("selected_tree"))
+            ),
+            nav_panel(
+              "Vertical profile",
+              plotOutput("vertical_profile_plot", height = "260px")
+            ),
+            nav_panel(
+              "Manual crowns / ROIs",
+              tableOutput("manual_crowns_table"),
+              verbatimTextOutput("full_roi_status")
+            ),
+            nav_panel(
+              "Distance",
+              tableOutput("distance_measurement")
+            ),
+            nav_panel(
+              "2D context",
+              leafletOutput("point_cloud_context_map", height = "320px"),
+              actionButton("recenter_context_map", "Center map", class = "btn-outline-secondary btn-sm mt-2")
+            ),
+            nav_panel(
+              "Export",
+              verbatimTextOutput("selection_export_paths")
+            ),
+            nav_panel(
+              "Tool reference",
+              tags$ul(
+                tags$li(tags$strong("Box selection: "), "drag a rectangle over visible points."),
+                tags$li(tags$strong("Lasso selection: "), "drag a freehand polygon over visible points."),
+                tags$li(tags$strong("Polygon selection: "), "click vertices, double-click to close."),
+                tags$li(tags$strong("Measure distance: "), "click two visible points; distance in meters."),
+                tags$li(tags$strong("Manual crown edit: "), "lasso a crown, save with the Selection / ROI label."),
+                tags$li(tags$strong("Volume: "), "reported as occupied voxel volume; see also the Survey volumes tab."),
+                tags$li(tags$strong("Reset view / Zoom +/-: "), "in the toolbar above the viewer, controls the OrbitControls camera.")
+              )
             )
           )
         )
@@ -4033,6 +4157,30 @@ server <- function(input, output, session) {
               controls.target.copy(defaultTarget);
             }
             controls.enabled = mode === 'Inspect trees';
+
+            // Expose handles for the sidebar-driven custom message handlers
+            // (Reset view, Zoom +/-). Stored as a window global because the
+            // viewer body is a closure with no public R-side hook.
+            window.__dronebior_viewer = {
+              camera: camera,
+              controls: controls,
+              defaultPosition: defaultPosition.clone(),
+              defaultTarget: defaultTarget.clone(),
+              scene: scene
+            };
+
+            // Visible XYZ axes inside the scene. Length = ~1/4 of the scene
+            // extent so it is always readable but never dominates the view.
+            if (THREE.AxesHelper) {
+              var axisLen = Math.max(1, Math.min(
+                Math.abs(defaultPosition.x - defaultTarget.x),
+                Math.abs(defaultPosition.y - defaultTarget.y),
+                Math.abs(defaultPosition.z - defaultTarget.z)
+              ) * 0.25);
+              var axes = new THREE.AxesHelper(axisLen);
+              axes.position.copy(defaultTarget);
+              scene.add(axes);
+            }
             let lastCameraEmit = 0;
             controls.addEventListener('change', function() {
               const now = Date.now();
@@ -4357,6 +4505,55 @@ server <- function(input, output, session) {
   output$selection_metrics <- renderTable({
     format_selection_metrics(selection_metrics())
   })
+
+  # 3D viewer remote controls. Buttons in the top toolbar send custom
+  # messages to the JS handlers registered in tags$head, which in turn
+  # nudge the OrbitControls camera exposed via window.__dronebior_viewer.
+  observeEvent(input$reset_3d_view, {
+    session$sendCustomMessage("dronebior_3d_reset", list())
+  })
+  observeEvent(input$zoom_in_3d, {
+    session$sendCustomMessage("dronebior_3d_zoom", list(factor = 0.8))
+  })
+  observeEvent(input$zoom_out_3d, {
+    session$sendCustomMessage("dronebior_3d_zoom", list(factor = 1.25))
+  })
+
+  # Dynamic legend driven by the currently selected point symbology.
+  viewer_legend_info <- reactive({
+    mode <- input$point_color_mode %||% "RGB"
+    pts <- tryCatch(point_cloud(), error = function(e) NULL)
+    if (identical(mode, "RGB") || is.null(pts) || nrow(pts) == 0) {
+      return(list(
+        heading = paste0("Point color: ", mode),
+        min_str = "",
+        max_str = ""
+      ))
+    }
+    if (identical(mode, "Height")) {
+      z <- if ("height_m" %in% names(pts)) pts$height_m else pts$z
+      z <- z[is.finite(z)]
+      if (length(z) == 0) {
+        return(list(heading = "Height (no data)", min_str = "", max_str = ""))
+      }
+      return(list(
+        heading = "Height above ground (m)",
+        min_str = formatC(min(z), format = "f", digits = 2),
+        max_str = formatC(max(z), format = "f", digits = 2)
+      ))
+    }
+    if (identical(mode, "Classification")) {
+      return(list(
+        heading = "Point classification",
+        min_str = "(see palette in 3D tools)",
+        max_str = ""
+      ))
+    }
+    list(heading = mode, min_str = "", max_str = "")
+  })
+  output$viewer_legend_heading <- renderText(viewer_legend_info()$heading)
+  output$viewer_legend_min     <- renderText(viewer_legend_info()$min_str)
+  output$viewer_legend_max     <- renderText(viewer_legend_info()$max_str)
 
   # Survey-grade volume metrics over the convex hull of the currently
   # selected points. Method, base plane and ground quantile come from
