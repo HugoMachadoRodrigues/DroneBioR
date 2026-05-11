@@ -1540,7 +1540,7 @@ ui <- page_navbar(
           selected = if (file.exists(default_full_cloud(default_products))) "Full georeferenced LAS/LAZ/COPC sample" else "PLY preview fallback"
         ),
         checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
-        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = FALSE),
+        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = TRUE),
         checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
         textInput("ply_path", "Preview point cloud (PLY)", value = file.path(default_project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")),
         numericInput("max_points", "Maximum preview points", value = 35000, min = 1000, max = 150000, step = 1000),
@@ -2037,7 +2037,7 @@ server <- function(input, output, session) {
   # white margins of the ortho from rising into tall white columns
   # (ODM extrapolates the DSM to its bounding box, so the "no flight
   # coverage" pixels also carry valid-looking high Z values).
-  build_dsm_heightmap <- function(dsm_path, orthomosaic_path = NULL, grid_size = 180) {
+  build_dsm_heightmap <- function(dsm_path, orthomosaic_path = NULL, grid_size = 300) {
     if (!file.exists(dsm_path)) return(NULL)
     tryCatch({
       dsm <- terra::rast(dsm_path)
@@ -2050,18 +2050,31 @@ server <- function(input, output, session) {
           if (!terra::compareGeom(dsm, alpha, stopOnError = FALSE)) {
             alpha <- terra::resample(alpha, dsm, method = "near")
           }
-          dsm <- terra::mask(dsm, alpha, maskvalues = 0, updatevalue = NA)
+          # ODM's alpha band is feathered at the no-data edge (values
+          # between 1 and 254). A strict alpha == 0 mask leaves the
+          # feather pixels behind and they still spike when draped.
+          # Treat anything below 200 as no-data.
+          dsm <- terra::mask(dsm, alpha >= 200, maskvalues = 0, updatevalue = NA)
         }
       }
+
+      # 5x5 median focal pass to despike isolated outliers that the
+      # alpha mask cannot catch (real DSM pixels with extreme values).
+      # Median filter respects NAs and preserves real canopy structure.
+      dsm <- tryCatch(
+        terra::focal(dsm, w = 5, fun = "median", na.rm = TRUE, na.policy = "all"),
+        error = function(e) dsm
+      )
 
       ds <- terra::spatSample(dsm, size = grid_size * grid_size,
                               method = "regular", as.raster = TRUE, na.rm = FALSE)
       z  <- terra::as.matrix(ds, wide = TRUE)
       bad <- !is.finite(z)
       if (any(bad) && any(!bad)) {
-        # Flatten no-data cells to the lowest valid DSM value, so the
-        # masked fringe is a low pedestal instead of a forest of spikes.
-        floor_z <- min(z[!bad], na.rm = TRUE)
+        # 2nd-percentile, not min, so a single residual outlier-low
+        # pixel does not drag the floor below the actual terrain.
+        floor_z <- as.numeric(stats::quantile(z[!bad], probs = 0.02,
+                                              na.rm = TRUE, names = FALSE))
         z[bad] <- floor_z
       } else if (all(bad)) {
         return(NULL)
@@ -4269,9 +4282,17 @@ server <- function(input, output, session) {
               positions.needsUpdate = true;
               geom.computeVertexNormals();
 
-              const material = new THREE.MeshLambertMaterial({
+              // MeshStandardMaterial responds to physically-based
+              // lights and tone mapping, which together with the
+              // hemisphere light below produce a soft natural look
+              // similar to a Pix4D 3D model view (not the harsh
+              // direct-sun look the previous Lambert + single
+              // directional gave).
+              const material = new THREE.MeshStandardMaterial({
                 map: texture,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide,
+                roughness: 0.95,
+                metalness: 0.0
               });
               const mesh = new THREE.Mesh(geom, material);
               mesh.rotation.x = -Math.PI / 2;
@@ -4280,13 +4301,22 @@ server <- function(input, output, session) {
               mesh.position.set(cxScene, 0, czScene);
               scene.add(mesh);
 
-              // Add lights only when there is something that needs
-              // shading. PointsMaterial / MeshBasicMaterial elsewhere
-              // do not care about lights; MeshLambertMaterial does.
-              const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
-              dirLight.position.set(60, 100, 50);
-              scene.add(dirLight);
-              scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+              // Soft outdoor lighting: hemisphere (sky -> ground)
+              // for ambient fill that varies vertically, plus a gentle
+              // directional to keep slope shading. ACES tone mapping
+              // on the renderer rounds off the highlights.
+              const hemi = new THREE.HemisphereLight(0xddeeff, 0x445544, 0.65);
+              scene.add(hemi);
+              const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+              sun.position.set(60, 120, 50);
+              scene.add(sun);
+              if ('ACESFilmicToneMapping' in THREE) {
+                renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                renderer.toneMappingExposure = 1.0;
+              }
+              if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) {
+                renderer.outputColorSpace = THREE.SRGBColorSpace;
+              }
             });
           } else if (hasBasemap && basemap.data_uri) {
             const textureLoader = new THREE.TextureLoader();
