@@ -4,6 +4,19 @@ library(bslib)
 library(leaflet)
 library(terra)
 
+# Configure async execution. With `future` and `promises` installed, the
+# heavy workflow run (run_dronebio_workflow) executes in a background R
+# session so the UI stays responsive. Falls back to synchronous execution
+# when either package is missing.
+.dronebior_async_available <- requireNamespace("future", quietly = TRUE) &&
+  requireNamespace("promises", quietly = TRUE)
+if (.dronebior_async_available) {
+  if (!inherits(future::plan(), "multisession")) {
+    future::plan(future::multisession,
+                 workers = max(1L, future::availableCores() - 1L))
+  }
+}
+
 default_project_dir <- getOption("dronebior.project_dir", getwd())
 default_project <- dronebio_project(default_project_dir)
 default_products <- odm_product_paths(default_project)
@@ -3947,28 +3960,93 @@ server <- function(input, output, session) {
   })
 
   workflow <- eventReactive(input$run_workflow, {
-    with_error_toast("Run DroneBioR workflow", {
-      withProgress(message = "Running R analysis", value = 0.1, {
-        result <- run_dronebio_workflow(
-          project = project(),
-          orthomosaic = input$orthomosaic,
-          output_dir = input$output_dir,
-          use_alpha = input$use_alpha
-        )
-        incProgress(1)
-        result
+    # Snapshot inputs as plain values: the future runs in a worker R session
+    # that has no Shiny reactive context.
+    project_dir <- input$project_dir
+    images_dir  <- input$images_dir
+    output_dir  <- input$output_dir
+    ortho       <- input$orthomosaic
+    use_alpha   <- input$use_alpha
+
+    run_workflow_safely <- function() {
+      DroneBioR::configure_proj_database(verbose = FALSE)
+      proj <- DroneBioR::dronebio_project(project_dir)
+      proj$images_dir <- images_dir
+      proj$output_dir <- output_dir
+      result <- DroneBioR::run_dronebio_workflow(
+        project     = proj,
+        orthomosaic = ortho,
+        output_dir  = output_dir,
+        use_alpha   = use_alpha
+      )
+      # Return only what the renders need; terra::SpatRaster cannot be
+      # serialized cheaply across processes, and the renders do not look
+      # at the rasters themselves, only at the written paths.
+      list(
+        status       = "Analysis completed.",
+        output_paths = result$output_paths
+      )
+    }
+
+    if (isTRUE(.dronebior_async_available)) {
+      showNotification(
+        "R analysis started in a background process. Switch panels - this notification will go away when it finishes.",
+        type     = "message",
+        duration = 6
+      )
+      # `future_promise` returns a promise that downstream renders chain on.
+      promises::future_promise({
+        suppressWarnings(run_workflow_safely())
       })
-    })
+    } else {
+      with_error_toast("Run DroneBioR workflow", {
+        withProgress(message = "Running R analysis", value = 0.1, {
+          result <- run_workflow_safely()
+          incProgress(1)
+          result
+        })
+      })
+    }
   })
 
+  # The renders accept either a resolved value (sync fallback) or a promise
+  # (async path). `as_workflow_promise()` normalises them so the rest of
+  # the render is identical regardless of mode.
+  as_workflow_promise <- function(value) {
+    if (isTRUE(.dronebior_async_available)) {
+      if (inherits(value, "promise")) return(value)
+      return(promises::promise_resolve(value))
+    }
+    # Without promises installed we just pass the value through as-is.
+    value
+  }
+
   output$workflow_status <- renderText({
-    req(workflow())
-    "Analysis completed."
+    result <- workflow()
+    if (.dronebior_async_available) {
+      promises::then(
+        as_workflow_promise(result),
+        onFulfilled = function(r) r$status,
+        onRejected  = function(e) paste("Workflow failed:", conditionMessage(e))
+      )
+    } else {
+      req(result)
+      result$status
+    }
   })
 
   output$workflow_outputs <- renderText({
-    req(workflow())
-    paste(workflow()$output_paths, collapse = "\n")
+    result <- workflow()
+    if (.dronebior_async_available) {
+      promises::then(
+        as_workflow_promise(result),
+        onFulfilled = function(r) paste(r$output_paths, collapse = "\n"),
+        onRejected  = function(e) ""
+      )
+    } else {
+      req(result)
+      paste(result$output_paths, collapse = "\n")
+    }
   })
 }
 

@@ -34,12 +34,14 @@ Imports:
     utils
 Suggests:
     bslib,
+    future,
     htmltools,
     jsonlite,
     knitr,
     leaflet,
     leafem,
     lidR,
+    promises,
     rmarkdown,
     shiny,
     testthat (>= 3.0.0)
