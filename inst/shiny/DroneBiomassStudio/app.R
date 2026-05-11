@@ -1169,6 +1169,14 @@ ui <- page_navbar(
         margin-right: 6px;
         vertical-align: middle;
       }
+      .viewer-overlay.gizmo {
+        bottom: 12px;
+        right: 12px;
+        padding: 0;
+        background: rgba(15, 23, 42, 0.55);
+        width: 112px;
+        height: 112px;
+      }
       .viewer-overlay .legend-heading {
         font-weight: 700;
         margin-bottom: 5px;
@@ -1568,7 +1576,10 @@ ui <- page_navbar(
             class = "viewer-overlay scale",
             span(class = "scale-bar"),
             tags$span(id = "viewer_scale_label", "~10 m")
-          )
+          ),
+          # Bottom-right corner: XYZ orientation gizmo (mini three.js scene
+          # sync'd to the main camera). Populated by the viewer JS.
+          div(class = "viewer-overlay gizmo", id = "viewer_gizmo")
         ),
         # Tools / measurements / metrics in a compact tabset BELOW the
         # viewer so the 3D viewport itself owns most of the screen.
@@ -4159,11 +4170,13 @@ server <- function(input, output, session) {
             controls.enabled = mode === 'Inspect trees';
 
             // Expose handles for the sidebar-driven custom message handlers
-            // (Reset view, Zoom +/-). Stored as a window global because the
-            // viewer body is a closure with no public R-side hook.
+            // (Reset view, Zoom +/-) and for the in-scene overlays (scale
+            // bar). Stored as a window global because the viewer body is
+            // a closure with no public R-side hook.
             window.__dronebior_viewer = {
               camera: camera,
               controls: controls,
+              renderer: renderer,
               defaultPosition: defaultPosition.clone(),
               defaultTarget: defaultTarget.clone(),
               scene: scene
@@ -4180,6 +4193,46 @@ server <- function(input, output, session) {
               var axes = new THREE.AxesHelper(axisLen);
               axes.position.copy(defaultTarget);
               scene.add(axes);
+            }
+
+            // Bottom-right gizmo: a separate mini-scene with coloured XYZ
+            // axes + sphere tips. The gizmo camera is reoriented every
+            // frame to match the main camera's view direction (same
+            // angle, fixed distance), so the gizmo always shows the
+            // current orientation - the Blender / Pix4D convention.
+            var gizmoContainer = document.getElementById('viewer_gizmo');
+            if (gizmoContainer && THREE.AxesHelper) {
+              while (gizmoContainer.firstChild) {
+                gizmoContainer.removeChild(gizmoContainer.firstChild);
+              }
+              var gizmoScene = new THREE.Scene();
+              var gizmoCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+              var gizmoAxes = new THREE.AxesHelper(1.5);
+              gizmoScene.add(gizmoAxes);
+              var sphereGeom = new THREE.SphereGeometry(0.16, 16, 16);
+              var xTip = new THREE.Mesh(sphereGeom, new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+              var yTip = new THREE.Mesh(sphereGeom, new THREE.MeshBasicMaterial({ color: 0x22c55e }));
+              var zTip = new THREE.Mesh(sphereGeom, new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
+              xTip.position.set(1.5, 0, 0); yTip.position.set(0, 1.5, 0); zTip.position.set(0, 0, 1.5);
+              gizmoScene.add(xTip); gizmoScene.add(yTip); gizmoScene.add(zTip);
+
+              var gizmoSize = Math.max(80, Math.min(112, gizmoContainer.clientWidth));
+              var gizmoRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+              gizmoRenderer.setPixelRatio(window.devicePixelRatio || 1);
+              gizmoRenderer.setSize(gizmoSize, gizmoSize);
+              gizmoRenderer.setClearColor(0x000000, 0);
+              gizmoContainer.appendChild(gizmoRenderer.domElement);
+
+              window.__dronebior_viewer.gizmoRenderer = gizmoRenderer;
+              window.__dronebior_viewer.gizmoUpdate = function() {
+                var dir = camera.position.clone().sub(controls.target);
+                if (dir.lengthSq() < 1e-9) return;
+                dir.normalize().multiplyScalar(4.5);
+                gizmoCamera.position.copy(dir);
+                gizmoCamera.up.copy(camera.up);
+                gizmoCamera.lookAt(0, 0, 0);
+                gizmoRenderer.render(gizmoScene, gizmoCamera);
+              };
             }
             let lastCameraEmit = 0;
             controls.addEventListener('change', function() {
@@ -4389,10 +4442,57 @@ server <- function(input, output, session) {
             startPoint = null;
           });
 
+          // Live scale bar: project two world points 1 metre apart at the
+          // controls target depth, measure the pixel distance between
+          // their screen projections, pick a nice round meter value
+          // (1/2/5/10/20/50/100/...) for a ~110px bar, and update the
+          // bottom-left overlay DOM. Runs in the animation loop so it
+          // stays in sync with both camera moves and resize.
+          function pickNiceMeters(targetPixels, pxPerMeter) {
+            if (!isFinite(pxPerMeter) || pxPerMeter <= 0) return null;
+            var meters = targetPixels / pxPerMeter;
+            var pow = Math.pow(10, Math.floor(Math.log10(meters)));
+            var rel = meters / pow;
+            var nice;
+            if      (rel < 1.5) nice = 1;
+            else if (rel < 3.5) nice = 2;
+            else if (rel < 7.5) nice = 5;
+            else                nice = 10;
+            return nice * pow;
+          }
+          var lastScaleEmit = 0;
+          function updateScaleBar(now) {
+            // Throttle DOM writes to ~10 Hz; the animation runs at 60 Hz
+            // but the scale bar does not need that frequency.
+            if (now - lastScaleEmit < 100) return;
+            lastScaleEmit = now;
+            var canvas = renderer.domElement;
+            var rect = canvas.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            var pA = controls ? controls.target.clone() : defaultTarget.clone();
+            var pB = pA.clone().add(new THREE.Vector3(1, 0, 0));
+            var nA = pA.clone().project(camera);
+            var nB = pB.clone().project(camera);
+            var dx = (nB.x - nA.x) * 0.5 * rect.width;
+            var dy = (nB.y - nA.y) * 0.5 * rect.height;
+            var pxPerMeter = Math.hypot(dx, dy);
+            var nice = pickNiceMeters(110, pxPerMeter);
+            if (nice === null) return;
+            var barEl   = document.querySelector('.viewer-overlay.scale .scale-bar');
+            var labelEl = document.getElementById('viewer_scale_label');
+            if (barEl)   barEl.style.width = (nice * pxPerMeter).toFixed(0) + 'px';
+            if (labelEl) labelEl.textContent =
+              nice >= 1000 ? (nice / 1000) + ' km' : nice + ' m';
+          }
+
           function animate() {
             requestAnimationFrame(animate);
             if (controls) controls.update();
             renderer.render(scene, camera);
+            updateScaleBar(performance.now());
+            if (window.__dronebior_viewer && window.__dronebior_viewer.gizmoUpdate) {
+              window.__dronebior_viewer.gizmoUpdate();
+            }
           }
           animate();
         })();
