@@ -190,7 +190,9 @@ tile_raster_on_map <- function(proxy, x, group,
         # floating-point noise across the screen.
         imagequeryOptions  = leafem::imagequeryOptions(
           digits   = 2,
-          position = "topright",
+          # Bottom-right keeps the hover readout clear of the top-right
+          # layers control and the bottom-left legend.
+          position = "bottomright",
           prefix   = "Layer"
         )
       )
@@ -933,6 +935,15 @@ ui <- page_navbar(
         window.setTimeout(function() {
           window.dispatchEvent(new Event('resize'));
         }, 80);
+      });
+      // leafem's addGeotiff(imagequery = TRUE) injects DOM elements that
+      // are not standard leaflet controls, so clearControls() leaves them
+      // behind. We expose a custom message handler that R can call to
+      // remove them explicitly when overlays are reloaded or cleared.
+      Shiny.addCustomMessageHandler('dronebior_clear_imagequery', function(_msg) {
+        document.querySelectorAll('.leaflet-control.imagequery').forEach(function(el) {
+          el.remove();
+        });
       });
     ")),
     tags$style(HTML("
@@ -2347,6 +2358,10 @@ server <- function(input, output, session) {
         ),
         options = layersControlOptions(collapsed = FALSE)
       )
+    # Wipe leafem imagequery widgets too - clearControls() does not touch
+    # them, so without this they pile up indefinitely across loads/clears.
+    session$sendCustomMessage("dronebior_clear_imagequery", list())
+    gis_loaded(FALSE)
   })
 
   # Tracks whether the GIS overlays have been loaded at least once in this
@@ -2381,6 +2396,15 @@ server <- function(input, output, session) {
       proxy <- proxy |> clearGroup(group)
     }
     proxy <- proxy |> clearControls()
+
+    # leafem imagequery widgets are not standard leaflet controls, so
+    # clearControls() leaves them behind. Sweep them out via the custom
+    # JS handler before adding the new layers, so we never accumulate
+    # stale "Layer X" boxes from previous renders.
+    session <- shiny::getDefaultReactiveDomain()
+    if (!is.null(session)) {
+      session$sendCustomMessage("dronebior_clear_imagequery", list())
+    }
 
     first_layer <- NULL
     legend_items <- list()
