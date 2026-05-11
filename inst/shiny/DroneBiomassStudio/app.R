@@ -96,20 +96,74 @@ digest_raster <- function(x) {
   )
 }
 
+# Canonical domain for each layer when the user picks "Fixed semantic"
+# stretch. NULL means "no canonical range, fall back to data range".
+#   * NDVI, NDRE, NDWI, GNDVI, VARI, Biomass_Index_Proxy : [-1, 1]
+#       Yellow at 0 marks the biophysical transition (no chlorophyll /
+#       water vs vegetation). Same value on two flights gives the same
+#       colour, which matters for time-series comparison.
+#   * MSAVI2 : [0, 1]  (defined to be non-negative by construction)
+#   * Raw reflectance bands : [0, 1]
+#   * EVI / SAVI / CIrededge / Hillshade : NULL
+#       No canonical bounded range; can exceed [-1, 1] in real imagery,
+#       so we use the data range to avoid clipping the actual signal.
+index_semantic_domain <- function(layer_name) {
+  diverging_idx <- c("NDVI", "NDRE", "NDWI", "GNDVI", "VARI", "Biomass_Index_Proxy")
+  bands         <- c("Red", "Green", "Blue", "NIR", "RedEdge", "MSAVI2")
+  if (layer_name %in% diverging_idx) return(c(-1, 1))
+  if (layer_name %in% bands)         return(c(0, 1))
+  NULL
+}
+
+# Compute the colour domain (min, max) for a given layer under the user's
+# selected stretch mode:
+#   "Fixed semantic"   -> canonical range when known, else data range
+#   "Data range"       -> linearly stretched to the layer's min/max
+#   "Percentile 2-98"  -> robust stretch that ignores outliers
+#
+# Returns a numeric of length 2. Falls back to c(0, 1) when the raster
+# has no finite values (entirely masked).
+compute_color_domain <- function(layer_name, raster_values, mode = "Fixed semantic") {
+  if (identical(mode, "Fixed semantic")) {
+    sem <- index_semantic_domain(layer_name)
+    if (!is.null(sem)) return(sem)
+  }
+  v <- raster_values[is.finite(raster_values)]
+  if (length(v) < 2) return(c(0, 1))
+  if (identical(mode, "Percentile 2-98")) {
+    return(unname(quantile(v, probs = c(0.02, 0.98), na.rm = TRUE)))
+  }
+  range(v)
+}
+
 # Render a raster on a leafletProxy. Uses leafem::addGeotiff() (which streams
 # from a local file as COG-style chunks) when leafem is installed, so users
 # get smooth pan/zoom even on 1+ GB orthomosaics. Falls back to the existing
 # downsample + addRasterImage path when leafem is not available, or when COG
 # writing fails for any reason. The behaviour is identical from the user's
 # perspective; only the under-the-hood serving differs.
+#
+# `domain` (numeric length 2) pins the colour scale endpoints, so that two
+# flights of the same site produce the same colour for the same value.
+# When NULL, the function falls back to the raster's own min/max.
 tile_raster_on_map <- function(proxy, x, group,
                                opacity = 0.75,
                                palette_name = "viridis",
-                               vals = NULL) {
+                               vals = NULL,
+                               domain = NULL) {
+  resolve_domain <- function() {
+    if (!is.null(domain) && length(domain) == 2 && all(is.finite(domain))) {
+      return(domain)
+    }
+    v <- if (is.null(vals)) terra::values(x, mat = FALSE) else vals
+    finite_v <- v[is.finite(v)]
+    if (length(finite_v) < 2) c(0, 1) else range(finite_v, na.rm = TRUE)
+  }
+
   fallback <- function() {
     layer <- downsample_raster(x)
-    v <- if (is.null(vals)) terra::values(layer, mat = FALSE) else vals
-    pal <- colorNumeric(hcl.colors(100, palette_name), v, na.color = "transparent")
+    d <- resolve_domain()
+    pal <- colorNumeric(hcl.colors(100, palette_name), domain = d, na.color = "transparent")
     proxy |>
       addRasterImage(layer, colors = pal, opacity = opacity, project = TRUE, group = group)
   }
@@ -120,13 +174,9 @@ tile_raster_on_map <- function(proxy, x, group,
 
   result <- tryCatch({
     file <- raster_tile_path(x)
-    v <- if (is.null(vals)) terra::values(x, mat = FALSE) else vals
-    finite_v <- v[is.finite(v)]
-    if (length(finite_v) < 2) finite_v <- c(0, 1)
-    domain <- range(finite_v, na.rm = TRUE)
     color_options <- leafem::colorOptions(
       palette  = hcl.colors(100, palette_name),
-      domain   = domain,
+      domain   = resolve_domain(),
       na.color = "transparent"
     )
     proxy |>
@@ -1192,6 +1242,12 @@ ui <- page_navbar(
         div(class = "form-label", "Overlay products"),
         uiOutput("map_layer_controls"),
         sliderInput("map_opacity", "Layer opacity", min = 0, max = 1, value = 0.72, step = 0.05),
+        selectInput(
+          "gis_color_stretch",
+          "Color stretch",
+          choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
+          selected = "Fixed semantic"
+        ),
         checkboxInput("show_raw_flight", "Show raw image flight plan", value = TRUE),
         selectInput(
           "gis_measure_tool",
@@ -2302,7 +2358,8 @@ server <- function(input, output, session) {
   #   - the "Load selected overlays" button (fits the map to the overlays);
   #   - the layer-opacity slider (re-renders existing overlays at the new
   #     opacity, without resetting pan/zoom).
-  render_gis_overlays <- function(all_selected, opacity, fit_to_bounds = TRUE) {
+  render_gis_overlays <- function(all_selected, opacity, fit_to_bounds = TRUE,
+                                  stretch_mode = "Fixed semantic") {
     validate(need(length(all_selected) > 0, "Select at least one overlay product."))
 
     # Hillshade is sourced from the DSM, not from gis_stack(), so peel it
@@ -2356,24 +2413,27 @@ server <- function(input, output, session) {
     for (layer_name in spectral_selected) {
       raster <- x[[layer_name]]
       palette_name <- if (layer_name %in% index_palette_layers) "RdYlGn" else "viridis"
+
+      # Domain controls both the rendered colour scale AND the legend, so
+      # what the user sees on the map matches the gradient bar in the
+      # bottom-left legend exactly.
+      raster_vals <- terra::values(raster, mat = FALSE)
+      domain <- compute_color_domain(layer_name, raster_vals, mode = stretch_mode)
+
       proxy <- tile_raster_on_map(
         proxy, raster,
         group        = layer_name,
         opacity      = opacity,
-        palette_name = palette_name
+        palette_name = palette_name,
+        vals         = raster_vals,
+        domain       = domain
       )
 
-      legend_stats <- tryCatch(
-        terra::minmax(raster),
-        error = function(e) matrix(c(NA_real_, NA_real_), nrow = 2)
-      )
-      lo <- legend_stats[1, 1]
-      hi <- legend_stats[2, 1]
-      if (is.finite(lo) && is.finite(hi)) {
+      if (length(domain) == 2 && all(is.finite(domain))) {
         legend_items[[layer_name]] <- list(
-          name = layer_name,
-          min  = lo,
-          max  = hi,
+          name   = layer_name,
+          min    = domain[1],
+          max    = domain[2],
           colors = hcl.colors(9, palette_name)
         )
       }
@@ -2419,20 +2479,22 @@ server <- function(input, output, session) {
     render_gis_overlays(
       all_selected   = intersect(selected_overlay_layers(), overlay_choices),
       opacity        = input$map_opacity,
-      fit_to_bounds  = TRUE
+      fit_to_bounds  = TRUE,
+      stretch_mode   = input$gis_color_stretch %||% "Fixed semantic"
     )
     gis_loaded(TRUE)
   })
 
-  # When the opacity slider moves after the user has already loaded overlays,
-  # re-render the layers at the new opacity. We skip fit_to_bounds so the
-  # user's pan/zoom is preserved.
-  observeEvent(input$map_opacity, {
+  # When the opacity slider or the stretch mode change after the user has
+  # already loaded overlays, re-render at the new settings. We skip
+  # fit_to_bounds so the user's pan/zoom is preserved.
+  observeEvent(list(input$map_opacity, input$gis_color_stretch), {
     if (!isTRUE(gis_loaded())) return()
     render_gis_overlays(
       all_selected   = intersect(isolate(selected_overlay_layers()), overlay_choices),
       opacity        = input$map_opacity,
-      fit_to_bounds  = FALSE
+      fit_to_bounds  = FALSE,
+      stretch_mode   = input$gis_color_stretch %||% "Fixed semantic"
     )
   }, ignoreInit = TRUE)
 
