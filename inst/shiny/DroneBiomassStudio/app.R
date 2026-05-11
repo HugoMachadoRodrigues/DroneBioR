@@ -26,6 +26,108 @@ downsample_raster <- function(x, size = 90000) {
   terra::spatSample(x, size = size, method = "regular", as.raster = TRUE, na.rm = FALSE)
 }
 
+# Cache of (raster identity hash -> tile-friendly local path). Re-rendering
+# the map with the same raster reuses the prior temp file so we are not
+# rewriting GeoTIFFs on every load.
+.dronebior_tile_cache <- new.env(parent = emptyenv())
+
+raster_tile_path <- function(x) {
+  key <- digest_raster(x)
+  cached <- .dronebior_tile_cache[[key]]
+  if (!is.null(cached) && file.exists(cached)) return(cached)
+
+  tmp <- tempfile(fileext = ".tif")
+  written <- tryCatch(
+    {
+      terra::writeRaster(
+        x, tmp,
+        overwrite = TRUE,
+        filetype  = "COG",
+        gdal      = c("COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER")
+      )
+      tmp
+    },
+    error = function(e) {
+      # Older GDAL builds reject the COG driver. Plain GeoTIFF is universally
+      # supported and addGeotiff still streams chunks efficiently from it.
+      terra::writeRaster(
+        x, tmp,
+        overwrite = TRUE,
+        filetype  = "GTiff",
+        gdal      = c("COMPRESS=DEFLATE")
+      )
+      tmp
+    }
+  )
+  .dronebior_tile_cache[[key]] <- written
+  written
+}
+
+digest_raster <- function(x) {
+  # Cheap fingerprint sufficient for our cache: extent + resolution +
+  # layer count + first 200 sampled values. We are not chasing collisions
+  # in adversarial settings, only avoiding redundant writes between renders.
+  ext <- as.vector(terra::ext(x))
+  res <- terra::res(x)
+  n   <- terra::nlyr(x)
+  sample_vals <- tryCatch(
+    terra::spatSample(x, size = 200, method = "regular", na.rm = FALSE),
+    error = function(e) NULL
+  )
+  paste(
+    paste(ext, collapse = "-"),
+    paste(res, collapse = "-"),
+    n,
+    paste(round(unlist(sample_vals), 6), collapse = ","),
+    sep = "|"
+  )
+}
+
+# Render a raster on a leafletProxy. Uses leafem::addGeotiff() (which streams
+# from a local file as COG-style chunks) when leafem is installed, so users
+# get smooth pan/zoom even on 1+ GB orthomosaics. Falls back to the existing
+# downsample + addRasterImage path when leafem is not available, or when COG
+# writing fails for any reason. The behaviour is identical from the user's
+# perspective; only the under-the-hood serving differs.
+tile_raster_on_map <- function(proxy, x, group,
+                               opacity = 0.75,
+                               palette_name = "viridis",
+                               vals = NULL) {
+  fallback <- function() {
+    layer <- downsample_raster(x)
+    v <- if (is.null(vals)) terra::values(layer, mat = FALSE) else vals
+    pal <- colorNumeric(hcl.colors(100, palette_name), v, na.color = "transparent")
+    proxy |>
+      addRasterImage(layer, colors = pal, opacity = opacity, project = TRUE, group = group)
+  }
+
+  if (!requireNamespace("leafem", quietly = TRUE)) {
+    return(fallback())
+  }
+
+  result <- tryCatch({
+    file <- raster_tile_path(x)
+    v <- if (is.null(vals)) terra::values(x, mat = FALSE) else vals
+    finite_v <- v[is.finite(v)]
+    if (length(finite_v) < 2) finite_v <- c(0, 1)
+    domain <- range(finite_v, na.rm = TRUE)
+    color_options <- leafem::colorOptions(
+      palette  = hcl.colors(100, palette_name),
+      domain   = domain,
+      na.color = "transparent"
+    )
+    proxy |>
+      leafem::addGeotiff(
+        file         = file,
+        opacity      = opacity,
+        colorOptions = color_options,
+        group        = group
+      )
+  }, error = function(e) NULL)
+
+  if (is.null(result)) fallback() else result
+}
+
 # A small info card that appears at the top of every nav_panel main area,
 # explaining what the panel does and linking to the relevant vignette.
 # Keeps onboarding consistent across panels without depending on each
@@ -2125,45 +2227,50 @@ server <- function(input, output, session) {
     legend_items <- list()
 
     # Render hillshade first so it sits beneath color overlays. We use a
-    # neutral black-to-white ramp and slightly reduced opacity so colored
+    # neutral grayscale ramp and slightly reduced opacity so colored
     # indices on top remain readable.
     if (hillshade_selected) {
       h <- hillshade_raster()
       if (!is.null(h)) {
-        h_ds <- downsample_raster(h)
-        h_vals <- terra::values(h_ds, mat = FALSE)
-        h_pal <- colorNumeric(c("#000000", "#FFFFFF"), h_vals, na.color = "transparent")
-        proxy <- proxy |>
-          addRasterImage(
-            h_ds,
-            colors  = h_pal,
-            opacity = min(0.75, 0.85 * input$map_opacity),
-            project = TRUE,
-            group   = "Hillshade"
-          )
-        if (is.null(first_layer)) first_layer <- h_ds
+        # leafem::colorOptions accepts a palette character vector; the
+        # grayscale ramp lives directly in tile_raster_on_map via the
+        # palette_name fall-through, so we pass it explicitly here.
+        proxy <- tile_raster_on_map(
+          proxy, h,
+          group        = "Hillshade",
+          opacity      = min(0.75, 0.85 * input$map_opacity),
+          palette_name = "Grays"
+        )
+        if (is.null(first_layer)) first_layer <- h
       }
     }
 
     for (layer_name in spectral_selected) {
-      layer <- downsample_raster(x[[layer_name]])
-      vals <- terra::values(layer, mat = FALSE)
+      raster <- x[[layer_name]]
       palette_name <- if (layer_name %in% c("NDVI", "NDRE", "SAVI", "Biomass_Index_Proxy")) "YlGn" else "viridis"
-      pal <- colorNumeric(hcl.colors(100, palette_name), vals, na.color = "transparent")
-      finite_vals <- vals[is.finite(vals)]
-      proxy <- proxy |>
-        addRasterImage(layer, colors = pal, opacity = input$map_opacity, project = TRUE, group = layer_name)
+      proxy <- tile_raster_on_map(
+        proxy, raster,
+        group        = layer_name,
+        opacity      = input$map_opacity,
+        palette_name = palette_name
+      )
 
-      if (length(finite_vals) > 0) {
+      legend_stats <- tryCatch(
+        terra::minmax(raster),
+        error = function(e) matrix(c(NA_real_, NA_real_), nrow = 2)
+      )
+      lo <- legend_stats[1, 1]
+      hi <- legend_stats[2, 1]
+      if (is.finite(lo) && is.finite(hi)) {
         legend_items[[layer_name]] <- list(
           name = layer_name,
-          min = min(finite_vals, na.rm = TRUE),
-          max = max(finite_vals, na.rm = TRUE),
+          min  = lo,
+          max  = hi,
           colors = hcl.colors(9, palette_name)
         )
       }
       if (is.null(first_layer)) {
-        first_layer <- layer
+        first_layer <- raster
       }
     }
     selected_layers <- if (hillshade_selected) c(spectral_selected, "Hillshade") else spectral_selected

@@ -38,6 +38,7 @@ Suggests:
     jsonlite,
     knitr,
     leaflet,
+    leafem,
     lidR,
     rmarkdown,
     shiny,
