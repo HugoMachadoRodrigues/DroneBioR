@@ -49,5 +49,5 @@ register_flight(date = Sys.Date(), project_dir = project$project_dir,
 #> Warning: NAs produced by integer overflow
 list_flights(reg)
 #>     flight_id       date                           project_dir notes
-#> 1 20260511-NA 2026-05-11 /tmp/RtmpduMYc6/flight-1-22775dc18e45    NA
+#> 1 20260511-NA 2026-05-11 /tmp/RtmpuSJDPC/flight-1-2275132f8e8f    NA
 ```
