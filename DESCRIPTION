@@ -36,6 +36,7 @@ Suggests:
     bslib,
     future,
     htmltools,
+    httr,
     interp,
     jsonlite,
     knitr,
