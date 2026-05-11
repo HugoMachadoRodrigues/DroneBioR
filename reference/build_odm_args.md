@@ -116,6 +116,6 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/RtmpHeCnen:/datasets"
+#> [3] "-v"                        "/tmp/Rtmphd8vNg:/datasets"
 #> [5] "opendronemap/odm"          "--project-path"           
 ```
