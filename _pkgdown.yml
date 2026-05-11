@@ -10,10 +10,12 @@ development:
 reference:
   - title: "Project setup"
     desc: >
-      Build the project description used by the rest of the package and
+      Build the project description used by the rest of the package,
+      seed a clickable sample project from bundled fixtures, and
       configure PROJ on systems where terra or sf cannot find it.
     contents:
       - dronebio_project
+      - dronebio_sample_project
       - configure_proj_database
 
   - title: "External photogrammetry engines"
@@ -44,6 +46,11 @@ reference:
       - compute_spectral_indices
       - compute_biomass_proxy
 
+  - title: "Classification"
+    contents:
+      - classify_ground_vegetation
+      - classify_ground_csf
+
   - title: "Field data and baseline biomass model"
     contents:
       - read_field_data
@@ -73,10 +80,25 @@ reference:
       - derive_tree_candidates
       - export_point_selection
 
+  - title: "Reports"
+    contents:
+      - render_dronebio_report
+
+  - title: "Time series across flights"
+    contents:
+      - default_flight_registry
+      - register_flight
+      - list_flights
+      - flight_time_series
+      - flight_ndvi_mean
+      - flight_biomass_proxy_mean
+      - flight_chm_mean
+
   - title: "Workflow and Shiny app"
     contents:
       - run_dronebio_workflow
       - run_drone_biomass_studio
+      - with_error_toast
 
 articles:
   - title: "Getting started"
