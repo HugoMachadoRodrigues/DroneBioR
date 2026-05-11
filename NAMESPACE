@@ -35,6 +35,7 @@ export(run_odm_project)
 export(scale_to_reflectance)
 export(summarize_odm_products)
 export(summarize_spatraster)
+export(with_error_toast)
 export(write_dronebio_rasters)
 
 importFrom(grDevices, chull)

@@ -1844,12 +1844,15 @@ server <- function(input, output, session) {
   })
 
   mosaic <- eventReactive(input$load_mosaic, {
-    validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
-    masked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = isTRUE(input$spectral_use_alpha))
-    unmasked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = FALSE)
-    masked$raw_bands <- unmasked$bands
-    masked
-  })
+    with_error_toast("Load orthomosaic", {
+      validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
+      masked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = isTRUE(input$spectral_use_alpha))
+      unmasked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = FALSE)
+      masked$raw_bands <- unmasked$bands
+      masked
+    })
+  }) |>
+    bindCache(input$orthomosaic, input$spectral_use_alpha)
 
   radiometric_scale_info <- reactive({
     req(mosaic())
@@ -1916,13 +1919,16 @@ server <- function(input, output, session) {
   })
 
   gis_stack <- eventReactive(input$load_gis, {
-    validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
-    ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
-    refl <- if (isTRUE(input$scale_reflectance)) scale_to_reflectance(ortho$bands) else ortho$bands
-    idx <- compute_spectral_indices(refl)
-    proxy <- compute_biomass_proxy(idx)
-    c(refl, idx, proxy)
-  })
+    with_error_toast("Load GIS stack", {
+      validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
+      ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
+      refl <- if (isTRUE(input$scale_reflectance)) scale_to_reflectance(ortho$bands) else ortho$bands
+      idx <- compute_spectral_indices(refl)
+      proxy <- compute_biomass_proxy(idx)
+      c(refl, idx, proxy)
+    })
+  }) |>
+    bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance)
 
   output$gis_map <- renderLeaflet({
     m <- leaflet() |>
@@ -2648,33 +2654,41 @@ server <- function(input, output, session) {
   }
 
   point_cloud <- eventReactive(point_cloud_event(), {
-    use_full_sample <- identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") &&
-      file.exists(input$full_cloud_path)
+    with_error_toast("Load point cloud", {
+      use_full_sample <- identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") &&
+        file.exists(input$full_cloud_path)
 
-    if (isTRUE(use_full_sample)) {
-      pts <- read_full_point_cloud(input$full_cloud_path, max_points = input$max_points)
-      chm <- chm_raster()
-      if (!is.null(chm)) {
-        pts <- add_chm_heights(pts, chm)
-        pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "DSM-DTM CHM")
+      if (isTRUE(use_full_sample)) {
+        pts <- read_full_point_cloud(input$full_cloud_path, max_points = input$max_points)
+        chm <- chm_raster()
+        if (!is.null(chm)) {
+          pts <- add_chm_heights(pts, chm)
+          pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "DSM-DTM CHM")
+        } else {
+          pts <- add_point_heights(pts)
+          pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "local low-Z proxy")
+        }
       } else {
+        validate(need(file.exists(input$ply_path), paste("PLY file not found:", input$ply_path)))
+        pts <- read_ply_point_cloud(input$ply_path, max_points = input$max_points)
         pts <- add_point_heights(pts)
-        pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "local low-Z proxy")
+        pts <- add_cloud_runtime_attributes(pts, input$ply_path, "local_preview", "local low-Z proxy")
       }
-    } else {
-      validate(need(file.exists(input$ply_path), paste("PLY file not found:", input$ply_path)))
-      pts <- read_ply_point_cloud(input$ply_path, max_points = input$max_points)
-      pts <- add_point_heights(pts)
-      pts <- add_cloud_runtime_attributes(pts, input$ply_path, "local_preview", "local low-Z proxy")
-    }
 
-    point_classes(data.frame(point_id = pts$point_id, class = "Unclassified"))
-    selected_ids_value(integer())
-    manual_crowns(data.frame())
-    selection_export_paths(character())
-    full_roi_status_value("No ROI selected yet.")
-    pts
-  })
+      point_classes(data.frame(point_id = pts$point_id, class = "Unclassified"))
+      selected_ids_value(integer())
+      manual_crowns(data.frame())
+      selection_export_paths(character())
+      full_roi_status_value("No ROI selected yet.")
+      pts
+    })
+  }) |>
+    bindCache(
+      input$viewer_cloud_source,
+      input$full_cloud_path,
+      input$ply_path,
+      input$max_points
+    )
 
   observeEvent(input$selected_point_ids, {
     ids <- input$selected_point_ids %||% integer()
@@ -3693,10 +3707,12 @@ server <- function(input, output, session) {
   })
 
   extracted_field <- eventReactive(input$extract_field, {
-    req(input$field_file, reflectance(), indices())
-    field <- read_field_data(input$field_file$datapath)
-    predictors <- c(reflectance(), indices())
-    extract_field_spectral_data(field, predictors)
+    with_error_toast("Extract field samples", {
+      req(input$field_file, reflectance(), indices())
+      field <- read_field_data(input$field_file$datapath)
+      predictors <- c(reflectance(), indices())
+      extract_field_spectral_data(field, predictors)
+    })
   })
 
   output$field_preview <- renderTable({
@@ -3705,8 +3721,10 @@ server <- function(input, output, session) {
   }, digits = 4)
 
   model <- eventReactive(input$fit_model, {
-    req(extracted_field())
-    fit_biomass_lm(extracted_field())
+    with_error_toast("Fit biomass model", {
+      req(extracted_field())
+      fit_biomass_lm(extracted_field())
+    })
   })
 
   output$model_summary <- renderPrint({
@@ -3715,15 +3733,17 @@ server <- function(input, output, session) {
   })
 
   workflow <- eventReactive(input$run_workflow, {
-    withProgress(message = "Running R analysis", value = 0.1, {
-      result <- run_dronebio_workflow(
-        project = project(),
-        orthomosaic = input$orthomosaic,
-        output_dir = input$output_dir,
-        use_alpha = input$use_alpha
-      )
-      incProgress(1)
-      result
+    with_error_toast("Run DroneBioR workflow", {
+      withProgress(message = "Running R analysis", value = 0.1, {
+        result <- run_dronebio_workflow(
+          project = project(),
+          orthomosaic = input$orthomosaic,
+          output_dir = input$output_dir,
+          use_alpha = input$use_alpha
+        )
+        incProgress(1)
+        result
+      })
     })
   })
 
