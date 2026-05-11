@@ -46,8 +46,7 @@ reg <- tempfile(fileext = ".csv")
 project <- dronebio_sample_project(target_dir = tempfile("flight-1-"))
 register_flight(date = Sys.Date(), project_dir = project$project_dir,
                 registry_path = reg)
-#> Warning: NAs produced by integer overflow
 list_flights(reg)
-#>     flight_id       date                           project_dir notes
-#> 1 20260511-NA 2026-05-11 /tmp/RtmprrHy21/flight-1-22b310af41d2    NA
+#>           flight_id       date                           project_dir notes
+#> 1 20260511-2e9b1a79 2026-05-11 /tmp/RtmpbQQgD4/flight-1-228d1eccc366    NA
 ```
