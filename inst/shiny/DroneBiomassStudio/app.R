@@ -947,6 +947,8 @@ ui <- page_navbar(
   header = tags$head(
     tags$script(src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"),
+    tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"),
+    tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"),
     tags$script(HTML("
       document.addEventListener('shown.bs.tab', function() {
         window.setTimeout(function() {
@@ -1477,6 +1479,7 @@ ui <- page_navbar(
           selected = if (file.exists(default_full_cloud(default_products))) "Full georeferenced LAS/LAZ/COPC sample" else "PLY preview fallback"
         ),
         checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
+        checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
         textInput("ply_path", "Preview point cloud (PLY)", value = file.path(default_project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")),
         numericInput("max_points", "Maximum preview points", value = 35000, min = 1000, max = 150000, step = 1000),
         numericInput("tree_grid", "Tree candidate grid size (m)", value = 4, min = 1, max = 15, step = 0.5),
@@ -3994,6 +3997,20 @@ server <- function(input, output, session) {
     camera_state_json <- jsonlite::toJSON(isolate(input$point_cloud_camera_state) %||% NULL, auto_unbox = TRUE)
     basemap_json <- jsonlite::toJSON(basemap %||% list(), auto_unbox = TRUE, null = "null")
 
+    # ODM textured-mesh URL. We expose the directory holding the OBJ +
+    # MTL + texture PNGs as a Shiny resource path so the browser can
+    # GET them; OBJLoader / MTLLoader pull in the related files via
+    # relative URLs the loaders compute themselves.
+    mesh_url <- NULL
+    if (isTRUE(input$show_textured_mesh)) {
+      mesh_path <- odm_product_paths(project())[["textured_obj"]]
+      if (file.exists(mesh_path)) {
+        shiny::addResourcePath("dronebior_obj", dirname(mesh_path))
+        mesh_url <- paste0("dronebior_obj/", basename(mesh_path))
+      }
+    }
+    mesh_url_json <- jsonlite::toJSON(mesh_url, auto_unbox = TRUE, null = "null")
+
     tags$div(
       id = "point-cloud-viewer",
       style = "width:100%; height:100%; position:relative;",
@@ -4013,6 +4030,7 @@ server <- function(input, output, session) {
           const mode = __MODE_JSON__;
           const savedCameraState = __CAMERA_STATE_JSON__;
           const basemap = __BASEMAP_JSON__;
+          const meshUrl = __MESH_URL_JSON__;
           const width = container.clientWidth;
           const height = container.clientHeight || 560;
           const scene = new THREE.Scene();
@@ -4090,6 +4108,72 @@ server <- function(input, output, session) {
               plane.rotation.x = -Math.PI / 2;
               plane.position.set(planeX, -0.08, planeZ);
               scene.add(plane);
+            });
+          }
+
+          // ODM textured-mesh loader. ODM writes odm_textured_model_geo.obj
+          // with an MTL alongside it and one or more texture PNGs in the
+          // same folder. OBJLoader + MTLLoader resolve those relative
+          // paths automatically; all we have to do is rewrite the loaded
+          // geometry into the viewer's local coord system (the same
+          // affine transform we apply to point positions).
+          if (meshUrl && THREE.OBJLoader && THREE.MTLLoader) {
+            const baseDir = meshUrl.substring(0, meshUrl.lastIndexOf('/') + 1);
+            const objName = meshUrl.substring(meshUrl.lastIndexOf('/') + 1);
+            const mtlName = objName.replace(/\\.obj$/i, '.mtl');
+            const mtlLoader = new THREE.MTLLoader();
+            mtlLoader.setPath(baseDir);
+            mtlLoader.load(mtlName, function(materials) {
+              materials.preload();
+              const objLoader = new THREE.OBJLoader();
+              objLoader.setMaterials(materials);
+              objLoader.setPath(baseDir);
+              objLoader.load(objName, function(obj) {
+                obj.traverse(function(child) {
+                  if (child.isMesh && child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
+                    const positions = child.geometry.attributes.position;
+                    for (let i = 0; i < positions.count; i++) {
+                      const ox = positions.getX(i);
+                      const oy = positions.getY(i);
+                      const oz = positions.getZ(i);
+                      // ODM OBJ is in projected metres, +Z up. Match
+                      // the same transform used for point cloud
+                      // positions so points and mesh share a frame.
+                      positions.setX(i,  (ox - cx)    / scale * 10);
+                      positions.setY(i,  (oz - minZ)  / scale * 10);
+                      positions.setZ(i, -(oy - cy)    / scale * 10);
+                    }
+                    positions.needsUpdate = true;
+                    if (child.geometry.attributes.normal) {
+                      child.geometry.deleteAttribute('normal');
+                    }
+                    child.geometry.computeVertexNormals();
+                    child.geometry.computeBoundingSphere();
+                  }
+                });
+                scene.add(obj);
+              }, undefined, function(err) {
+                console.warn('OBJLoader failed:', err);
+              });
+            }, undefined, function(err) {
+              console.warn('MTLLoader failed (loading OBJ without materials):', err);
+              const objLoader = new THREE.OBJLoader();
+              objLoader.setPath(baseDir);
+              objLoader.load(objName, function(obj) {
+                obj.traverse(function(child) {
+                  if (child.isMesh && child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
+                    const positions = child.geometry.attributes.position;
+                    for (let i = 0; i < positions.count; i++) {
+                      positions.setX(i,  (positions.getX(i) - cx)   / scale * 10);
+                      positions.setY(i,  (positions.getZ(i) - minZ) / scale * 10);
+                      positions.setZ(i, -(positions.getY(i) - cy)   / scale * 10);
+                    }
+                    positions.needsUpdate = true;
+                    child.material = new THREE.MeshLambertMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
+                  }
+                });
+                scene.add(obj);
+              });
             });
           }
 
@@ -4502,6 +4586,7 @@ server <- function(input, output, session) {
         viewer_script <- gsub("__MODE_JSON__", mode_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__CAMERA_STATE_JSON__", camera_state_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__BASEMAP_JSON__", basemap_json, viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__MESH_URL_JSON__", mesh_url_json, viewer_script, fixed = TRUE)
         viewer_script
       }))
     )
