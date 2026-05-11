@@ -1540,6 +1540,7 @@ ui <- page_navbar(
           selected = if (file.exists(default_full_cloud(default_products))) "Full georeferenced LAS/LAZ/COPC sample" else "PLY preview fallback"
         ),
         checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
+        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = FALSE),
         checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
         textInput("ply_path", "Preview point cloud (PLY)", value = file.path(default_project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")),
         numericInput("max_points", "Maximum preview points", value = 35000, min = 1000, max = 150000, step = 1000),
@@ -2024,6 +2025,38 @@ server <- function(input, output, session) {
           keepBuffer = 8
         )
       )
+  }
+
+  # Build a downsampled DSM heightfield for the "Show DSM as 3D draped
+  # orthomosaic" feature. Returns a list with the Z grid (row-major, north
+  # to south, west to east) plus geo bounds, ready for the JS three.js
+  # PlaneGeometry displacement loop.
+  build_dsm_heightmap <- function(dsm_path, grid_size = 180) {
+    if (!file.exists(dsm_path)) return(NULL)
+    tryCatch({
+      dsm <- terra::rast(dsm_path)
+      ds  <- terra::spatSample(dsm, size = grid_size * grid_size,
+                               method = "regular", as.raster = TRUE, na.rm = FALSE)
+      z   <- terra::as.matrix(ds, wide = TRUE)
+      # Replace NA with the column-wise minimum to avoid spikes; the
+      # alpha plane handles "no data" visually anyway.
+      bad <- !is.finite(z)
+      if (any(bad)) {
+        floor_z <- min(z[!bad], na.rm = TRUE)
+        z[bad] <- floor_z
+      }
+      e <- terra::ext(ds)
+      # JSON serialisation: pass the matrix as a list of rows.
+      list(
+        z_rows = lapply(seq_len(nrow(z)), function(i) as.numeric(z[i, ])),
+        nrow   = nrow(z),
+        ncol   = ncol(z),
+        xmin   = as.numeric(e[1]),
+        xmax   = as.numeric(e[2]),
+        ymin   = as.numeric(e[3]),
+        ymax   = as.numeric(e[4])
+      )
+    }, error = function(e) NULL)
   }
 
   build_orthomosaic_texture <- function(orthomosaic_path, use_alpha = TRUE, scale_reflectance = TRUE) {
@@ -4074,6 +4107,19 @@ server <- function(input, output, session) {
     }
     mesh_url_json <- jsonlite::toJSON(mesh_url, auto_unbox = TRUE, null = "null")
 
+    # Draped DSM heightfield: when enabled, build a downsampled height
+    # grid and serialise alongside the basemap bounds. The viewer JS
+    # then builds a PlaneGeometry with that subdivision and displaces
+    # vertex Z by the DSM value, producing a real 3D surface textured
+    # with the orthomosaic (Pix4D / Metashape "3D model" style).
+    draped_dsm <- NULL
+    if (isTRUE(input$show_draped_dsm)) {
+      dsm_p <- odm_product_paths(project())[["dsm"]]
+      draped_dsm <- build_dsm_heightmap(dsm_p, grid_size = 180)
+    }
+    draped_dsm_json <- jsonlite::toJSON(draped_dsm %||% list(),
+                                        auto_unbox = TRUE, null = "null", na = "null")
+
     tags$div(
       id = "point-cloud-viewer",
       style = "width:100%; height:100%; position:relative;",
@@ -4094,6 +4140,7 @@ server <- function(input, output, session) {
           const savedCameraState = __CAMERA_STATE_JSON__;
           const basemap = __BASEMAP_JSON__;
           const meshUrl = __MESH_URL_JSON__;
+          const drapedDsm = __DRAPED_DSM_JSON__;
           const width = container.clientWidth;
           const height = container.clientHeight || 560;
           const scene = new THREE.Scene();
@@ -4157,7 +4204,68 @@ server <- function(input, output, session) {
             return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2) + Math.pow(a.z - b.z, 2));
           }
 
-          if (hasBasemap && basemap.data_uri) {
+          // Basemap rendering. Two paths:
+          //  * Draped DSM (Pix4D-style): build a PlaneGeometry subdivided
+          //    to match the DSM height grid, displace vertex Z by the
+          //    DSM value, and apply the orthomosaic as the texture.
+          //    Adds directional + ambient lights so the slope-driven
+          //    Lambert shading is visible.
+          //  * Flat plane fallback (the previous behaviour): used when
+          //    the user has not enabled draped mode or no DSM is
+          //    available.
+          const hasDrapedDsm = drapedDsm &&
+            Array.isArray(drapedDsm.z_rows) &&
+            drapedDsm.nrow > 1 && drapedDsm.ncol > 1;
+
+          if (hasDrapedDsm && hasBasemap && basemap.data_uri) {
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load(basemap.data_uri, function(texture) {
+              if ('colorSpace' in texture && THREE.SRGBColorSpace) {
+                texture.colorSpace = THREE.SRGBColorSpace;
+              }
+              texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              const planeWidth  = Math.max((basemap.xmax - basemap.xmin) / scale * 10, 0.1);
+              const planeHeight = Math.max((basemap.ymax - basemap.ymin) / scale * 10, 0.1);
+              const geom = new THREE.PlaneGeometry(
+                planeWidth, planeHeight,
+                drapedDsm.ncol - 1, drapedDsm.nrow - 1
+              );
+              const positions = geom.attributes.position;
+              // PlaneGeometry vertices are row-major, top-to-bottom in
+              // its local Y. After rotateX(-PI/2) the original local Z
+              // becomes scene Y (up), so we displace Z here.
+              let idx = 0;
+              for (let row = 0; row < drapedDsm.nrow; row++) {
+                const z_row = drapedDsm.z_rows[row];
+                for (let col = 0; col < drapedDsm.ncol; col++) {
+                  const z_world = z_row[col];
+                  positions.setZ(idx, (z_world - minZ) / scale * 10);
+                  idx++;
+                }
+              }
+              positions.needsUpdate = true;
+              geom.computeVertexNormals();
+
+              const material = new THREE.MeshLambertMaterial({
+                map: texture,
+                side: THREE.DoubleSide
+              });
+              const mesh = new THREE.Mesh(geom, material);
+              mesh.rotation.x = -Math.PI / 2;
+              const cxScene = (((basemap.xmin + basemap.xmax) / 2) - cx) / scale * 10;
+              const czScene = -((((basemap.ymin + basemap.ymax) / 2) - cy) / scale * 10);
+              mesh.position.set(cxScene, 0, czScene);
+              scene.add(mesh);
+
+              // Add lights only when there is something that needs
+              // shading. PointsMaterial / MeshBasicMaterial elsewhere
+              // do not care about lights; MeshLambertMaterial does.
+              const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+              dirLight.position.set(60, 100, 50);
+              scene.add(dirLight);
+              scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+            });
+          } else if (hasBasemap && basemap.data_uri) {
             const textureLoader = new THREE.TextureLoader();
             textureLoader.load(basemap.data_uri, function(texture) {
               if ('colorSpace' in texture && THREE.SRGBColorSpace) {
@@ -4654,6 +4762,7 @@ server <- function(input, output, session) {
         viewer_script <- gsub("__CAMERA_STATE_JSON__", camera_state_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__BASEMAP_JSON__", basemap_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__MESH_URL_JSON__", mesh_url_json, viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__DRAPED_DSM_JSON__", draped_dsm_json, viewer_script, fixed = TRUE)
         viewer_script
       }))
     )
