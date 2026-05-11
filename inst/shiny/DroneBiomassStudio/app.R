@@ -131,10 +131,18 @@ tile_raster_on_map <- function(proxy, x, group,
     )
     proxy |>
       leafem::addGeotiff(
-        file         = file,
-        opacity      = opacity,
-        colorOptions = color_options,
-        group        = group
+        file               = file,
+        opacity            = opacity,
+        colorOptions       = color_options,
+        group              = group,
+        # Hover-value tooltip in the top-right. digits = 2 keeps it readable;
+        # the default formatter would otherwise spill 15 decimal places of
+        # floating-point noise across the screen.
+        imagequeryOptions  = leafem::imagequeryOptions(
+          digits   = 2,
+          position = "topright",
+          prefix   = "Layer"
+        )
       )
   }, error = function(e) NULL)
 
@@ -860,10 +868,11 @@ theme <- bs_theme(
 
 ui <- page_navbar(
   title = tags$span(
-    tags$img(src = "logo.png", height = "32px",
-             style = "margin-right: 10px; vertical-align: middle;",
+    tags$img(src = "logo.png", height = "56px",
+             style = "margin-right: 12px; vertical-align: middle;",
              alt = "DroneBioR logo"),
-    "Drone Biomass Studio"
+    tags$span(style = "vertical-align: middle; font-size: 1.15rem;",
+              "Drone Biomass Studio")
   ),
   theme = theme,
   header = tags$head(
