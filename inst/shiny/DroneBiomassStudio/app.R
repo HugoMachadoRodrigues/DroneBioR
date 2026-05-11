@@ -1173,7 +1173,11 @@ ui <- page_navbar(
         uiOutput("map_layer_controls"),
         sliderInput("map_opacity", "Layer opacity", min = 0, max = 1, value = 0.72, step = 0.05),
         checkboxInput("show_raw_flight", "Show raw image flight plan", value = TRUE),
-        selectInput("gis_measure_tool", "Map measurement tool", choices = c("Navigate", "Measure distance", "Measure area")),
+        selectInput(
+          "gis_measure_tool",
+          "Map measurement tool",
+          choices = c("Navigate", "Measure distance", "Measure area", "Measure volume (CHM)")
+        ),
         actionButton("clear_gis_measure", "Clear map measurement", class = "btn-outline-secondary"),
         actionButton("recenter_gis_map", "Center map", class = "btn-outline-secondary"),
         actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
@@ -2367,6 +2371,21 @@ server <- function(input, output, session) {
           fillOpacity = 0.18,
           group = "Measurement"
         )
+    } else if (identical(input$gis_measure_tool, "Measure volume (CHM)") && nrow(pts) >= 3) {
+      closed <- rbind(pts, pts[1, , drop = FALSE])
+      proxy |>
+        addPolygons(
+          data = closed,
+          lng = ~lng,
+          lat = ~lat,
+          # Distinct orange so users can tell volume polygons apart from
+          # plain area polygons on the same canvas.
+          color = "#f97316",
+          weight = 3,
+          fillColor = "#f97316",
+          fillOpacity = 0.20,
+          group = "Measurement"
+        )
     }
   })
 
@@ -2391,6 +2410,51 @@ server <- function(input, output, session) {
     if (nrow(pts) >= 2) {
       closed <- rbind(pts, pts[1, , drop = FALSE])
       perimeter <- sum(haversine_m(closed$lng[-nrow(closed)], closed$lat[-nrow(closed)], closed$lng[-1], closed$lat[-1]), na.rm = TRUE)
+    }
+    if (identical(input$gis_measure_tool, "Measure volume (CHM)")) {
+      chm <- tryCatch(chm_raster(), error = function(e) NULL)
+      if (is.null(chm)) {
+        return(data.frame(
+          metric = c("points", "footprint area", "perimeter", "CHM status"),
+          value  = c(
+            as.character(nrow(pts)),
+            formatC(area, format = "f", digits = 2),
+            formatC(perimeter, format = "f", digits = 2),
+            "CHM not available - generate DSM and DTM first"
+          ),
+          unit   = c("count", "m2", "m", "info")
+        ))
+      }
+      # Reproject the lng/lat polygon vertices into the CHM CRS so the
+      # downstream zonal stats use the same coordinate system as the raster.
+      closed <- rbind(pts, pts[1, , drop = FALSE])
+      proj_xy <- tryCatch({
+        ll_sf <- sf::st_as_sf(closed, coords = c("lng", "lat"), crs = 4326)
+        proj_sf <- sf::st_transform(ll_sf, terra::crs(chm))
+        sf::st_coordinates(proj_sf)
+      }, error = function(e) NULL)
+      if (is.null(proj_xy)) {
+        return(data.frame(
+          metric = "status",
+          value  = "Could not project polygon into the CHM CRS.",
+          unit   = "info"
+        ))
+      }
+      roi_poly <- data.frame(x = proj_xy[, 1], y = proj_xy[, 2])
+      metrics <- compute_chm_roi_metrics(chm, roi_poly)
+      return(data.frame(
+        metric = c("points", "footprint area (lon/lat)", "CHM area",
+                   "CHM mean height", "CHM max height", "CHM volume"),
+        value  = c(
+          as.character(nrow(pts)),
+          formatC(area, format = "f", digits = 2),
+          formatC(metrics$chm_area_m2, format = "f", digits = 2),
+          formatC(metrics$chm_height_mean_m, format = "f", digits = 3),
+          formatC(metrics$chm_height_max_m, format = "f", digits = 3),
+          formatC(metrics$chm_surface_volume_m3, format = "f", digits = 2)
+        ),
+        unit   = c("count", "m2", "m2", "m", "m", "m3")
+      ))
     }
     data.frame(
       metric = c("points", "area", "perimeter"),
