@@ -8,7 +8,8 @@ build_odm_args(
   dataset_dir,
   project_name = "micasense",
   image = "opendronemap/odm",
-  radiometric_calibration = "camera+sun",
+  camera_type = c("multispectral", "rgb"),
+  radiometric_calibration = NULL,
   orthophoto_resolution_cm = 5,
   max_concurrency = 4,
   fast_orthophoto = TRUE,
@@ -32,7 +33,14 @@ build_odm_args(
 
 \item{image}{Docker image name.}
 
-\item{radiometric_calibration}{ODM radiometric calibration option.}
+\item{camera_type}{One of \code{"multispectral"} (MicaSense / Sequoia-style 5-band
+cameras, applies \verb{--radiometric-calibration camera+sun} by default) or
+\code{"rgb"} (Sony, DJI, Phantom, generic RGB - skips the radiometric flag
+because it does not apply).}
+
+\item{radiometric_calibration}{ODM radiometric-calibration value. When
+\code{NULL}, the default is chosen by \code{camera_type}: \code{"camera+sun"} for
+multispectral, omitted for RGB. Set to \code{"none"} to skip explicitly.}
 
 \item{orthophoto_resolution_cm}{Orthophoto resolution in centimeters.}
 
@@ -76,4 +84,13 @@ args <- build_odm_args(
   build_dtm = TRUE
 )
 head(args)
+
+# RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.
+rgb_args <- build_odm_args(
+  dataset_dir  = tempdir(),
+  project_name = "rgb_flight",
+  camera_type  = "rgb",
+  build_dsm    = TRUE
+)
+"--radiometric-calibration" \%in\% rgb_args
 }

@@ -3,7 +3,13 @@
 #' @param dataset_dir Host folder mounted to `/datasets`.
 #' @param project_name ODM project name inside `dataset_dir`.
 #' @param image Docker image name.
-#' @param radiometric_calibration ODM radiometric calibration option.
+#' @param camera_type One of `"multispectral"` (MicaSense / Sequoia-style 5-band
+#'   cameras, applies `--radiometric-calibration camera+sun` by default) or
+#'   `"rgb"` (Sony, DJI, Phantom, generic RGB - skips the radiometric flag
+#'   because it does not apply).
+#' @param radiometric_calibration ODM radiometric-calibration value. When
+#'   `NULL`, the default is chosen by `camera_type`: `"camera+sun"` for
+#'   multispectral, omitted for RGB. Set to `"none"` to skip explicitly.
 #' @param orthophoto_resolution_cm Orthophoto resolution in centimeters.
 #' @param max_concurrency Maximum concurrent ODM workers.
 #' @param fast_orthophoto Logical. Add `--fast-orthophoto`.
@@ -27,11 +33,21 @@
 #'   build_dtm = TRUE
 #' )
 #' head(args)
+#'
+#' # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.
+#' rgb_args <- build_odm_args(
+#'   dataset_dir  = tempdir(),
+#'   project_name = "rgb_flight",
+#'   camera_type  = "rgb",
+#'   build_dsm    = TRUE
+#' )
+#' "--radiometric-calibration" %in% rgb_args
 #' @export
 build_odm_args <- function(dataset_dir,
                            project_name = "micasense",
                            image = "opendronemap/odm",
-                           radiometric_calibration = "camera+sun",
+                           camera_type = c("multispectral", "rgb"),
+                           radiometric_calibration = NULL,
                            orthophoto_resolution_cm = 5,
                            max_concurrency = 4,
                            fast_orthophoto = TRUE,
@@ -46,13 +62,24 @@ build_odm_args <- function(dataset_dir,
                            rerun_from = NULL,
                            end_with = NULL,
                            extra_args = character()) {
+  camera_type <- match.arg(camera_type)
+  if (is.null(radiometric_calibration)) {
+    radiometric_calibration <- switch(camera_type,
+                                      multispectral = "camera+sun",
+                                      rgm           = NULL,
+                                      rgb           = NULL)
+  }
   dataset_dir <- normalizePath(dataset_dir, mustWork = FALSE)
   odm_args <- c(
     "--project-path", "/datasets",
-    "--radiometric-calibration", radiometric_calibration,
     "--orthophoto-resolution", as.character(orthophoto_resolution_cm),
     "--max-concurrency", as.character(max_concurrency)
   )
+  if (!is.null(radiometric_calibration) &&
+      nzchar(radiometric_calibration) &&
+      !identical(tolower(radiometric_calibration), "none")) {
+    odm_args <- c(odm_args, "--radiometric-calibration", radiometric_calibration)
+  }
 
   if (isTRUE(fast_orthophoto)) {
     odm_args <- c(odm_args, "--fast-orthophoto")
@@ -153,20 +180,31 @@ convert_undistorted_tiffs_for_texturing <- function(odm_project_dir) {
 #' @param project A `dronebio_project` object.
 #' @param run Logical. If `FALSE`, only return the Docker command.
 #' @param force Logical. Remove the existing orthomosaic before running.
+#' @param camera_type `"multispectral"` (default; expects the
+#'   MicaSense filename pattern via [list_micasense_images()]) or `"rgb"`
+#'   (uses [list_aerial_images()] which accepts any JPG/PNG/TIF without
+#'   a band-id suffix).
 #' @param ... Additional arguments passed to `build_odm_args()`.
 #' @return A list with command, status and output orthomosaic path.
 #' @examples
 #' \dontrun{
 #' project <- dronebio_project("/path/to/Drone_Biomass")
 #' run_odm_project(project, build_dsm = TRUE, build_dtm = TRUE)
+#' # Sony RX1R / DJI RGB flight - no radiometric calibration, permissive
+#' # image lister:
+#' run_odm_project(project, camera_type = "rgb")
 #' }
 #' @export
 run_odm_project <- function(project,
                             run = TRUE,
                             force = FALSE,
+                            camera_type = c("multispectral", "rgb"),
                             ...) {
+  camera_type <- match.arg(camera_type)
   dir.create(project$odm_images_dir, recursive = TRUE, showWarnings = FALSE)
-  manifest <- list_micasense_images(project$images_dir)
+  manifest <- switch(camera_type,
+                     multispectral = list_micasense_images(project$images_dir),
+                     rgb           = list_aerial_images(project$images_dir))
   copy_images_for_odm(manifest, project$odm_images_dir)
 
   if (isTRUE(force) && file.exists(project$odm_orthomosaic)) {
@@ -176,6 +214,7 @@ run_odm_project <- function(project,
   args <- build_odm_args(
     dataset_dir = project$odm_dataset_dir,
     project_name = project$odm_project_name,
+    camera_type = camera_type,
     ...
   )
   command <- paste("docker", paste(shQuote(args), collapse = " "))
@@ -194,6 +233,7 @@ run_odm_project <- function(project,
       retry_args <- build_odm_args(
         dataset_dir = project$odm_dataset_dir,
         project_name = project$odm_project_name,
+        camera_type = camera_type,
         rerun_from = "mvs_texturing",
         ...
       )

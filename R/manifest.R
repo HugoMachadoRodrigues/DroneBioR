@@ -52,6 +52,49 @@ list_micasense_images <- function(images_dir) {
   )
 }
 
+#' List generic aerial images for an ODM project
+#'
+#' Permissive image lister for non-MicaSense flights (Sony RX1R, DJI Phantom
+#' / Mavic, Phase One, generic RGB). Returns a `list_micasense_images()`-
+#' shaped manifest so [copy_images_for_odm()] and [run_odm_project()] can
+#' consume it transparently, but without enforcing the
+#' `^(.+)_([0-9]+)\.[A-Za-z0-9]+$` capture/band filename pattern. Accepts
+#' `.jpg`, `.jpeg`, `.png`, `.tif` and `.tiff` (case-insensitive).
+#'
+#' @param images_dir Folder containing raw image files.
+#' @return A data frame with the same columns as
+#'   [list_micasense_images()]: `file`, `filename`, `capture_id`, `band_id`,
+#'   `file_size_mb`. For aerial RGB sets, `capture_id` is the base filename
+#'   without extension and `band_id` is always `1L`.
+#' @examples
+#' tmp <- tempfile("aerial-"); dir.create(tmp)
+#' for (i in 1:3) file.create(file.path(tmp, paste0("DJI_", sprintf("%04d", i), ".JPG")))
+#' head(list_aerial_images(tmp))
+#' @export
+list_aerial_images <- function(images_dir) {
+  if (!dir.exists(images_dir)) {
+    stop("Image directory not found: ", images_dir, call. = FALSE)
+  }
+  files <- list.files(
+    images_dir,
+    pattern = "\\.(jpe?g|png|tiff?)$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  if (length(files) == 0) {
+    stop("No image files found in: ", images_dir, call. = FALSE)
+  }
+  names_only <- basename(files)
+  data.frame(
+    file         = files,
+    filename     = names_only,
+    capture_id   = tools::file_path_sans_ext(names_only),
+    band_id      = 1L,
+    file_size_mb = round(file.info(files)$size / 1024^2, 3),
+    stringsAsFactors = FALSE
+  )
+}
+
 #' Copy images into an ODM project folder
 #'
 #' @param manifest Data frame from `list_micasense_images()`.

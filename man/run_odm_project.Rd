@@ -4,7 +4,13 @@
 \alias{run_odm_project}
 \title{Run ODM through Docker for a DroneBioR project}
 \usage{
-run_odm_project(project, run = TRUE, force = FALSE, ...)
+run_odm_project(
+  project,
+  run = TRUE,
+  force = FALSE,
+  camera_type = c("multispectral", "rgb"),
+  ...
+)
 }
 \arguments{
 \item{project}{A \code{dronebio_project} object.}
@@ -12,6 +18,11 @@ run_odm_project(project, run = TRUE, force = FALSE, ...)
 \item{run}{Logical. If \code{FALSE}, only return the Docker command.}
 
 \item{force}{Logical. Remove the existing orthomosaic before running.}
+
+\item{camera_type}{\code{"multispectral"} (default; expects the
+MicaSense filename pattern via \code{\link[=list_micasense_images]{list_micasense_images()}}) or \code{"rgb"}
+(uses \code{\link[=list_aerial_images]{list_aerial_images()}} which accepts any JPG/PNG/TIF without
+a band-id suffix).}
 
 \item{...}{Additional arguments passed to \code{build_odm_args()}.}
 }
@@ -25,5 +36,8 @@ Run ODM through Docker for a DroneBioR project
 \dontrun{
 project <- dronebio_project("/path/to/Drone_Biomass")
 run_odm_project(project, build_dsm = TRUE, build_dtm = TRUE)
+# Sony RX1R / DJI RGB flight - no radiometric calibration, permissive
+# image lister:
+run_odm_project(project, camera_type = "rgb")
 }
 }

@@ -1411,6 +1411,57 @@ ui <- page_navbar(
     "))
   ),
   nav_panel(
+    "Processing Engine",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 380,
+        selectInput(
+          "camera_type",
+          "Camera type",
+          choices = c(
+            "Multispectral (MicaSense / Sequoia)" = "multispectral",
+            "RGB (Sony / DJI / Phantom / generic)" = "rgb"
+          ),
+          selected = "multispectral"
+        ),
+        selectInput(
+          "processing_preset",
+          "Processing preset",
+          choices = c(
+            "Scientific canopy model (recommended)",
+            "Fast orthomosaic only",
+            "Full 3D deliverables",
+            "Custom"
+          ),
+          selected = "Scientific canopy model (recommended)"
+        ),
+        numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
+        checkboxInput("fast_orthophoto", "Fast orthophoto", value = FALSE),
+        checkboxInput("build_dsm", "Generate DSM", value = TRUE),
+        checkboxInput("build_dtm", "Generate DTM", value = TRUE),
+        checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
+        checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
+        checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
+        checkboxInput("tiles", "Export 2D web map tiles", value = FALSE),
+        checkboxInput("three_d_tiles", "Export 3D tiles", value = FALSE),
+        checkboxInput("gltf", "Export glTF model", value = FALSE),
+        actionButton("refresh_command", "Build command", class = "btn-primary"),
+        actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
+        div(class = "sidebar-note", "For full 3D textured products, turn off fast orthophoto. ODM uses fast orthophoto to prioritize rapid orthomosaic generation. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
+      ),
+      panel_intro_card(
+        "Processing Engine",
+        "First step for a fresh project: pick the camera type, the preset, and click 'Run ODM'. Drives OpenDroneMap inside Docker for both MicaSense multispectral and generic RGB flights. If you already have orthomosaics from WebODM, Pix4Dmapper or Metashape, skip this panel and load the existing GeoTIFFs from GIS Workspace.",
+        vignette = "external-engines"
+      ),
+      card(card_header("Processing workflow"), uiOutput("processing_workflow")),
+      card(card_header("What this preset creates"), tableOutput("preset_outputs")),
+      card(card_header("ODM Docker command"), verbatimTextOutput("odm_command")),
+      card(card_header("Processing guidance"), textOutput("engine_note")),
+      card(card_header("Product status"), tableOutput("processing_products"))
+    )
+  ),
+  nav_panel(
     "GIS Workspace",
     layout_sidebar(
       sidebar = sidebar(
@@ -1483,48 +1534,6 @@ ui <- page_navbar(
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
         card(card_header("Available processing products"), tableOutput("product_table"))
       )
-    )
-  ),
-  nav_panel(
-    "Processing Engine",
-    layout_sidebar(
-      sidebar = sidebar(
-        width = 380,
-        selectInput(
-          "processing_preset",
-          "Processing preset",
-          choices = c(
-            "Scientific canopy model (recommended)",
-            "Fast orthomosaic only",
-            "Full 3D deliverables",
-            "Custom"
-          ),
-          selected = "Scientific canopy model (recommended)"
-        ),
-        numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
-        checkboxInput("fast_orthophoto", "Fast orthophoto", value = FALSE),
-        checkboxInput("build_dsm", "Generate DSM", value = TRUE),
-        checkboxInput("build_dtm", "Generate DTM", value = TRUE),
-        checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
-        checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
-        checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
-        checkboxInput("tiles", "Export 2D web map tiles", value = FALSE),
-        checkboxInput("three_d_tiles", "Export 3D tiles", value = FALSE),
-        checkboxInput("gltf", "Export glTF model", value = FALSE),
-        actionButton("refresh_command", "Build command", class = "btn-primary"),
-        actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "For full 3D textured products, turn off fast orthophoto. ODM uses fast orthophoto to prioritize rapid orthomosaic generation.")
-      ),
-      panel_intro_card(
-        "Processing Engine",
-        "Drives OpenDroneMap inside Docker. Pick a preset (the recommended one builds DSM + DTM + LAS point cloud), then 'Build command' to inspect the docker arguments before running. If you bring orthomosaics from WebODM, Pix4Dmapper or Metashape, skip this panel and point GIS Workspace at the existing GeoTIFF.",
-        vignette = "external-engines"
-      ),
-      card(card_header("Processing workflow"), uiOutput("processing_workflow")),
-      card(card_header("What this preset creates"), tableOutput("preset_outputs")),
-      card(card_header("ODM Docker command"), verbatimTextOutput("odm_command")),
-      card(card_header("Processing guidance"), textOutput("engine_note")),
-      card(card_header("Product status"), tableOutput("processing_products"))
     )
   ),
   nav_panel(
@@ -3368,6 +3377,7 @@ server <- function(input, output, session) {
       args <- build_odm_args(
         dataset_dir = project()$odm_dataset_dir,
         project_name = project()$odm_project_name,
+        camera_type = input$camera_type %||% "multispectral",
         orthophoto_resolution_cm = input$resolution,
         fast_orthophoto = input$fast_orthophoto,
         build_dsm = input$build_dsm,
@@ -3398,6 +3408,7 @@ server <- function(input, output, session) {
     run_odm_project(
       project(),
       run = TRUE,
+      camera_type = input$camera_type %||% "multispectral",
       orthophoto_resolution_cm = input$resolution,
       fast_orthophoto = input$fast_orthophoto,
       build_dsm = input$build_dsm,
