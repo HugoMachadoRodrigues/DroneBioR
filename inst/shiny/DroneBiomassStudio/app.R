@@ -1419,6 +1419,23 @@ ui <- page_navbar(
         numericInput("max_point_height", "Point height filter max (m)", value = 100, min = 0, max = 150, step = 0.5),
         numericInput("voxel_size", "Volume voxel size (m)", value = 0.5, min = 0.05, max = 5, step = 0.05),
         numericInput("profile_bin_size", "Vertical profile bin size (m)", value = 1, min = 0.1, max = 10, step = 0.1),
+        div(class = "form-label", "Survey volumes"),
+        selectInput(
+          "survey_volume_method",
+          "Base reference",
+          choices = c(
+            "External DTM (canopy / true biomass)"      = "dtm",
+            "Minimum Z inside ROI (classic stockpile)"  = "min_z",
+            "Mean Z inside ROI"                         = "mean_z",
+            "Ground quantile (robust min)"              = "ground_quantile",
+            "User-defined plane (Z = base value)"       = "user_plane",
+            "Perimeter TIN (Pix4D-style stockpile)"     = "perimeter_tin"
+          ),
+          selected = "dtm"
+        ),
+        numericInput("survey_user_plane_z", "User-plane Z (m)", value = 0, step = 0.1),
+        numericInput("survey_ground_quantile", "Ground quantile (0..1)",
+                     value = 0.05, min = 0, max = 0.5, step = 0.01),
         textInput("selection_label", "Selection / ROI label", value = "roi_1"),
         actionButton("clear_point_selection", "Clear selection", class = "btn-outline-secondary"),
         actionButton("save_manual_crown", "Save/update crown ROI", class = "btn-outline-secondary"),
@@ -1478,7 +1495,13 @@ ui <- page_navbar(
               ),
               leafletOutput("point_cloud_context_map", height = "280px")
             ),
-            card(card_header("Selection measurements"), tableOutput("selection_metrics"))
+            card(card_header("Selection measurements"), tableOutput("selection_metrics")),
+            card(
+              card_header("Survey volumes"),
+              tableOutput("survey_volume_table"),
+              div(class = "sidebar-note small text-muted px-3 pb-2",
+                  "Computed between the DSM and the chosen base reference, over the convex hull of the currently-selected points. Switch base reference in the sidebar to match the survey use case: 'External DTM' for canopy biomass, 'Perimeter TIN' for stockpile-style earthworks, 'User-defined plane' for fixed-Z analyses.")
+            )
           )
         )
       )
@@ -3508,6 +3531,18 @@ server <- function(input, output, session) {
     build_chm_from_dsm_dtm(products[["dsm"]], products[["dtm"]])
   })
 
+  dsm_raster <- reactive({
+    products <- odm_product_paths(project())
+    if (!file.exists(products[["dsm"]])) return(NULL)
+    terra::rast(products[["dsm"]])[[1]]
+  })
+
+  dtm_raster <- reactive({
+    products <- odm_product_paths(project())
+    if (!file.exists(products[["dtm"]])) return(NULL)
+    terra::rast(products[["dtm"]])[[1]]
+  })
+
   viewer_basemap <- reactive({
     build_orthomosaic_texture(
       input$orthomosaic,
@@ -4321,6 +4356,84 @@ server <- function(input, output, session) {
 
   output$selection_metrics <- renderTable({
     format_selection_metrics(selection_metrics())
+  })
+
+  # Survey-grade volume metrics over the convex hull of the currently
+  # selected points. Method, base plane and ground quantile come from
+  # the sidebar; we just route them into compute_survey_volumes() and
+  # format the resulting list as a small table.
+  survey_volume_result <- reactive({
+    if (point_cloud_event() == 0) return(NULL)
+    pts <- selected_points()
+    if (is.null(pts) || nrow(pts) < 3) return(NULL)
+
+    method <- input$survey_volume_method %||% "dtm"
+
+    # ROI = convex hull of selected points, as a closed polygon in the
+    # CRS of the project rasters. Selection points are already in that
+    # CRS (they come from the LAS / PLY readers that preserve coords).
+    hull_idx <- grDevices::chull(pts$x, pts$y)
+    roi <- data.frame(x = pts$x[hull_idx], y = pts$y[hull_idx])
+
+    top <- dsm_raster()
+    if (is.null(top)) return(NULL)
+
+    with_error_toast("Compute survey volumes", {
+      compute_survey_volumes(
+        top              = top,
+        roi              = roi,
+        method           = method,
+        dtm              = if (identical(method, "dtm")) dtm_raster() else NULL,
+        base_z           = input$survey_user_plane_z,
+        ground_quantile  = input$survey_ground_quantile
+      )
+    })
+  })
+
+  output$survey_volume_table <- renderTable({
+    res <- survey_volume_result()
+    if (is.null(res)) {
+      return(data.frame(
+        metric = "status",
+        value  = "Select at least 3 points in the 3D viewer. The DSM (or DSM + DTM) must be available in the project.",
+        units  = ""
+      ))
+    }
+    fmt <- function(x, digits = 3) {
+      if (!is.finite(x)) return("-") else formatC(x, format = "f", digits = digits)
+    }
+    data.frame(
+      metric = c(
+        "Base reference",
+        "Cut volume",
+        "Fill volume",
+        "Net volume",
+        "Planar area",
+        "Draped (3D) area",
+        "Perimeter",
+        "Cells inside ROI",
+        "Cell area",
+        "Top z (mean / max)",
+        "Base z (mean)",
+        "Height above base (mean / max)"
+      ),
+      value = c(
+        res$base_reference_text,
+        fmt(res$cut_volume_m3),
+        fmt(res$fill_volume_m3),
+        fmt(res$net_volume_m3),
+        fmt(res$surface_area_planar_m2, 2),
+        fmt(res$surface_area_draped_m2, 2),
+        fmt(res$perimeter_m, 2),
+        as.character(res$cell_count),
+        fmt(res$cell_area_m2, 4),
+        paste0(fmt(res$top_z_summary[["mean"]]), " / ", fmt(res$top_z_summary[["max"]])),
+        fmt(res$base_z_summary[["mean"]]),
+        paste0(fmt(res$height_summary[["mean"]]), " / ", fmt(res$height_summary[["max"]]))
+      ),
+      units = c("", "m^3", "m^3", "m^3", "m^2", "m^2", "m", "count", "m^2", "m", "m", "m"),
+      stringsAsFactors = FALSE
+    )
   })
 
   output$vertical_profile_plot <- renderPlot({

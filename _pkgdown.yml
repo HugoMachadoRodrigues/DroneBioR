@@ -77,6 +77,7 @@ reference:
       - filter_points_by_roi
       - compute_selection_metrics
       - compute_vertical_profile
+      - compute_survey_volumes
       - derive_tree_candidates
       - export_point_selection
 
