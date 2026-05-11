@@ -15,6 +15,17 @@
 #'   the report includes the baseline biomass model section.
 #' @param use_alpha Logical. Use the orthomosaic alpha band as a valid-data
 #'   mask.
+#' @param roi_geojson Optional path to a GeoJSON file containing one or
+#'   more ROI polygons (the format `studio_assets/rois.geojson` produces).
+#'   When supplied, the report adds a "Survey-grade volumes" section
+#'   that runs `compute_survey_volumes()` with four base-reference
+#'   methods (DTM, min Z, mean Z, perimeter TIN) for each ROI. Defaults
+#'   to `<project>/studio_assets/rois.geojson` when that file exists.
+#' @param snapshot_path Optional PNG of the 3D viewer (e.g. from the
+#'   "Screenshot" toolbar button in Drone Biomass Studio). When supplied,
+#'   the report embeds it in the "3D scene documentation" section.
+#'   Otherwise the section falls back to a server-side `persp()`
+#'   rendering of the DSM.
 #' @return Invisibly returns the absolute path to the rendered file.
 #' @examples
 #' \donttest{
@@ -28,9 +39,11 @@
 #' }
 #' @export
 render_dronebio_report <- function(project,
-                                   output_file = NULL,
-                                   field_csv   = NULL,
-                                   use_alpha   = TRUE) {
+                                   output_file   = NULL,
+                                   field_csv     = NULL,
+                                   use_alpha     = TRUE,
+                                   roi_geojson   = NULL,
+                                   snapshot_path = NULL) {
   if (!requireNamespace("rmarkdown", quietly = TRUE)) {
     stop(
       "The 'rmarkdown' package is required to render reports. ",
@@ -55,6 +68,12 @@ render_dronebio_report <- function(project,
   if (is.null(output_file)) {
     output_file <- file.path(project$project_dir, "DroneBioR_report.html")
   }
+  # Auto-pick up ROIs persisted by Drone Biomass Studio when the caller
+  # does not pass an explicit path.
+  if (is.null(roi_geojson)) {
+    auto <- file.path(project$project_dir, "studio_assets", "rois.geojson")
+    if (file.exists(auto)) roi_geojson <- auto
+  }
   output_dir  <- dirname(output_file)
   output_name <- basename(output_file)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -76,10 +95,12 @@ render_dronebio_report <- function(project,
     intermediates_dir = intermediate_dir,
     knit_root_dir     = intermediate_dir,
     params = list(
-      project_dir = project$project_dir,
-      field_csv   = field_csv,
-      use_alpha   = isTRUE(use_alpha),
-      output_dir  = file.path(intermediate_dir, "workflow_outputs")
+      project_dir   = project$project_dir,
+      field_csv     = field_csv,
+      use_alpha     = isTRUE(use_alpha),
+      output_dir    = file.path(intermediate_dir, "workflow_outputs"),
+      roi_geojson   = roi_geojson,
+      snapshot_path = snapshot_path
     ),
     quiet = TRUE,
     envir = new.env(parent = globalenv())

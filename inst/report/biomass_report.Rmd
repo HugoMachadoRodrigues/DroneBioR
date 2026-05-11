@@ -11,6 +11,8 @@ params:
   field_csv: !r NULL
   use_alpha: true
   output_dir: !r tempfile("dronebior-report-")
+  roi_geojson: !r NULL
+  snapshot_path: !r NULL
 ---
 
 ```{r setup, include = FALSE}
@@ -180,6 +182,118 @@ if (!is.null(params$field_csv) && nzchar(params$field_csv) &&
   cat("> No field samples supplied (`field_csv` parameter). Add a CSV with ",
       "`sample_id`, `biomass_kgha` and x/y or longitude/latitude columns to ",
       "include a baseline biomass model in this report.\n", sep = "")
+}
+```
+
+## 3D scene documentation
+
+```{r 3d-snapshot, results = "asis"}
+if (!is.null(params$snapshot_path) && nzchar(params$snapshot_path) &&
+    file.exists(params$snapshot_path)) {
+  cat("![3D scene snapshot from Drone Biomass Studio](", params$snapshot_path, ")\n\n", sep = "")
+  cat("Snapshot captured from the 3D Modeling viewer using the Screenshot ",
+      "toolbar button. The image is the WebGL framebuffer at the moment of ",
+      "capture; HTML overlays (legend, scale bar, gizmo) are intentionally ",
+      "excluded.\n", sep = "")
+} else {
+  cat("> No 3D viewer snapshot supplied. Falling back to a server-side ",
+      "DSM perspective render below.\n\n", sep = "")
+}
+```
+
+```{r 3d-persp, fig.width = 8, fig.height = 5}
+if (is.null(params$snapshot_path) || !file.exists(params$snapshot_path %||% "")) {
+  if (!is.null(chm)) {
+    dsm <- tryCatch(terra::rast(dsm_path), error = function(e) NULL)
+    if (!is.null(dsm)) {
+      # Sub-sample to keep persp() responsive on big DSMs.
+      ds <- terra::spatSample(dsm, size = 90000, method = "regular",
+                              as.raster = TRUE, na.rm = FALSE)
+      m  <- terra::as.matrix(ds, wide = TRUE)
+      x  <- seq(terra::xmin(ds), terra::xmax(ds), length.out = ncol(m))
+      y  <- seq(terra::ymin(ds), terra::ymax(ds), length.out = nrow(m))
+      # `persp` wants z[i, j] where i indexes x and j indexes y. terra
+      # returns rows = y (top down), so transpose and flip.
+      z  <- t(m)[, rev(seq_len(nrow(m)))]
+      par(mar = c(1, 1, 1, 1))
+      persp(x, y, z,
+            theta = 30, phi = 25, expand = 0.6,
+            col   = "#bcd9b9",
+            border = NA,
+            shade = 0.55,
+            ltheta = 135, lphi = 60,
+            ticktype = "simple",
+            xlab = "Easting (m)", ylab = "Northing (m)", zlab = "Z (m)")
+    }
+  }
+}
+```
+
+## Survey-grade volumes per ROI
+
+```{r survey-volumes, results = "asis"}
+.format_num <- function(v, d = 3) {
+  if (!is.finite(v)) "-" else formatC(v, format = "f", digits = d)
+}
+if (!is.null(params$roi_geojson) && nzchar(params$roi_geojson) &&
+    file.exists(params$roi_geojson) && !is.null(result)) {
+  rois <- tryCatch(sf::st_read(params$roi_geojson, quiet = TRUE),
+                   error = function(e) NULL)
+  if (is.null(rois) || nrow(rois) == 0) {
+    cat("> ROI GeoJSON could not be read or is empty.\n")
+  } else {
+    dsm <- tryCatch(terra::rast(dsm_path), error = function(e) NULL)
+    if (is.null(dsm)) {
+      cat("> No DSM available for volume calculation.\n")
+    } else {
+      # Reproject ROIs to DSM CRS once.
+      rois <- sf::st_transform(rois, terra::crs(dsm))
+      methods <- c("dtm", "min_z", "mean_z", "perimeter_tin")
+      out_rows <- list()
+      for (i in seq_len(nrow(rois))) {
+        nm <- if ("name" %in% names(rois)) as.character(rois$name[[i]]) else paste0("roi_", i)
+        coords <- sf::st_coordinates(rois$geometry[[i]])
+        roi_df <- data.frame(x = coords[, 1], y = coords[, 2])
+        for (m in methods) {
+          v <- tryCatch(
+            DroneBioR::compute_survey_volumes(
+              top    = dsm,
+              roi    = roi_df,
+              method = m,
+              dtm    = if (identical(m, "dtm")) tryCatch(terra::rast(dtm_path), error = function(e) NULL) else NULL
+            ),
+            error = function(e) NULL
+          )
+          if (!is.null(v)) {
+            out_rows[[length(out_rows) + 1L]] <- data.frame(
+              roi            = nm,
+              method         = m,
+              cut_m3         = .format_num(v$cut_volume_m3),
+              fill_m3        = .format_num(v$fill_volume_m3),
+              net_m3         = .format_num(v$net_volume_m3),
+              planar_m2      = .format_num(v$surface_area_planar_m2, 2),
+              draped_m2      = .format_num(v$surface_area_draped_m2, 2),
+              perimeter_m    = .format_num(v$perimeter_m, 2),
+              cell_count     = as.character(v$cell_count),
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+      }
+      if (length(out_rows) > 0) {
+        print(knitr::kable(
+          do.call(rbind, out_rows),
+          caption = sprintf("Survey-grade volume metrics for %d ROI%s, four base-reference methods.",
+                            nrow(rois), if (nrow(rois) == 1) "" else "s")
+        ))
+      }
+    }
+  }
+} else {
+  cat("> No ROIs supplied (parameter `roi_geojson`) or the file does not exist. ",
+      "Draw ROIs in the GIS Workspace of Drone Biomass Studio and click ",
+      "'Save ROI'; the report will pick up `studio_assets/rois.geojson` ",
+      "automatically on the next render.\n", sep = "")
 }
 ```
 

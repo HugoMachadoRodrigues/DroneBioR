@@ -8,7 +8,9 @@ render_dronebio_report(
   project,
   output_file = NULL,
   field_csv = NULL,
-  use_alpha = TRUE
+  use_alpha = TRUE,
+  roi_geojson = NULL,
+  snapshot_path = NULL
 )
 }
 \arguments{
@@ -22,6 +24,19 @@ the report includes the baseline biomass model section.}
 
 \item{use_alpha}{Logical. Use the orthomosaic alpha band as a valid-data
 mask.}
+
+\item{roi_geojson}{Optional path to a GeoJSON file containing one or
+more ROI polygons (the format \code{studio_assets/rois.geojson} produces).
+When supplied, the report adds a "Survey-grade volumes" section
+that runs \code{compute_survey_volumes()} with four base-reference
+methods (DTM, min Z, mean Z, perimeter TIN) for each ROI. Defaults
+to \verb{<project>/studio_assets/rois.geojson} when that file exists.}
+
+\item{snapshot_path}{Optional PNG of the 3D viewer (e.g. from the
+"Screenshot" toolbar button in Drone Biomass Studio). When supplied,
+the report embeds it in the "3D scene documentation" section.
+Otherwise the section falls back to a server-side \code{persp()}
+rendering of the DSM.}
 }
 \value{
 Invisibly returns the absolute path to the rendered file.
