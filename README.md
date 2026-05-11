@@ -8,23 +8,50 @@
 [![R >= 4.1](https://img.shields.io/badge/R-%3E%3D%204.1-276DC3.svg)](https://cran.r-project.org/)
 <!-- badges: end -->
 
-**DroneBioR** is a research-oriented R package and Shiny app for drone biomass
-analysis with MicaSense multispectral imagery. It delegates the heavy
-photogrammetry work (SfM, MVS, mesh, texturing) to external engines —
-**OpenDroneMap**, **WebODM**, **Pix4Dmapper** or **Agisoft Metashape** — and
-contributes the scientific layer in R:
+**DroneBioR** is a research-oriented R package and Shiny app (Drone Biomass
+Studio) for drone biomass analysis with MicaSense multispectral imagery.
+It delegates the heavy photogrammetry work (SfM, MVS, mesh, texturing) to
+external engines — **OpenDroneMap**, **WebODM**, **Pix4Dmapper** or
+**Agisoft Metashape** — and contributes the scientific layer in R:
 
 ```text
-Engine outputs (orthomosaic, DSM, DTM, dense point cloud, mesh)
+Engine outputs (orthomosaic, DSM, DTM, dense point cloud, textured mesh)
   -> alpha / no-data masking
   -> radiometric scaling to reflectance
   -> 9 vegetation indices (NDVI, NDRE, EVI, SAVI, NDWI, GNDVI,
                            CIrededge, MSAVI2, VARI)
-  -> field sample extraction
+  -> ground / vegetation classification
   -> canopy height model + ROI metrics
-  -> baseline biomass model
-  -> Shiny app for interactive exploration
+  -> survey-grade volume math (DTM / min-Z / mean-Z / quantile /
+                               user-plane / Pix4D-style perimeter TIN)
+  -> field sample extraction + baseline biomass model
+  -> time-series tracking across flights
+  -> HTML report (RMarkdown template)
+  -> Drone Biomass Studio: 7-panel Shiny app for interactive
+     GIS + 3D modeling + spectral + survey + reporting
 ```
+
+### What's in the Shiny app
+
+* **GIS Workspace** — basemap + index overlays with COG-style tiling
+  (smooth pan/zoom on big orthomosaics), distance / area / CHM-volume
+  measurement tools, named ROI comparison table, GeoJSON annotation
+  pinning, hillshade-from-DSM overlay.
+* **Processing Engine** — drives OpenDroneMap via Docker.
+* **3D Modeling** — full-width WebGL viewport with OrbitControls, XYZ
+  orientation gizmo, live scale bar, and an opt-in textured-OBJ mesh
+  loader (loads ODM's `odm_textured_model_geo.obj` straight into
+  three.js). Survey-grade volume calculations over the convex hull of
+  the currently-selected points, with six base-reference methods
+  (Pix4D / ContextCapture / Trimble convention).
+* **Spectral Analytics** — orthomosaic reading, radiometric scaling,
+  panel calibration, the 9-index stack, application maps.
+* **Field Models** — extract spectral values at field samples, fit
+  a baseline biomass linear model.
+* **Time Series** — register multiple flights of the same site and
+  plot NDVI / biomass / CHM across dates.
+* **Exports** — `run_dronebio_workflow()` one-click; HTML report
+  via `render_dronebio_report()`.
 
 ## Installation
 
