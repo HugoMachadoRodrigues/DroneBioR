@@ -3401,67 +3401,85 @@ server <- function(input, output, session) {
     legend_items <- list()
 
     # Render external rasters (RGB Orthomosaic / DSM / DTM / CHM) before
-    # the spectral overlays so they form a visual base. Aggregate big
-    # rasters down to ~4000 px max so first-render is snappy even on
-    # 22k-pixel-wide 5 cm products.
-    for (layer_name in external_products) {
-      path_key <- switch(layer_name,
-                         `RGB Orthomosaic` = "orthomosaic",
-                         DSM = "dsm",
-                         DTM = "dtm",
-                         CHM = "chm")
-      raster_path <- resolve_product_path(path_key)
-      if (is.null(raster_path)) next
-      r <- tryCatch(terra::rast(raster_path), error = function(e) NULL)
-      if (is.null(r)) next
-      nc <- terra::ncol(r); nr <- terra::nrow(r)
-      fact <- max(1, floor(max(nc, nr) / 4000))
-      if (fact > 1) {
-        r <- terra::aggregate(r, fact = fact, fun = mean, na.rm = TRUE)
-      }
+    # the spectral overlays so they form a visual base. We use
+    # terra::spatSample(method = "regular") instead of terra::aggregate
+    # to subsample big rasters for display -- aggregate reads every
+    # pixel + computes means (10+ minutes on a 4-band 22k x 20k ortho)
+    # while regular sampling reads roughly target_px pixels and
+    # finishes in seconds. The visual result is indistinguishable at
+    # the zoom levels leaflet renders, and the original COG on disk
+    # is untouched so the Analytics tab can still hit full res.
+    if (length(external_products) > 0L) {
+      withProgress(message = "Rendering raster products",
+                   value = 0, {
+        for (layer_name in external_products) {
+          incProgress(0.05, detail = sprintf("Loading %s", layer_name))
+          path_key <- switch(layer_name,
+                             `RGB Orthomosaic` = "orthomosaic",
+                             DSM = "dsm",
+                             DTM = "dtm",
+                             CHM = "chm")
+          raster_path <- resolve_product_path(path_key)
+          if (is.null(raster_path)) next
+          r <- tryCatch(terra::rast(raster_path), error = function(e) NULL)
+          if (is.null(r)) next
+          nc <- terra::ncol(r); nr <- terra::nrow(r)
+          total_px <- as.numeric(nc) * as.numeric(nr)
+          target_px <- 2.5e6  # ~1600x1600, sharp enough for any leaflet zoom
+          if (total_px > target_px) {
+            incProgress(0.1, detail = sprintf("Subsampling %s (%d x %d)",
+                                              layer_name, nc, nr))
+            r <- terra::spatSample(r, size = target_px,
+                                   method = "regular",
+                                   as.raster = TRUE,
+                                   na.rm = FALSE)
+          }
+          incProgress(0.05, detail = sprintf("Adding %s to map", layer_name))
 
-      if (identical(layer_name, "RGB Orthomosaic")) {
-        # Natural-colour composite. read_multispectral_orthomosaic
-        # output order is Blue, Green, Red (+ optional alpha), so the
-        # band indices for RGB display are r=3, g=2, b=1.
-        idx_blue  <- 1L; idx_green <- 2L; idx_red <- 3L
-        if (terra::nlyr(r) >= 3L) {
-          proxy <- proxy |>
-            leafem::addRasterRGB(
-              r[[c(idx_red, idx_green, idx_blue)]],
-              r = 1, g = 2, b = 3,
-              group   = "RGB Orthomosaic",
-              opacity = opacity,
-              project = TRUE,
-              quantiles = c(0.02, 0.98))
-        }
-      } else {
-        # DSM / DTM in metres -> viridis; CHM uses BuGn so 0 is white
-        # and tall canopy is dark green.
-        palette_name <- if (identical(layer_name, "CHM")) "BuGn" else "viridis"
-        layer <- r[[1L]]
-        raster_vals <- terra::values(layer, mat = FALSE)
-        domain <- compute_color_domain(layer_name, raster_vals,
-                                       mode = stretch_mode)
-        proxy <- tile_raster_on_map(
-          proxy, layer,
-          group        = layer_name,
-          opacity      = opacity,
-          palette_name = palette_name,
-          vals         = raster_vals,
-          domain       = domain
-        )
-        if (length(domain) == 2 && all(is.finite(domain))) {
-          legend_items[[layer_name]] <- list(
-            name   = layer_name,
-            min    = domain[1],
-            max    = domain[2],
-            colors = hcl.colors(9, palette_name)
-          )
-        }
-      }
-      if (is.null(first_layer)) first_layer <- r
-    }
+          if (identical(layer_name, "RGB Orthomosaic")) {
+            # Natural-colour composite. read_multispectral_orthomosaic
+            # output order is Blue, Green, Red (+ optional alpha), so
+            # the band indices for RGB display are r=3, g=2, b=1.
+            idx_blue  <- 1L; idx_green <- 2L; idx_red <- 3L
+            if (terra::nlyr(r) >= 3L) {
+              proxy <- proxy |>
+                leafem::addRasterRGB(
+                  r[[c(idx_red, idx_green, idx_blue)]],
+                  r = 1, g = 2, b = 3,
+                  group   = "RGB Orthomosaic",
+                  opacity = opacity,
+                  project = TRUE,
+                  quantiles = c(0.02, 0.98))
+            }
+          } else {
+            # DSM / DTM in metres -> viridis; CHM uses BuGn so 0 is
+            # white and tall canopy is dark green.
+            palette_name <- if (identical(layer_name, "CHM")) "BuGn" else "viridis"
+            layer <- r[[1L]]
+            raster_vals <- terra::values(layer, mat = FALSE)
+            domain <- compute_color_domain(layer_name, raster_vals,
+                                           mode = stretch_mode)
+            proxy <- tile_raster_on_map(
+              proxy, layer,
+              group        = layer_name,
+              opacity      = opacity,
+              palette_name = palette_name,
+              vals         = raster_vals,
+              domain       = domain
+            )
+            if (length(domain) == 2 && all(is.finite(domain))) {
+              legend_items[[layer_name]] <- list(
+                name   = layer_name,
+                min    = domain[1],
+                max    = domain[2],
+                colors = hcl.colors(9, palette_name)
+              )
+            }
+          }
+          if (is.null(first_layer)) first_layer <- r
+        }  # end for(layer_name in external_products)
+      })   # end withProgress
+    }      # end if (length(external_products) > 0L)
 
     # Render hillshade first so it sits beneath color overlays. We use a
     # neutral grayscale ramp and slightly reduced opacity so colored
