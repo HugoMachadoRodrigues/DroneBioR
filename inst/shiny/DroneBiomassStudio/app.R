@@ -879,11 +879,57 @@ flight_arrow_icon <- function(heading) {
 }
 
 read_odm_exif_flight_plan <- function(images_dir, odm_project_dir) {
+  # Prefer geo.txt when the project has one (written either by the user
+  # or by run_odm_project()'s GeoScan auto-detect). It contains the
+  # camera positions ODM actually used, which is the ground truth even
+  # when the original JPGs had no GPS in their EXIF.
+  geo_path <- file.path(odm_project_dir, "geo.txt")
+  if (file.exists(geo_path)) {
+    raw_lines <- readLines(geo_path, warn = FALSE)
+    raw_lines <- raw_lines[nzchar(trimws(raw_lines))]
+    data_lines <- raw_lines[!grepl("^(EPSG|\\+proj|#)", raw_lines, ignore.case = TRUE)]
+    parts <- strsplit(data_lines, "\\s+")
+    parts <- parts[vapply(parts, function(p) length(p) >= 3L, logical(1))]
+    if (length(parts)) {
+      df <- data.frame(
+        filename     = vapply(parts, `[`, character(1), 1L),
+        longitude    = suppressWarnings(as.numeric(vapply(parts, `[`, character(1), 2L))),
+        latitude     = suppressWarnings(as.numeric(vapply(parts, `[`, character(1), 3L))),
+        altitude_m   = suppressWarnings(as.numeric(vapply(parts, function(p)
+                       if (length(p) >= 4L) p[4L] else NA_character_, character(1)))),
+        stringsAsFactors = FALSE
+      )
+      df <- df[is.finite(df$longitude) & is.finite(df$latitude), , drop = FALSE]
+      if (nrow(df)) {
+        df$capture_id   <- sub("\\.[A-Za-z0-9]+$", "", df$filename)
+        df$capture_time <- as.numeric(seq_len(nrow(df)))
+        df$band_id      <- 1L
+        next_lng <- c(df$longitude[-1], df$longitude[nrow(df)])
+        next_lat <- c(df$latitude[-1],  df$latitude[nrow(df)])
+        df$heading <- bearing_degrees(df$longitude, df$latitude, next_lng, next_lat)
+        if (nrow(df) > 1) {
+          n <- nrow(df)
+          prev_lng <- c(df$longitude[1], df$longitude[-n])
+          prev_lat <- c(df$latitude[1],  df$latitude[-n])
+          df$heading[n] <- bearing_degrees(prev_lng[n], prev_lat[n],
+                                           df$longitude[n], df$latitude[n])
+        }
+        df$arrow_icon <- vapply(df$heading, flight_arrow_icon, character(1))
+        df$sequence   <- seq_len(nrow(df))
+        df$image_file <- file.path(images_dir, df$filename)
+        return(df)
+      }
+    }
+  }
+
+  # Fallback: ODM's per-image EXIF JSONs (the original MicaSense path).
+  # Permissive pattern catches both .tif.exif and .JPG.exif outputs.
   exif_dir <- file.path(odm_project_dir, "opensfm", "exif")
   if (!dir.exists(exif_dir)) {
     return(data.frame())
   }
-  files <- list.files(exif_dir, pattern = "\\.tif\\.exif$", full.names = TRUE, ignore.case = TRUE)
+  files <- list.files(exif_dir, pattern = "\\.exif$", full.names = TRUE,
+                      ignore.case = TRUE)
   if (length(files) == 0) {
     return(data.frame())
   }
@@ -897,11 +943,17 @@ read_odm_exif_flight_plan <- function(images_dir, odm_project_dir) {
     parsed <- regexec("^(.+)_([0-9]+)\\.[A-Za-z0-9]+$", filename)
     match <- regmatches(filename, parsed)[[1]]
     if (length(match) != 3) {
-      return(NULL)
+      # No band suffix (e.g. Sony / DJI single-band JPG). Treat the
+      # whole name minus extension as the capture id, band 1.
+      cap_id  <- sub("\\.[A-Za-z0-9]+$", "", filename)
+      band_id <- 1L
+    } else {
+      cap_id  <- match[[2]]
+      band_id <- as.integer(match[[3]])
     }
     data.frame(
-      capture_id = match[[2]],
-      band_id = as.integer(match[[3]]),
+      capture_id = cap_id,
+      band_id = band_id,
       filename = filename,
       longitude = as.numeric(x$gps$longitude),
       latitude = as.numeric(x$gps$latitude),
@@ -2841,8 +2893,14 @@ server <- function(input, output, session) {
       ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
       refl <- if (isTRUE(input$scale_reflectance)) scale_to_reflectance(ortho$bands) else ortho$bands
       idx <- compute_spectral_indices(refl)
-      proxy <- compute_biomass_proxy(idx)
-      c(refl, idx, proxy)
+      # Biomass_Index_Proxy needs NDVI + SAVI + NDRE; for RGB orthos
+      # the index stack only has VARI, so skip the proxy step silently.
+      if (all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
+        proxy <- compute_biomass_proxy(idx)
+        c(refl, idx, proxy)
+      } else {
+        c(refl, idx)
+      }
     })
   }) |>
     bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance) |>
