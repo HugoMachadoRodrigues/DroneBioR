@@ -1570,6 +1570,9 @@ ui <- page_navbar(
           div(class = "metric", div(class = "label", "Point cloud"), div(class = "value", uiOutput("metric_cloud", inline = TRUE))),
           div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
         ),
+        card(card_header("Project status"),
+             uiOutput("project_status_header"),
+             tableOutput("project_status_table")),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
@@ -2498,6 +2501,113 @@ server <- function(input, output, session) {
   products <- reactive({
     summarize_odm_products(project())
   })
+
+  # Project status: image count, geographic centre, CRS, last-run
+  # duration, and a per-product validation table. Picks up changes
+  # whenever the orthomosaic input or project changes.
+  project_status <- reactive({
+    invalidateLater(5000, session)
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return(NULL)
+    val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)
+
+    # Image count from images_dir (RGB or multispectral).
+    n_imgs <- tryCatch({
+      ext_re <- "\\.(jpe?g|tif?f)$"
+      length(list.files(p$images_dir, pattern = ext_re,
+                        ignore.case = TRUE, recursive = FALSE))
+    }, error = function(e) NA_integer_)
+
+    # Geographic centroid / CRS from the orthomosaic, if loadable.
+    centroid <- NULL; crs_name <- NA_character_; area_ha <- NA_real_
+    ortho <- if (!is.null(val)) val$path[val$product == "Orthomosaic"][1L] else NULL
+    if (!is.null(ortho) && length(ortho) && file.exists(ortho)) {
+      r <- tryCatch(terra::rast(ortho), error = function(e) NULL)
+      if (!is.null(r)) {
+        e <- terra::ext(r)
+        crs_name <- tryCatch(terra::crs(r, describe = TRUE)$name,
+                             error = function(e) NA_character_)
+        width  <- e$xmax - e$xmin; height <- e$ymax - e$ymin
+        area_ha <- (width * height) / 10000
+        # Reproject centroid to lon/lat for human readability.
+        cx <- (e$xmax + e$xmin) / 2; cy <- (e$ymax + e$ymin) / 2
+        pt <- terra::vect(cbind(cx, cy), crs = terra::crs(r))
+        pt_ll <- tryCatch(terra::project(pt, "EPSG:4326"),
+                          error = function(e) NULL)
+        if (!is.null(pt_ll)) {
+          xy <- terra::crds(pt_ll)
+          centroid <- c(lon = xy[1, 1], lat = xy[1, 2])
+        }
+      }
+    }
+
+    # Most recent stage history (sum of durations) for this run, if any.
+    last_run_seconds <- tryCatch({
+      h <- DroneBioR:::read_odm_stage_history()
+      if (nrow(h)) sum(h$duration_seconds[h$run_started_at == max(h$run_started_at)],
+                       na.rm = TRUE) else NA_real_
+    }, error = function(e) NA_real_)
+
+    list(
+      n_imgs = n_imgs, crs_name = crs_name, area_ha = area_ha,
+      centroid = centroid, last_run_seconds = last_run_seconds,
+      validation = val
+    )
+  })
+
+  output$project_status_header <- renderUI({
+    s <- project_status()
+    if (is.null(s)) return(tags$em("Project not configured."))
+    bits <- list()
+    bits[[length(bits) + 1L]] <- tags$div(
+      tags$strong("Images: "),
+      if (is.na(s$n_imgs)) "—" else s$n_imgs)
+    bits[[length(bits) + 1L]] <- tags$div(
+      tags$strong("CRS: "),
+      if (is.na(s$crs_name)) "(no orthomosaic loaded)" else s$crs_name)
+    if (!is.null(s$centroid)) {
+      bits[[length(bits) + 1L]] <- tags$div(
+        tags$strong("Centroid: "),
+        sprintf("%.5f, %.5f (lat, lon)", s$centroid["lat"], s$centroid["lon"]))
+    }
+    if (is.finite(s$area_ha)) {
+      bits[[length(bits) + 1L]] <- tags$div(
+        tags$strong("Footprint area: "),
+        if (s$area_ha >= 100) sprintf("%.2f km² (%.0f ha)", s$area_ha / 100, s$area_ha)
+        else sprintf("%.1f ha", s$area_ha))
+    }
+    if (is.finite(s$last_run_seconds) && s$last_run_seconds > 0) {
+      bits[[length(bits) + 1L]] <- tags$div(
+        tags$strong("Last ODM run: "),
+        format_duration(s$last_run_seconds), " (sum of observed stage durations)")
+    }
+    # Warning when orthomosaic exists but extent is degenerate
+    if (!is.null(s$validation)) {
+      ortho_row <- s$validation[s$validation$product == "Orthomosaic", ]
+      if (nrow(ortho_row) && ortho_row$exists && !ortho_row$valid) {
+        bits[[length(bits) + 1L]] <- tags$div(
+          style = "color:#dc2626; margin-top:6px;",
+          "⚠ Orthomosaic looks degenerate: ", ortho_row$notes,
+          ". Re-run ODM — check that camera positions / geo.txt are correct.")
+      }
+    }
+    tags$div(style = "margin-bottom:8px;", bits)
+  })
+
+  output$project_status_table <- renderTable({
+    s <- project_status()
+    if (is.null(s) || is.null(s$validation)) return(NULL)
+    v <- s$validation
+    # Show only rows that either exist OR are key products (to surface "missing").
+    keep <- v$exists | v$product %in% c("Orthomosaic", "DSM", "DTM",
+                                         "Point cloud (COPC)", "Textured mesh (OBJ)")
+    v <- v[keep, ]
+    # Friendly display columns
+    v$status <- ifelse(v$exists,
+                       ifelse(v$valid, "✓ ok", "⚠ check"),
+                       "— missing")
+    v[, c("product", "status", "size_mb", "dimensions", "extent_m", "crs", "notes")]
+  }, sanitize.text.function = identity, na = "")
 
   output$product_table <- renderTable({
     products()

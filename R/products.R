@@ -81,6 +81,114 @@ pick_best_point_cloud <- function(project) {
   unname(paths[["point_cloud_copc"]])
 }
 
+#' Validate ODM output products against sanity thresholds
+#'
+#' Inspects each rasterizable product (orthomosaic, DSM, DTM) and the
+#' point-cloud / mesh files for the obvious failure modes that bit us
+#' on the GeoScan dataset: degenerate extents (<50 m wide), pixel
+#' grids under 100x100, missing or tiny binary files. The `valid`
+#' flag is the simple bottom-line; `notes` tells the user *why*.
+#'
+#' @param project A `dronebio_project` object.
+#' @return A data frame with one row per product and columns
+#'   `product`, `path`, `exists`, `size_mb`, `dimensions`, `extent_m`,
+#'   `crs`, `valid`, `notes`.
+#' @examples
+#' project <- dronebio_project(project_dir = tempdir())
+#' validate_odm_outputs(project)
+#' @export
+validate_odm_outputs <- function(project) {
+  paths <- odm_product_paths(project)
+
+  empty_row <- function(name, key, type, msg) {
+    p <- unname(paths[[key]])
+    data.frame(
+      product    = name,
+      path       = p,
+      exists     = FALSE,
+      size_mb    = NA_real_,
+      dimensions = NA_character_,
+      extent_m   = NA_character_,
+      crs        = NA_character_,
+      valid      = FALSE,
+      notes      = msg,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  validate_raster <- function(name, key) {
+    p <- unname(paths[[key]])
+    if (!file.exists(p)) return(empty_row(name, key, "raster", "missing"))
+    size_mb <- round(file.info(p)$size / 1e6, 2)
+    r <- tryCatch(terra::rast(p), error = function(e) NULL)
+    if (is.null(r)) {
+      return(data.frame(
+        product = name, path = p, exists = TRUE, size_mb = size_mb,
+        dimensions = NA_character_, extent_m = NA_character_,
+        crs = NA_character_, valid = FALSE,
+        notes = "cannot read with terra::rast",
+        stringsAsFactors = FALSE
+      ))
+    }
+    nc <- terra::ncol(r); nr <- terra::nrow(r); nl <- terra::nlyr(r)
+    e <- terra::ext(r)
+    width  <- e$xmax - e$xmin
+    height <- e$ymax - e$ymin
+    crs_name <- tryCatch(terra::crs(r, describe = TRUE)$name,
+                         error = function(e) NA_character_)
+    if (is.null(crs_name) || !length(crs_name)) crs_name <- NA_character_
+    degenerate <- (!is.finite(width) || !is.finite(height) ||
+                   width < 50 || height < 50 || nc < 100 || nr < 100)
+    notes <- if (degenerate) "degenerate extent or pixel grid (<50 m or <100 px)" else "ok"
+    data.frame(
+      product    = name,
+      path       = p,
+      exists     = TRUE,
+      size_mb    = size_mb,
+      dimensions = sprintf("%d x %d, %d layer(s)", nc, nr, nl),
+      extent_m   = sprintf("%.1f x %.1f m", width, height),
+      crs        = crs_name,
+      valid      = !degenerate,
+      notes      = notes,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  validate_binary <- function(name, key, min_size_mb = 0.1) {
+    p <- unname(paths[[key]])
+    if (!file.exists(p)) return(empty_row(name, key, "binary", "missing"))
+    size_mb <- round(file.info(p)$size / 1e6, 2)
+    too_small <- size_mb < min_size_mb
+    data.frame(
+      product    = name,
+      path       = p,
+      exists     = TRUE,
+      size_mb    = size_mb,
+      dimensions = NA_character_,
+      extent_m   = NA_character_,
+      crs        = NA_character_,
+      valid      = !too_small,
+      notes      = if (too_small) sprintf("size %.2f MB below %.2f MB threshold", size_mb, min_size_mb) else "ok",
+      stringsAsFactors = FALSE
+    )
+  }
+
+  rows <- list(
+    validate_raster("Orthomosaic", "orthomosaic"),
+    validate_raster("DSM", "dsm"),
+    validate_raster("DTM", "dtm"),
+    validate_binary("Point cloud (COPC)", "point_cloud_copc"),
+    validate_binary("Point cloud (LAZ)",  "point_cloud_laz"),
+    validate_binary("Point cloud (LAS)",  "point_cloud_las"),
+    validate_binary("Point cloud (PLY)",  "point_cloud_ply"),
+    validate_binary("Textured mesh (OBJ)", "textured_obj"),
+    validate_binary("Textured mesh (glTF)", "textured_glb"),
+    validate_binary("3D tiles tileset",   "tiles_3d", min_size_mb = 0.001),
+    validate_binary("ODM report PDF",     "report",  min_size_mb = 0.01)
+  )
+  do.call(rbind, rows)
+}
+
 #' Summarize available ODM products
 #'
 #' @param project A `dronebio_project` object.
