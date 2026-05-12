@@ -370,6 +370,30 @@ sample_context_points <- function(points, max_points = 12000) {
 }
 
 product_metadata <- list(
+  `RGB Orthomosaic` = list(
+    label   = "RGB Orthomosaic",
+    formula = "Natural-color composite of the Red, Green, Blue reflectance bands.",
+    unit    = "Visual",
+    use     = "True-colour view of the survey area as the camera saw it. The bread-and-butter deliverable for stakeholder maps."
+  ),
+  DSM = list(
+    label   = "DSM",
+    formula = "Digital Surface Model produced by ODM (odm_dem/dsm.tif).",
+    unit    = "Metres above the projected vertical datum",
+    use     = "Top-of-canopy / structure surface. Use together with the DTM to compute canopy height (CHM)."
+  ),
+  DTM = list(
+    label   = "DTM",
+    formula = "Digital Terrain Model from ODM ground classification (odm_dem/dtm.tif).",
+    unit    = "Metres above the projected vertical datum",
+    use     = "Bare-earth surface. Subtract from the DSM to get canopy height."
+  ),
+  CHM = list(
+    label   = "CHM",
+    formula = "Canopy Height Model = DSM - DTM, clamped to >= 0.",
+    unit    = "Metres above local ground",
+    use     = "Vegetation height above the bare-earth surface. Click 'Build CHM' in the Project status card if this layer is missing."
+  ),
   NDVI = list(
     label = "NDVI",
     formula = "(NIR - Red) / (NIR + Red)",
@@ -2058,12 +2082,27 @@ server <- function(input, output, session) {
     p
   })
 
-  overlay_choices <- c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "VARI",
-                       "Biomass_Index_Proxy", "NIR", "RedEdge",
-                       "Red", "Green", "Blue", "Hillshade")
+  overlay_choices <- c(
+    # Headline composite + the four canonical raster products
+    "RGB Orthomosaic", "DSM", "DTM", "CHM",
+    # Spectral indices
+    "NDVI", "NDRE", "EVI", "SAVI", "NDWI", "VARI",
+    "Biomass_Index_Proxy",
+    # Individual reflectance bands
+    "NIR", "RedEdge", "Red", "Green", "Blue",
+    # Relief shading from the DSM
+    "Hillshade"
+  )
   # Which bands each overlay needs in `reflectance()`. RGB orthos only
   # carry Blue/Green/Red, so anything requiring NIR/RedEdge is hidden.
+  # The four canonical products (RGB Orthomosaic / DSM / DTM / CHM) are
+  # stand-alone raster files, so they have no band requirements -- their
+  # availability is checked separately via quick_outputs_check().
   overlay_band_requirements <- list(
+    `RGB Orthomosaic`   = c("Blue", "Green", "Red"),  # composite display
+    DSM                 = character(),
+    DTM                 = character(),
+    CHM                 = character(),
     NDVI                = c("Red", "NIR"),
     NDRE                = c("RedEdge", "NIR"),
     EVI                 = c("Blue", "Red", "NIR"),
@@ -2090,16 +2129,29 @@ server <- function(input, output, session) {
   })
   available_overlays <- reactive({
     n <- overlay_orthomosaic_nlyr()
-    if (is.na(n)) return(overlay_choices)
-    # RGB layout (3 layers + optional alpha): drop overlays that require NIR/RedEdge.
-    if (n <= 4) {
-      keep <- vapply(overlay_choices, function(layer) {
-        req_bands <- overlay_band_requirements[[layer]] %||% character()
-        !any(c("NIR", "RedEdge") %in% req_bands)
-      }, logical(1))
-      return(overlay_choices[keep])
+    # First pass: spectral filtering by band requirements.
+    candidates <- if (is.na(n)) overlay_choices else {
+      if (n <= 4) {
+        keep <- vapply(overlay_choices, function(layer) {
+          req_bands <- overlay_band_requirements[[layer]] %||% character()
+          !any(c("NIR", "RedEdge") %in% req_bands)
+        }, logical(1))
+        overlay_choices[keep]
+      } else overlay_choices
     }
-    overlay_choices
+    # Second pass: hide DSM / DTM / CHM rows when the file isn't on
+    # disk yet (so users don't pick a layer that will fail to load).
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (!is.null(p)) {
+      qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
+      if (!is.null(qc)) {
+        if (!isTRUE(qc[["dsm"]])) candidates <- setdiff(candidates, "DSM")
+        if (!isTRUE(qc[["dtm"]])) candidates <- setdiff(candidates, "DTM")
+        if (!isTRUE(qc[["chm"]])) candidates <- setdiff(candidates, "CHM")
+        if (!isTRUE(qc[["orthomosaic"]])) candidates <- setdiff(candidates, "RGB Orthomosaic")
+      }
+    }
+    candidates
   })
 
   browser_dir <- reactiveVal(set_browser_dir(default_project$project_dir))
@@ -3296,19 +3348,39 @@ server <- function(input, output, session) {
                                   stretch_mode = "Fixed semantic") {
     validate(need(length(all_selected) > 0, "Select at least one overlay product."))
 
-    # Hillshade is sourced from the DSM, not from gis_stack(), so peel it
-    # off first and process the spectral layers afterwards.
+    # Hillshade + the four canonical raster products (RGB / DSM / DTM /
+    # CHM) live outside gis_stack() -- they read from external files.
+    # Peel them off first; everything left is a spectral index / band.
     hillshade_selected <- "Hillshade" %in% all_selected
-    spectral_selected <- setdiff(all_selected, "Hillshade")
+    external_products  <- intersect(c("RGB Orthomosaic", "DSM", "DTM", "CHM"),
+                                    all_selected)
+    spectral_selected  <- setdiff(all_selected,
+                                  c("Hillshade", external_products))
 
     x <- if (length(spectral_selected) > 0) gis_stack() else NULL
     if (!is.null(x)) {
       spectral_selected <- intersect(spectral_selected, names(x))
     }
     validate(need(
-      hillshade_selected || length(spectral_selected) > 0,
+      hillshade_selected || length(external_products) > 0 ||
+        length(spectral_selected) > 0,
       "Selected products are not available in the current raster stack."
     ))
+
+    # Helper: resolve a product key to its on-disk path, preferring the
+    # local cache (~/.dronebior/cache/<slug>/) when migration ran.
+    p_active <- tryCatch(project(), error = function(e) NULL)
+    resolve_product_path <- function(key) {
+      if (is.null(p_active)) return(NULL)
+      paths <- odm_product_paths(p_active)
+      default <- unname(paths[[key]])
+      if (!nzchar(default)) return(NULL)
+      cache_dir <- DroneBioR:::local_cache_dir(p_active)
+      cached    <- file.path(cache_dir, basename(default))
+      if (file.exists(cached))  return(cached)
+      if (file.exists(default)) return(default)
+      NULL
+    }
 
     proxy <- leafletProxy("gis_map")
     for (group in overlay_choices) {
@@ -3327,6 +3399,69 @@ server <- function(input, output, session) {
 
     first_layer <- NULL
     legend_items <- list()
+
+    # Render external rasters (RGB Orthomosaic / DSM / DTM / CHM) before
+    # the spectral overlays so they form a visual base. Aggregate big
+    # rasters down to ~4000 px max so first-render is snappy even on
+    # 22k-pixel-wide 5 cm products.
+    for (layer_name in external_products) {
+      path_key <- switch(layer_name,
+                         `RGB Orthomosaic` = "orthomosaic",
+                         DSM = "dsm",
+                         DTM = "dtm",
+                         CHM = "chm")
+      raster_path <- resolve_product_path(path_key)
+      if (is.null(raster_path)) next
+      r <- tryCatch(terra::rast(raster_path), error = function(e) NULL)
+      if (is.null(r)) next
+      nc <- terra::ncol(r); nr <- terra::nrow(r)
+      fact <- max(1, floor(max(nc, nr) / 4000))
+      if (fact > 1) {
+        r <- terra::aggregate(r, fact = fact, fun = mean, na.rm = TRUE)
+      }
+
+      if (identical(layer_name, "RGB Orthomosaic")) {
+        # Natural-colour composite. read_multispectral_orthomosaic
+        # output order is Blue, Green, Red (+ optional alpha), so the
+        # band indices for RGB display are r=3, g=2, b=1.
+        idx_blue  <- 1L; idx_green <- 2L; idx_red <- 3L
+        if (terra::nlyr(r) >= 3L) {
+          proxy <- proxy |>
+            leafem::addRasterRGB(
+              r[[c(idx_red, idx_green, idx_blue)]],
+              r = 1, g = 2, b = 3,
+              group   = "RGB Orthomosaic",
+              opacity = opacity,
+              project = TRUE,
+              quantiles = c(0.02, 0.98))
+        }
+      } else {
+        # DSM / DTM in metres -> viridis; CHM uses BuGn so 0 is white
+        # and tall canopy is dark green.
+        palette_name <- if (identical(layer_name, "CHM")) "BuGn" else "viridis"
+        layer <- r[[1L]]
+        raster_vals <- terra::values(layer, mat = FALSE)
+        domain <- compute_color_domain(layer_name, raster_vals,
+                                       mode = stretch_mode)
+        proxy <- tile_raster_on_map(
+          proxy, layer,
+          group        = layer_name,
+          opacity      = opacity,
+          palette_name = palette_name,
+          vals         = raster_vals,
+          domain       = domain
+        )
+        if (length(domain) == 2 && all(is.finite(domain))) {
+          legend_items[[layer_name]] <- list(
+            name   = layer_name,
+            min    = domain[1],
+            max    = domain[2],
+            colors = hcl.colors(9, palette_name)
+          )
+        }
+      }
+      if (is.null(first_layer)) first_layer <- r
+    }
 
     # Render hillshade first so it sits beneath color overlays. We use a
     # neutral grayscale ramp and slightly reduced opacity so colored
@@ -3384,7 +3519,8 @@ server <- function(input, output, session) {
         first_layer <- raster
       }
     }
-    selected_layers <- if (hillshade_selected) c(spectral_selected, "Hillshade") else spectral_selected
+    selected_layers <- c(external_products, spectral_selected)
+    if (hillshade_selected) selected_layers <- c(selected_layers, "Hillshade")
 
     proxy <- proxy |>
       addScaleBar(position = "bottomleft") |>
