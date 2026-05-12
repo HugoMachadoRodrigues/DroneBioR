@@ -400,6 +400,12 @@ product_metadata <- list(
     unit = "Unitless index, normally -1 to 1",
     use = "Water/moisture contrast using green and NIR reflectance."
   ),
+  VARI = list(
+    label = "VARI",
+    formula = "(Green - Red) / (Green + Red - Blue)",
+    unit = "Unitless index, usually centred around 0",
+    use = "RGB-only vegetation index, useful when no NIR/RedEdge bands are available (Sony / DJI / Phantom orthos)."
+  ),
   Biomass_Index_Proxy = list(
     label = "Biomass proxy",
     formula = "mean(NDVI, SAVI, NDRE), clipped to -1 to 1",
@@ -1514,7 +1520,7 @@ ui <- page_navbar(
           "gis_color_stretch",
           "Color stretch",
           choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
-          selected = "Fixed semantic"
+          selected = "Percentile 2-98"
         ),
         checkboxInput("show_raw_flight", "Show raw image flight plan", value = TRUE),
         selectInput(
@@ -1943,7 +1949,50 @@ server <- function(input, output, session) {
     p
   })
 
-  overlay_choices <- c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "Biomass_Index_Proxy", "NIR", "RedEdge", "Red", "Green", "Blue", "Hillshade")
+  overlay_choices <- c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "VARI",
+                       "Biomass_Index_Proxy", "NIR", "RedEdge",
+                       "Red", "Green", "Blue", "Hillshade")
+  # Which bands each overlay needs in `reflectance()`. RGB orthos only
+  # carry Blue/Green/Red, so anything requiring NIR/RedEdge is hidden.
+  overlay_band_requirements <- list(
+    NDVI                = c("Red", "NIR"),
+    NDRE                = c("RedEdge", "NIR"),
+    EVI                 = c("Blue", "Red", "NIR"),
+    SAVI                = c("Red", "NIR"),
+    NDWI                = c("Green", "NIR"),
+    VARI                = c("Blue", "Green", "Red"),
+    Biomass_Index_Proxy = c("Red", "NIR", "RedEdge"),
+    NIR                 = c("NIR"),
+    RedEdge             = c("RedEdge"),
+    Red                 = c("Red"),
+    Green               = c("Green"),
+    Blue                = c("Blue"),
+    Hillshade           = character()  # depends on DSM, not on the ortho bands
+  )
+  # Cheap peek at the orthomosaic so the overlay panel can hide layers
+  # the file cannot support, BEFORE the user clicks Load Mosaic. Returns
+  # NA when no file is set yet.
+  overlay_orthomosaic_nlyr <- reactive({
+    path <- input$orthomosaic
+    if (!is.character(path) || !length(path) || !nzchar(path) || !file.exists(path)) {
+      return(NA_integer_)
+    }
+    tryCatch(as.integer(terra::nlyr(terra::rast(path))), error = function(e) NA_integer_)
+  })
+  available_overlays <- reactive({
+    n <- overlay_orthomosaic_nlyr()
+    if (is.na(n)) return(overlay_choices)
+    # RGB layout (3 layers + optional alpha): drop overlays that require NIR/RedEdge.
+    if (n <= 4) {
+      keep <- vapply(overlay_choices, function(layer) {
+        req_bands <- overlay_band_requirements[[layer]] %||% character()
+        !any(c("NIR", "RedEdge") %in% req_bands)
+      }, logical(1))
+      return(overlay_choices[keep])
+    }
+    overlay_choices
+  })
+
   browser_dir <- reactiveVal(set_browser_dir(default_project$project_dir))
   browser_selected <- reactiveVal(set_browser_dir(default_project$project_dir))
   gis_measure_points <- reactiveVal(data.frame(lng = numeric(), lat = numeric()))
@@ -2231,14 +2280,19 @@ server <- function(input, output, session) {
   }
 
   output$map_layer_controls <- renderUI({
-    rows <- lapply(overlay_choices, function(layer_name) {
+    # Hide overlays the loaded orthomosaic cannot support (e.g. NDVI/NDRE
+    # on a 3-band RGB ortho). Default-on layer adapts: NDVI when present,
+    # else VARI (the RGB equivalent).
+    avail <- available_overlays()
+    default_on <- if ("NDVI" %in% avail) "NDVI" else if ("VARI" %in% avail) "VARI" else NA_character_
+    rows <- lapply(avail, function(layer_name) {
       meta <- product_metadata[[layer_name]]
       tags$div(
         class = "d-flex align-items-center justify-content-between gap-2 mb-1",
         checkboxInput(
           inputId = layer_input_id(layer_name),
           label = meta$label,
-          value = identical(layer_name, "NDVI")
+          value = identical(layer_name, default_on)
         ),
         actionButton(
           inputId = help_input_id(layer_name),
@@ -3682,6 +3736,102 @@ server <- function(input, output, session) {
     }
   })
 
+  # ------------------------------------------------------------------ #
+  # Auto-load ODM outputs on pipeline completion + active-run recovery #
+  # ------------------------------------------------------------------ #
+
+  # Set of run_ids we've already auto-filled, so the side effect fires
+  # exactly once per run.
+  autoloaded_runs <- reactiveVal(character(0))
+
+  # On server startup: if a recent run record exists, repoint the
+  # Progress card at it so the user keeps visibility across reloads.
+  observe({
+    rec <- DroneBioR:::read_active_run_record()
+    if (!is.null(rec) && !is.null(rec$log_path) && nzchar(rec$log_path) &&
+        file.exists(rec$log_path)) {
+      updateTextInput(session, "odm_log_path", value = rec$log_path)
+      showNotification(
+        paste0("Recovered active ODM run from ~/.dronebior/active_runs.json. ",
+               "Log: ", rec$log_path),
+        type = "message", duration = 8
+      )
+    }
+  }, priority = 1000)
+
+  # Helper that pre-fills the path inputs across tabs to point at the
+  # canonical ODM outputs of the current project.
+  autoload_odm_outputs <- function() {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return(invisible(NULL))
+    paths <- odm_product_paths(p)
+    filled <- character(0)
+
+    if (file.exists(paths[["orthomosaic"]])) {
+      updateTextInput(session, "orthomosaic", value = unname(paths[["orthomosaic"]]))
+      filled <- c(filled, "orthomosaic")
+    }
+    pc <- pick_best_point_cloud(p)
+    if (file.exists(pc)) {
+      updateTextInput(session, "full_cloud_path", value = pc)
+      filled <- c(filled, paste0("point cloud (", basename(pc), ")"))
+    }
+    if (file.exists(paths[["point_cloud_ply"]])) {
+      updateTextInput(session, "ply_path", value = unname(paths[["point_cloud_ply"]]))
+      filled <- c(filled, "PLY preview")
+    }
+    if (file.exists(pick_best_textured_obj(p))) {
+      updateCheckboxInput(session, "show_textured_mesh", value = TRUE)
+      filled <- c(filled, "textured mesh enabled")
+    }
+    if (file.exists(paths[["dsm"]])) {
+      updateCheckboxInput(session, "show_draped_dsm", value = TRUE)
+      filled <- c(filled, "draped DSM enabled")
+    }
+    filled
+  }
+
+  # Poll the log every 3s independently of the renderUI; when the
+  # MMMMMMMM banner appears for a new run, fire the auto-load + clear
+  # the active-run record exactly once.
+  observe({
+    invalidateLater(3000, session)
+    path <- input$odm_log_path
+    if (!is.character(path) || !nzchar(path) || !file.exists(path)) return()
+    lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
+    if (!length(lines)) return()
+    if (!any(grepl("MMMMMMMMMM", lines))) return()
+    init_time <- parse_odm_init_time(lines)
+    run_id <- if (!is.na(init_time))
+      format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC"))
+    else "unknown"
+    if (run_id %in% autoloaded_runs()) return()
+
+    filled <- autoload_odm_outputs()
+    autoloaded_runs(c(autoloaded_runs(), run_id))
+    DroneBioR:::clear_active_run_record()
+    showNotification(
+      paste0("ODM pipeline complete. Auto-filled: ",
+             paste(filled, collapse = ", ")),
+      type = "message", duration = 15
+    )
+  })
+
+  # When the project changes (root or images), refresh the 3D Modeling
+  # path inputs so they always point at the active project's outputs.
+  observe({
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    pc <- pick_best_point_cloud(p)
+    if (file.exists(pc)) {
+      updateTextInput(session, "full_cloud_path", value = pc)
+    }
+    paths <- odm_product_paths(p)
+    if (file.exists(paths[["point_cloud_ply"]])) {
+      updateTextInput(session, "ply_path", value = unname(paths[["point_cloud_ply"]]))
+    }
+  })
+
   output$engine_note <- renderText({
     if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
       "Fast orthophoto prioritizes rapid orthomosaic generation and ODM can skip full textured 3D outputs. Disable fast orthophoto for commercial-style 3D deliverables."
@@ -3768,6 +3918,16 @@ server <- function(input, output, session) {
 
         # wait = FALSE means system2 returns immediately; ODM keeps running.
         system2("docker", args = args, stdout = log_path, stderr = log_path, wait = FALSE)
+
+        # Count source images so the Progress card / ETA know the scale,
+        # and persist an active-run record so a browser refresh recovers.
+        image_count <- tryCatch(nrow(manifest), error = function(e) NA_integer_)
+        DroneBioR:::write_active_run_record(
+          run_id      = paste0("pending-", format(Sys.time(), "%Y%m%dT%H%M%S")),
+          log_path    = log_path,
+          project_dir = p$project_dir,
+          image_count = image_count
+        )
 
         showNotification(
           paste0("ODM started in background. Watch the 'ODM run progress' card. ",

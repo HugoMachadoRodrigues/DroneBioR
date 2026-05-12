@@ -13,7 +13,10 @@ odm_product_paths(project)
 Named character vector of expected product paths.
 }
 \description{
-Return expected ODM product paths
+Covers both the 3D texturing folder (\verb{odm_texturing/}, produced when
+\code{--fast-orthophoto} is off) and the 2.5D fallback (\verb{odm_texturing_25d/}).
+Use \code{\link[=pick_best_textured_obj]{pick_best_textured_obj()}} / \code{\link[=pick_best_textured_glb]{pick_best_textured_glb()}} to choose
+whichever variant actually exists on disk.
 }
 \examples{
 project <- dronebio_project(project_dir = tempdir())

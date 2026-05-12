@@ -136,6 +136,75 @@ estimate_remaining_seconds <- function(active_stage,
   active_est + pending_est
 }
 
+#' Path to the persistent active-run record under ~/.dronebior.
+#' @noRd
+active_run_record_path <- function() {
+  dir <- file.path(Sys.getenv("HOME"), ".dronebior")
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  file.path(dir, "active_runs.json")
+}
+
+#' Persist a run record so the Shiny session can recover after a refresh.
+#'
+#' Writes a tiny JSON document with `run_id`, `log_path`, `project_dir`,
+#' `image_count` and `started_at`. The Shiny app reads this on startup
+#' to repoint the Progress card at an ongoing run. Overwrites any
+#' previous record; we only track the latest run.
+#' @noRd
+write_active_run_record <- function(run_id, log_path, project_dir,
+                                    image_count = NA_integer_,
+                                    started_at = Sys.time()) {
+  if (!requireNamespace("jsonlite", quietly = TRUE)) return(invisible(FALSE))
+  rec <- list(
+    run_id      = as.character(run_id),
+    log_path    = as.character(log_path),
+    project_dir = as.character(project_dir),
+    image_count = as.integer(image_count),
+    started_at  = format(as.POSIXct(started_at), "%Y-%m-%dT%H:%M:%S%z")
+  )
+  tryCatch(
+    {
+      writeLines(jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null"),
+                 active_run_record_path())
+      invisible(TRUE)
+    },
+    error = function(e) invisible(FALSE)
+  )
+}
+
+#' Read the most recent active-run record. Returns NULL when missing or stale.
+#'
+#' A record older than `max_age_hours` is considered stale (probably ended);
+#' callers can choose to ignore it. The `log_path` is also checked for
+#' existence — a missing log usually means the run was reset.
+#' @noRd
+read_active_run_record <- function(max_age_hours = 48) {
+  path <- active_run_record_path()
+  if (!file.exists(path)) return(NULL)
+  if (!requireNamespace("jsonlite", quietly = TRUE)) return(NULL)
+  rec <- tryCatch(jsonlite::fromJSON(path, simplifyVector = TRUE),
+                  error = function(e) NULL)
+  if (is.null(rec) || !length(rec)) return(NULL)
+  # Age gating
+  if (!is.null(rec$started_at)) {
+    started <- tryCatch(as.POSIXct(rec$started_at, format = "%Y-%m-%dT%H:%M:%S%z"),
+                        error = function(e) NA)
+    if (!is.na(started) && difftime(Sys.time(), started, units = "hours") > max_age_hours) {
+      return(NULL)
+    }
+  }
+  if (!is.null(rec$log_path) && !file.exists(rec$log_path)) return(NULL)
+  rec
+}
+
+#' Clear the active-run record (after pipeline completion).
+#' @noRd
+clear_active_run_record <- function() {
+  path <- active_run_record_path()
+  if (file.exists(path)) unlink(path)
+  invisible(TRUE)
+}
+
 #' Best-effort camera-type detection from a folder of source images.
 #'
 #' Counts file extensions and returns one of `"multispectral"`, `"rgb"`

@@ -1,0 +1,194 @@
+# Internal helpers — tested via ::: so they don't need to be exported.
+# Each test owns a private HOME so we never touch the user's real
+# ~/.dronebior/ directory.
+
+with_fake_home <- function(code) {
+  tmp <- tempfile("dronebior_home_")
+  dir.create(tmp, recursive = TRUE)
+  old <- Sys.getenv("HOME")
+  Sys.setenv(HOME = tmp)
+  on.exit({
+    Sys.setenv(HOME = old)
+    unlink(tmp, recursive = TRUE)
+  })
+  force(code)
+}
+
+test_that("odm_stage_baseline_seconds covers the canonical ODM 3.6 pipeline", {
+  baseline <- DroneBioR:::odm_stage_baseline_seconds()
+  expected <- c("dataset", "split", "merge", "opensfm", "openmvs",
+                "odm_filterpoints", "odm_meshing", "mvs_texturing",
+                "odm_georeferencing", "odm_dem", "odm_orthophoto",
+                "odm_report", "odm_postprocess")
+  expect_equal(sort(names(baseline)), sort(expected))
+  expect_true(all(baseline > 0))
+  # opensfm and openmvs dominate; sanity-check the magnitudes
+  expect_true(baseline[["opensfm"]] > baseline[["dataset"]])
+  expect_true(baseline[["openmvs"]] > baseline[["dataset"]])
+})
+
+test_that("odm_stage_order matches the baseline keys", {
+  expect_equal(sort(DroneBioR:::odm_stage_order()),
+               sort(names(DroneBioR:::odm_stage_baseline_seconds())))
+})
+
+test_that("read_odm_stage_history returns empty frame when CSV is missing", {
+  with_fake_home({
+    hist <- DroneBioR:::read_odm_stage_history()
+    expect_s3_class(hist, "data.frame")
+    expect_equal(nrow(hist), 0L)
+    expect_setequal(names(hist),
+                    c("run_started_at", "image_count", "stage", "duration_seconds"))
+  })
+})
+
+test_that("record_odm_stage_completion appends and dedupes on (run, stage)", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-A", 100L, "opensfm", 1800)
+    DroneBioR:::record_odm_stage_completion("run-A", 100L, "openmvs", 1200)
+    DroneBioR:::record_odm_stage_completion("run-B", 200L, "opensfm", 3600)
+    h <- DroneBioR:::read_odm_stage_history()
+    expect_equal(nrow(h), 3L)
+
+    # Re-record same (run, stage) -> replaces, doesn't append
+    DroneBioR:::record_odm_stage_completion("run-A", 100L, "opensfm", 1900)
+    h2 <- DroneBioR:::read_odm_stage_history()
+    expect_equal(nrow(h2), 3L)
+    rowA <- h2[h2$run_started_at == "run-A" & h2$stage == "opensfm", ]
+    expect_equal(rowA$duration_seconds, 1900)
+  })
+})
+
+test_that("record_odm_stage_completion rejects non-finite or negative durations", {
+  with_fake_home({
+    expect_false(DroneBioR:::record_odm_stage_completion("run", 100L, "opensfm", NA_real_))
+    expect_false(DroneBioR:::record_odm_stage_completion("run", 100L, "opensfm", -5))
+    expect_equal(nrow(DroneBioR:::read_odm_stage_history()), 0L)
+  })
+})
+
+test_that("estimate_odm_stage_seconds falls back to baseline with no history", {
+  with_fake_home({
+    baseline_opensfm <- DroneBioR:::odm_stage_baseline_seconds()[["opensfm"]]
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm"), baseline_opensfm)
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm", image_count = 200L),
+                 baseline_opensfm)
+  })
+})
+
+test_that("estimate_odm_stage_seconds uses median of history when available", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 1000)
+    DroneBioR:::record_odm_stage_completion("run-2", 100L, "openmvs", 2000)
+    DroneBioR:::record_odm_stage_completion("run-3", 100L, "openmvs", 1500)
+    # Median is 1500
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("openmvs", image_count = 100L), 1500)
+  })
+})
+
+test_that("estimate_odm_stage_seconds scales by image count ratio", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 600)
+    # Median historical count = 100; request 200 -> scale 2.0 -> 1200
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("openmvs", image_count = 200L), 1200)
+    # Half the images -> scale 0.5 -> 300
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("openmvs", image_count = 50L), 300)
+  })
+})
+
+test_that("estimate_remaining_seconds subtracts elapsed from the active stage", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 1000)
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 500)
+    # Active opensfm with 400s elapsed -> 600 remaining; plus 500 openmvs = 1100
+    rem <- DroneBioR:::estimate_remaining_seconds(
+      active_stage           = "opensfm",
+      pending_stages         = "openmvs",
+      active_elapsed_seconds = 400,
+      image_count            = 100L
+    )
+    expect_equal(rem, 1100)
+  })
+})
+
+test_that("estimate_remaining_seconds clamps active elapsed at 0 when overshooting", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 1000)
+    rem <- DroneBioR:::estimate_remaining_seconds(
+      active_stage           = "opensfm",
+      pending_stages         = character(),
+      active_elapsed_seconds = 5000,  # already past estimate
+      image_count            = 100L
+    )
+    expect_equal(rem, 0)
+  })
+})
+
+test_that("detect_camera_from_folder reads file extensions", {
+  tmp <- tempfile("cam_detect_")
+  dir.create(tmp)
+  on.exit(unlink(tmp, recursive = TRUE))
+
+  # Empty folder
+  expect_true(is.na(DroneBioR:::detect_camera_from_folder(tmp)))
+
+  # JPGs only -> rgb
+  file.create(file.path(tmp, c("a.JPG", "b.jpg", "c.jpeg")))
+  expect_equal(DroneBioR:::detect_camera_from_folder(tmp), "rgb")
+
+  # Add TIFs (more than JPGs) -> multispectral
+  file.create(file.path(tmp, c("d.tif", "e.tif", "f.tif", "g.tif")))
+  expect_equal(DroneBioR:::detect_camera_from_folder(tmp), "multispectral")
+
+  # Non-existent dir
+  expect_true(is.na(DroneBioR:::detect_camera_from_folder(file.path(tmp, "nope"))))
+})
+
+test_that("active-run record round-trips via JSON", {
+  skip_if_not_installed("jsonlite")
+  with_fake_home({
+    expect_null(DroneBioR:::read_active_run_record())
+
+    DroneBioR:::write_active_run_record(
+      run_id      = "run-xyz",
+      log_path    = tempfile(fileext = ".log"),
+      project_dir = tempdir(),
+      image_count = 250L
+    )
+    # File doesn't exist yet, so read returns NULL (log_path check)
+    expect_null(DroneBioR:::read_active_run_record())
+
+    # Write a real log file and try again
+    lp <- file.path(Sys.getenv("HOME"), "fake_run.log")
+    writeLines("hello", lp)
+    DroneBioR:::write_active_run_record(
+      run_id      = "run-real",
+      log_path    = lp,
+      project_dir = tempdir(),
+      image_count = 444L
+    )
+    rec <- DroneBioR:::read_active_run_record()
+    expect_equal(rec$run_id, "run-real")
+    expect_equal(rec$log_path, lp)
+    expect_equal(rec$image_count, 444L)
+
+    DroneBioR:::clear_active_run_record()
+    expect_null(DroneBioR:::read_active_run_record())
+  })
+})
+
+test_that("active-run record honours max_age_hours gating", {
+  skip_if_not_installed("jsonlite")
+  with_fake_home({
+    lp <- file.path(Sys.getenv("HOME"), "log.log")
+    writeLines("x", lp)
+    # Write a record dated 100h ago
+    old_time <- Sys.time() - as.difftime(100, units = "hours")
+    DroneBioR:::write_active_run_record(
+      run_id = "old", log_path = lp, project_dir = tempdir(),
+      image_count = 10L, started_at = old_time
+    )
+    expect_null(DroneBioR:::read_active_run_record(max_age_hours = 48))
+    expect_false(is.null(DroneBioR:::read_active_run_record(max_age_hours = 200)))
+  })
+})
