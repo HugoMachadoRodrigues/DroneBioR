@@ -3522,6 +3522,94 @@ server <- function(input, output, session) {
     else sprintf("%ds", s)
   }
 
+  # Parse sub-stage progress from the tail of the log. Returns a list
+  # with `percent` (0-100 or NA) and a one-line `label` describing what
+  # the stage is currently doing. ODM's progress hints are stage-specific:
+  #
+  # * openmvs        "Fused depth-maps 19 (4.28%, 16s, ETA 6m)"
+  # * mvs_texturing  "Loading odm_textured_model_geo_material0030_map_Kd.png"
+  #                  + the final "Writing..." line
+  # * opensfm        "Extracting ... features for image X" + matching
+  # * odm_dem        "Step X of Y"
+  # * odm_orthophoto "Building tile X/Y"
+  parse_odm_sub_progress <- function(lines, active_stage) {
+    if (is.na(active_stage) || !length(lines)) return(list(percent = NA_real_, label = NA_character_))
+    tail_lines <- tail(lines, 400L)
+
+    if (identical(active_stage, "openmvs")) {
+      hits <- grep("Fused depth-maps", tail_lines, value = TRUE)
+      if (length(hits)) {
+        last <- tail(hits, 1L)
+        m <- regmatches(last, regexec("Fused depth-maps ([0-9]+)[^(]*\\(([0-9.]+)%", last))[[1L]]
+        if (length(m) >= 3L) {
+          return(list(percent = as.numeric(m[3L]),
+                      label = sprintf("Fused depth-maps %s (%s%%)", m[2L], m[3L])))
+        }
+      }
+    } else if (identical(active_stage, "mvs_texturing")) {
+      mat_lines <- grep("material[0-9]+_map_Kd", tail_lines, value = TRUE)
+      if (length(mat_lines)) {
+        nums <- as.integer(sub(".*material([0-9]+)_map_Kd.*", "\\1", mat_lines))
+        max_n <- suppressWarnings(max(nums, na.rm = TRUE))
+        if (is.finite(max_n)) {
+          return(list(percent = NA_real_,
+                      label = sprintf("Loading texture atlas #%d", max_n + 1L)))
+        }
+      }
+      if (any(grepl("Writing", tail_lines))) {
+        return(list(percent = 95, label = "Writing final textured model"))
+      }
+    } else if (identical(active_stage, "opensfm")) {
+      n_extract <- sum(grepl("Extracting .* features for image", tail_lines))
+      n_match   <- sum(grepl("^\\d{4}-\\d{2}-\\d{2}.*Matching .* and .*Matches:", tail_lines))
+      if (n_match > 0) {
+        return(list(percent = NA_real_,
+                    label = sprintf("Feature matching (~%d pairs in tail)", n_match)))
+      }
+      if (n_extract > 0) {
+        return(list(percent = NA_real_,
+                    label = sprintf("Feature extraction (~%d images in tail)", n_extract)))
+      }
+    } else if (identical(active_stage, "odm_dem")) {
+      hits <- grep("Step ([0-9]+) of ([0-9]+)", tail_lines, value = TRUE)
+      if (length(hits)) {
+        last <- tail(hits, 1L)
+        m <- regmatches(last, regexec("Step ([0-9]+) of ([0-9]+)", last))[[1L]]
+        if (length(m) >= 3L) {
+          p <- 100 * as.numeric(m[2L]) / max(1, as.numeric(m[3L]))
+          return(list(percent = p, label = sprintf("Step %s of %s", m[2L], m[3L])))
+        }
+      }
+    } else if (identical(active_stage, "odm_orthophoto")) {
+      hits <- grep("tile ([0-9]+)/([0-9]+)", tail_lines, value = TRUE)
+      if (length(hits)) {
+        last <- tail(hits, 1L)
+        m <- regmatches(last, regexec("tile ([0-9]+)/([0-9]+)", last))[[1L]]
+        if (length(m) >= 3L) {
+          p <- 100 * as.numeric(m[2L]) / max(1, as.numeric(m[3L]))
+          return(list(percent = p, label = sprintf("Tile %s / %s", m[2L], m[3L])))
+        }
+      }
+    }
+    list(percent = NA_real_, label = NA_character_)
+  }
+
+  progress_bar <- function(percent, label = NULL,
+                           color = "#2563eb", height = "8px") {
+    pct <- if (is.na(percent)) 0 else max(0, min(100, percent))
+    tags$div(
+      style = "margin: 4px 0;",
+      tags$div(
+        style = sprintf("background:#e5e7eb; border-radius:4px; height:%s; overflow:hidden;", height),
+        tags$div(style = sprintf(
+          "background:%s; width:%.1f%%; height:100%%; transition:width 0.5s;",
+          color, pct))
+      ),
+      if (!is.null(label))
+        tags$div(style = "font-size:0.75em; color:#6b7280; margin-top:2px;", label)
+    )
+  }
+
   parse_odm_init_time <- function(lines) {
     # Match `Initializing ODM 3.6.0 - Tue May 12 00:30:51  2026` (ODM uses
     # two spaces before the year because the day is %e not %d).
@@ -3679,13 +3767,36 @@ server <- function(input, output, session) {
       tags$span(style = "margin-left:12px;", "· No active stage yet")
     }
 
+    # Overall pipeline progress: how many of the 13 stages are done.
+    n_total  <- length(odm_stage_order)
+    n_done   <- sum(odm_stage_order %in% finished_names)
+    overall_percent <- 100 * n_done / n_total
+    overall_label <- sprintf("Pipeline: %d / %d stages complete", n_done, n_total)
+
+    # Sub-stage progress: parses ODM hints like 'Fused depth-maps X (Y%)'
+    # or 'Step X of Y'. Falls back to a stage label if no % available.
+    sub <- if (done_flag) list(percent = 100, label = "Complete")
+           else parse_odm_sub_progress(lines, active_stage)
+
     header <- tags$div(
       style = "margin-bottom:8px;",
       tags$div(tags$strong("Total elapsed: "), format_duration(total_elapsed),
                header_eta,
                if (!is.na(image_count))
                  tags$span(style = "margin-left:12px; color:#6b7280;",
-                          "· ", image_count, " images"))
+                          "· ", image_count, " images")),
+      progress_bar(overall_percent, overall_label, color = "#16a34a", height = "10px"),
+      if (!is.na(active_stage) && !done_flag) {
+        if (is.finite(sub$percent)) {
+          progress_bar(sub$percent,
+                       paste0(active_stage, " — ",
+                              ifelse(is.na(sub$label), "", sub$label)),
+                       color = "#2563eb")
+        } else if (!is.na(sub$label)) {
+          tags$div(style = "font-size:0.8em; color:#6b7280; margin-top:4px;",
+                   tags$code(active_stage), " — ", sub$label)
+        }
+      }
     )
 
     last_info <- tail(grep("\\[INFO\\]|\\[ERROR\\]", lines, value = TRUE), 1L)
