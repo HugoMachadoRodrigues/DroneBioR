@@ -115,7 +115,7 @@ test_that("validate_odm_outputs flags a degenerate raster as invalid", {
   terra::writeRaster(r, ortho_path, overwrite = TRUE)
 
   v <- validate_odm_outputs(p)
-  ortho_row <- v[v$product == "Orthomosaic", ]
+  ortho_row <- v[grepl("Orthomosaic", v$product), ]
   expect_true(ortho_row$exists)
   expect_false(ortho_row$valid)
   expect_true(grepl("degenerate", ortho_row$notes))
@@ -135,11 +135,74 @@ test_that("validate_odm_outputs marks a well-formed raster as ok", {
   terra::writeRaster(r, ortho_path, overwrite = TRUE)
 
   v <- validate_odm_outputs(p)
-  ortho_row <- v[v$product == "Orthomosaic", ]
+  ortho_row <- v[grepl("Orthomosaic", v$product), ]
   expect_true(ortho_row$exists)
   expect_true(ortho_row$valid)
   expect_equal(ortho_row$notes, "ok")
   expect_true(grepl("150 x 200", ortho_row$dimensions))
+})
+
+test_that("validate_odm_outputs labels orthomosaic as RGB or Multispectral", {
+  tmp <- tempfile("dronebio_label_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(tmp, recursive = TRUE))
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  ortho_path <- file.path(p$odm_project_dir, "odm_orthophoto", "odm_orthophoto.tif")
+  dir.create(dirname(ortho_path), recursive = TRUE)
+
+  # 4 layers -> RGB
+  r <- terra::rast(nrows = 200, ncols = 200,
+                   xmin = 0, xmax = 200, ymin = 0, ymax = 200, nlyrs = 4)
+  terra::values(r) <- runif(200 * 200 * 4, 0, 1)
+  terra::writeRaster(r, ortho_path, overwrite = TRUE)
+  v <- validate_odm_outputs(p)
+  expect_true("RGB Orthomosaic" %in% v$product)
+  expect_false("Multispectral Orthomosaic" %in% v$product)
+
+  # 5 layers -> Multispectral
+  r5 <- terra::rast(nrows = 200, ncols = 200,
+                    xmin = 0, xmax = 200, ymin = 0, ymax = 200, nlyrs = 5)
+  terra::values(r5) <- runif(200 * 200 * 5, 0, 1)
+  terra::writeRaster(r5, ortho_path, overwrite = TRUE)
+  v2 <- validate_odm_outputs(p)
+  expect_true("Multispectral Orthomosaic" %in% v2$product)
+})
+
+test_that("build_chm_raster computes CHM = DSM - DTM, clamped to 0", {
+  tmp <- tempfile("dronebio_chm_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(tmp, recursive = TRUE))
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  dem_dir <- file.path(p$odm_project_dir, "odm_dem")
+  dir.create(dem_dir, recursive = TRUE)
+
+  dsm <- terra::rast(nrows = 50, ncols = 50,
+                     xmin = 0, xmax = 50, ymin = 0, ymax = 50)
+  dtm <- dsm
+  terra::values(dsm) <- 100 + matrix(runif(2500, 0, 10), 50, 50)
+  terra::values(dtm) <- 100  # flat ground
+  # Introduce a tiny negative region (DSM < DTM) -> should clamp to 0
+  vals_dsm <- terra::values(dsm)
+  vals_dsm[1:10] <- 99  # 1 m below DTM
+  terra::values(dsm) <- vals_dsm
+  terra::writeRaster(dsm, file.path(dem_dir, "dsm.tif"), overwrite = TRUE)
+  terra::writeRaster(dtm, file.path(dem_dir, "dtm.tif"), overwrite = TRUE)
+
+  out <- build_chm_raster(p, cache_aware = FALSE)
+  expect_true(file.exists(out))
+  chm <- terra::rast(out)
+  mm <- terra::minmax(chm)
+  expect_gte(mm[1, 1], 0)        # min clamped to 0
+  expect_lte(mm[2, 1], 15)       # max bounded by max DSM - min DTM
+  expect_equal(names(chm), "CHM")
+})
+
+test_that("build_chm_raster errors when DSM or DTM missing", {
+  tmp <- tempfile("dronebio_chm_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(tmp, recursive = TRUE))
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  expect_error(build_chm_raster(p), "CHM needs DSM \\+ DTM")
 })
 
 test_that("configure_proj_database returns a logical without raising", {

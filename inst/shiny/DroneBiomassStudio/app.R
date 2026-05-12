@@ -2722,23 +2722,86 @@ server <- function(input, output, session) {
       length(list.files(p$images_dir, pattern = "\\.(jpe?g|tif?f)$",
                         ignore.case = TRUE, recursive = FALSE))
     }, error = function(e) NA_integer_)
+
+    # Detect RGB vs Multispectral ortho without forcing a pixel read.
+    ortho_label <- "Orthomosaic"
+    paths_for_ortho <- odm_product_paths(p)
+    cache_dir       <- DroneBioR:::local_cache_dir(p)
+    ortho_path_canonical <- unname(paths_for_ortho[["orthomosaic"]])
+    ortho_path_cached    <- file.path(cache_dir, basename(ortho_path_canonical))
+    ortho_path_resolved  <- if (file.exists(ortho_path_cached)) ortho_path_cached
+                            else ortho_path_canonical
+    if (file.exists(ortho_path_resolved)) {
+      nl <- tryCatch(terra::nlyr(terra::rast(ortho_path_resolved)),
+                     error = function(e) NA_integer_)
+      if (!is.na(nl)) {
+        ortho_label <- if (nl >= 5L) "Multispectral Orthomosaic" else "RGB Orthomosaic"
+      }
+    }
+
+    # Canonical product list (the five rows the boss asked for).
+    product_status <- function(label, ok, hint = NULL) {
+      tags$div(
+        style = "padding:2px 0;",
+        tags$span(style = "display:inline-block; width:18px;",
+                  if (isTRUE(ok)) "✓" else "—"),
+        tags$strong(label),
+        if (!isTRUE(ok) && !is.null(hint))
+          tags$span(style = "color:#6b7280; margin-left:8px; font-size:0.85em;", hint))
+    }
+
+    chm_existing <- isTRUE(qc[["chm"]])
+    chm_buildable <- isTRUE(qc[["dsm"]]) && isTRUE(qc[["dtm"]]) && !chm_existing
+
     rows <- list(
       tags$div(tags$strong("Images: "), if (is.na(n_imgs)) "—" else n_imgs),
       tags$div(tags$strong("Project root: "), tags$code(p$project_dir),
                tags$br(),
-               tags$strong("Layout: "), tags$code(basename(dirname(p$odm_project_dir)), " / ", basename(p$odm_project_dir)))
+               tags$strong("Layout: "),
+               tags$code(basename(dirname(p$odm_project_dir)), " / ",
+                         basename(p$odm_project_dir))),
+      tags$hr(style = "margin:6px 0;"),
+      tags$div(tags$strong("Products"),
+               style = "margin-bottom:4px;"),
+      product_status(ortho_label,
+                     isTRUE(qc[["orthomosaic"]]),
+                     hint = "missing — needs an ODM run"),
+      product_status("DSM", isTRUE(qc[["dsm"]]), "missing"),
+      product_status("DTM", isTRUE(qc[["dtm"]]), "missing"),
+      product_status("CHM", chm_existing,
+                     if (chm_buildable) "buildable from DSM - DTM"
+                     else "needs DSM + DTM")
     )
-    if (!is.null(qc)) {
-      icon <- function(ok) if (isTRUE(ok)) "✓" else "—"
+    if (chm_buildable) {
       rows[[length(rows) + 1L]] <- tags$div(
-        tags$strong("Quick check: "),
-        sprintf("ortho %s · DSM %s · DTM %s · point cloud %s",
-                icon(qc[["orthomosaic"]]),
-                icon(qc[["dsm"]]),
-                icon(qc[["dtm"]]),
-                icon(qc[["point_cloud"]])))
+        style = "margin-top:6px;",
+        actionButton("build_chm", "Build CHM (DSM - DTM)",
+                     class = "btn-outline-primary btn-sm"))
     }
     tags$div(style = "margin-bottom:8px;", rows)
+  })
+
+  # Observer for the Build CHM button -- runs build_chm_raster() with
+  # cache awareness and a visible progress indicator, then notifies
+  # so the user sees it land in the canonical 5-item list above.
+  observeEvent(input$build_chm, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    withProgress(message = "Building CHM", value = 0.1,
+                 detail = "DSM - DTM, clamping negatives", {
+      out <- tryCatch(build_chm_raster(p, force = FALSE, cache_aware = TRUE),
+                      error = function(e) {
+                        showNotification(paste("Build CHM failed:",
+                                                conditionMessage(e)),
+                                         type = "error", duration = 10)
+                        NULL
+                      })
+      incProgress(0.8, detail = "Done")
+      if (!is.null(out)) {
+        showNotification(paste0("CHM written to ", out),
+                         type = "message", duration = 8)
+      }
+    })
   })
 
   # Heavy validation: opens rasters via terra::rast(). Gated behind a

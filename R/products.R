@@ -17,6 +17,7 @@ odm_product_paths <- function(project) {
     orthomosaic        = project$odm_orthomosaic,
     dsm                = file.path(d, "odm_dem", "dsm.tif"),
     dtm                = file.path(d, "odm_dem", "dtm.tif"),
+    chm                = file.path(d, "odm_dem", "chm.tif"),
     point_cloud_las    = file.path(d, "odm_georeferencing", "odm_georeferenced_model.las"),
     point_cloud_laz    = file.path(d, "odm_georeferencing", "odm_georeferenced_model.laz"),
     point_cloud_copc   = file.path(d, "odm_georeferencing", "odm_georeferenced_model.copc.laz"),
@@ -203,10 +204,11 @@ quick_outputs_check <- function(project, min_size_mb = 1) {
   ortho <- size_ok(paths[["orthomosaic"]])
   dsm   <- size_ok(paths[["dsm"]])
   dtm   <- size_ok(paths[["dtm"]])
+  chm   <- size_ok(paths[["chm"]])
   pc    <- any(c(size_ok(paths[["point_cloud_copc"]]),
                  size_ok(paths[["point_cloud_laz"]]),
                  size_ok(paths[["point_cloud_las"]])))
-  c(orthomosaic = ortho, dsm = dsm, dtm = dtm,
+  c(orthomosaic = ortho, dsm = dsm, dtm = dtm, chm = chm,
     point_cloud = pc, outputs_complete = (ortho && dsm))
 }
 
@@ -302,10 +304,24 @@ validate_odm_outputs <- function(project) {
     )
   }
 
+  # Detect whether the ortho is RGB (3-4 layers) or Multispectral
+  # (5+ layers). We label the row accordingly so users see exactly
+  # the canonical product list their boss expects.
+  ortho_label <- "Orthomosaic"
+  ortho_p <- unname(paths[["orthomosaic"]])
+  if (file.exists(ortho_p)) {
+    nl <- tryCatch(terra::nlyr(terra::rast(ortho_p)),
+                   error = function(e) NA_integer_)
+    if (!is.na(nl)) {
+      ortho_label <- if (nl >= 5L) "Multispectral Orthomosaic" else "RGB Orthomosaic"
+    }
+  }
+
   rows <- list(
-    validate_raster("Orthomosaic", "orthomosaic"),
+    validate_raster(ortho_label, "orthomosaic"),
     validate_raster("DSM", "dsm"),
     validate_raster("DTM", "dtm"),
+    validate_raster("CHM", "chm"),
     validate_binary("Point cloud (COPC)", "point_cloud_copc"),
     validate_binary("Point cloud (LAZ)",  "point_cloud_laz"),
     validate_binary("Point cloud (LAS)",  "point_cloud_las"),
@@ -316,6 +332,69 @@ validate_odm_outputs <- function(project) {
     validate_binary("ODM report PDF",     "report",  min_size_mb = 0.01)
   )
   do.call(rbind, rows)
+}
+
+#' Build a Canopy Height Model (CHM) from the DSM and DTM
+#'
+#' Computes `CHM = DSM - DTM`, clamps negatives to zero (small noise from
+#' SMRF ground classification), and writes the result as a COG-style
+#' GeoTIFF. By default reads/writes from the local cache directory
+#' (`~/.dronebior/cache/<slug>/`) when DSM + DTM are already cached
+#' there, so we never touch the cloud-synced project folder. Falls
+#' back to writing into the project's `odm_dem/` directory otherwise.
+#'
+#' @param project A `dronebio_project` object.
+#' @param force Logical. Recompute even when `chm.tif` already exists.
+#' @param cache_aware Logical. Prefer the local cache when DSM + DTM
+#'   already live there.
+#' @return Absolute path to the written `chm.tif`.
+#' @examples
+#' \dontrun{
+#'   project <- dronebio_project("~/my_project")
+#'   build_chm_raster(project)
+#' }
+#' @export
+build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE) {
+  paths <- odm_product_paths(project)
+  dsm_path <- unname(paths[["dsm"]])
+  dtm_path <- unname(paths[["dtm"]])
+
+  if (isTRUE(cache_aware)) {
+    cache_dir <- local_cache_dir(project)
+    cached_dsm <- file.path(cache_dir, basename(dsm_path))
+    cached_dtm <- file.path(cache_dir, basename(dtm_path))
+    if (file.exists(cached_dsm)) dsm_path <- cached_dsm
+    if (file.exists(cached_dtm)) dtm_path <- cached_dtm
+  }
+  if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
+    stop("CHM needs DSM + DTM on disk. Missing: ",
+         paste(c(if (!file.exists(dsm_path)) "DSM", if (!file.exists(dtm_path)) "DTM"),
+               collapse = ", "),
+         call. = FALSE)
+  }
+
+  # Default output: alongside the DSM. Either the cached copy (if cache
+  # is in use) or the project's odm_dem/ folder.
+  chm_path <- file.path(dirname(dsm_path), "chm.tif")
+
+  if (!isTRUE(force) && file.exists(chm_path)) {
+    return(chm_path)
+  }
+
+  dsm <- terra::rast(dsm_path)[[1L]]
+  dtm <- terra::rast(dtm_path)[[1L]]
+  # Resample DTM to match DSM grid if they differ (ODM usually keeps
+  # them aligned but be defensive).
+  if (!terra::compareGeom(dsm, dtm, stopOnError = FALSE, lyrs = FALSE,
+                          messages = FALSE)) {
+    dtm <- terra::resample(dtm, dsm, method = "bilinear")
+  }
+  chm <- dsm - dtm
+  chm <- terra::clamp(chm, lower = 0, upper = Inf, values = TRUE)
+  names(chm) <- "CHM"
+  terra::writeRaster(chm, chm_path, overwrite = TRUE, datatype = "FLT4S",
+                     gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER"))
+  chm_path
 }
 
 #' Detect existing ODM project subdirectories in a project root
