@@ -1627,6 +1627,11 @@ ui <- page_navbar(
           div(class = "metric", div(class = "label", "Point cloud"), div(class = "value", uiOutput("metric_cloud", inline = TRUE))),
           div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
         ),
+        # Banner appears only when the project root is inside a cloud-
+        # sync folder (OneDrive / Google Drive / Dropbox / iCloud). Lets
+        # the user migrate big binary outputs to a fast local cache
+        # so the app never re-triggers cloud downloads on Load.
+        uiOutput("cloud_sync_banner"),
         card(card_header("Project status"),
              uiOutput("project_status_quick"),
              actionButton("refresh_project_status",
@@ -2618,6 +2623,91 @@ server <- function(input, output, session) {
 
   products <- reactive({
     summarize_odm_products(project())
+  })
+
+  # Detect cloud-sync project roots (OneDrive / Google Drive / etc.)
+  # and offer a one-click migration of the heavy binary outputs to a
+  # local cache directory outside any cloud sync. Once migrated, the
+  # app repoints every path input at the local copy and never touches
+  # the cloud folder again for analysis.
+  cloud_sync_provider <- reactive({
+    is_cloud_sync_path(input$project_dir %||% "")
+  })
+
+  output$cloud_sync_banner <- renderUI({
+    provider <- cloud_sync_provider()
+    if (is.na(provider)) return(NULL)
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return(NULL)
+    cache_dir <- DroneBioR:::local_cache_dir(p)
+    already_migrated <- dir.exists(cache_dir) &&
+      length(list.files(cache_dir, pattern = "\\.(tif|laz|las|obj|glb)$",
+                        ignore.case = TRUE)) > 0L
+    if (already_migrated) {
+      tags$div(
+        style = paste("background:#ecfdf5; color:#065f46; padding:10px 14px;",
+                      "border-radius:6px; margin-bottom:12px;"),
+        tags$strong("✓ Outputs cached locally"),
+        tags$br(),
+        sprintf("Reads come from %s — no more %s traffic.",
+                cache_dir, provider),
+        tags$br(),
+        actionButton("repoint_to_cloud", "Switch reads back to cloud folder",
+                     class = "btn-link btn-sm",
+                     style = "padding:0; margin-top:4px;"))
+    } else {
+      tags$div(
+        style = paste("background:#fef3c7; color:#92400e; padding:10px 14px;",
+                      "border-radius:6px; margin-bottom:12px;"),
+        tags$strong("⚠ Project lives inside ", provider),
+        tags$br(),
+        "Reading the orthomosaic / DSM / point cloud from a cloud-synced ",
+        "folder can trigger background up/downloads. Copy the heavy outputs ",
+        "to a local cache once and the app reads from there from then on.",
+        tags$br(), tags$br(),
+        actionButton("migrate_to_local_cache",
+                     paste0("Copy outputs to local cache (",
+                            "~/.dronebior/cache/...)"),
+                     class = "btn-warning btn-sm"))
+    }
+  })
+
+  observeEvent(input$migrate_to_local_cache, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    withProgress(message = "Copying outputs to local cache",
+                 detail = "this is a one-time copy",
+                 value = 0.1, {
+      res <- tryCatch(sync_outputs_to_local_cache(p),
+                      error = function(e) {
+                        showNotification(paste("Migration failed:", conditionMessage(e)),
+                                         type = "error", duration = 10)
+                        NULL
+                      })
+      if (is.null(res)) return()
+      incProgress(0.7, detail = "Repointing path inputs")
+      # Repoint each input at the cached copy if we have one.
+      ck <- res$paths
+      if (!is.na(ck["orthomosaic"]))      updateTextInput(session, "orthomosaic",     value = unname(ck["orthomosaic"]))
+      pc <- ck[c("point_cloud_copc", "point_cloud_laz")]
+      pc <- pc[!is.na(pc)]
+      if (length(pc))                     updateTextInput(session, "full_cloud_path", value = unname(pc[1L]))
+      incProgress(0.2, detail = "Done")
+    })
+    showNotification(
+      paste0("Copied ", length(res$paths), " files to ", res$cache_dir,
+             ". App now reads from local cache."),
+      type = "message", duration = 10)
+  })
+
+  observeEvent(input$repoint_to_cloud, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    paths <- odm_product_paths(p)
+    updateTextInput(session, "orthomosaic",     value = unname(p$odm_orthomosaic))
+    updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
+    showNotification("Reads switched back to the cloud-synced project folder.",
+                     type = "message", duration = 6)
   })
 
   # Lightweight always-on summary: file existence + size only. Cheap.
@@ -4338,10 +4428,29 @@ server <- function(input, output, session) {
                     input$odm_project_pick), {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
-    updateTextInput(session, "orthomosaic",     value = unname(p$odm_orthomosaic))
-    updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
+    # Prefer local-cache copies of heavy products when they exist, so a
+    # previously migrated project keeps reading from the fast local disk
+    # instead of OneDrive after the user edits any path input.
+    cache_dir <- DroneBioR:::local_cache_dir(p)
+    use_cache <- function(filename) {
+      candidate <- file.path(cache_dir, filename)
+      if (file.exists(candidate)) candidate else NULL
+    }
+    ortho_default <- unname(p$odm_orthomosaic)
+    ortho_cached  <- use_cache(basename(ortho_default))
+    updateTextInput(session, "orthomosaic",
+                    value = if (!is.null(ortho_cached)) ortho_cached else ortho_default)
+
+    pc_default <- pick_best_point_cloud(p)
+    pc_cached  <- use_cache(basename(pc_default))
+    updateTextInput(session, "full_cloud_path",
+                    value = if (!is.null(pc_cached)) pc_cached else pc_default)
+
     paths <- odm_product_paths(p)
-    updateTextInput(session, "ply_path",        value = unname(paths[["point_cloud_ply"]]))
+    ply_default <- unname(paths[["point_cloud_ply"]])
+    ply_cached  <- use_cache(basename(ply_default))
+    updateTextInput(session, "ply_path",
+                    value = if (!is.null(ply_cached)) ply_cached else ply_default)
   })
 
   output$engine_note <- renderText({

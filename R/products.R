@@ -81,6 +81,100 @@ pick_best_point_cloud <- function(project) {
   unname(paths[["point_cloud_copc"]])
 }
 
+#' Detect whether a path lives inside a cloud-sync provider folder
+#'
+#' OneDrive / iCloud Drive / Google Drive paths on macOS live under
+#' `~/Library/CloudStorage/`. Reads against those folders can trigger
+#' background up/downloads ("Files On-Demand"), which is painful for
+#' a GeoTIFF-heavy app. This helper returns the provider name so the
+#' Shiny UI can warn the user and offer a local-cache migration.
+#'
+#' @param path Filesystem path to inspect.
+#' @return `NA_character_` when not under a cloud-sync folder,
+#'   otherwise the provider name (e.g. "OneDrive", "GoogleDrive").
+#' @examples
+#' is_cloud_sync_path("/Users/me/Documents")
+#' is_cloud_sync_path("/Users/me/Library/CloudStorage/OneDrive-Acme/proj")
+#' @export
+is_cloud_sync_path <- function(path) {
+  if (!is.character(path) || !length(path) || !nzchar(path)) {
+    return(NA_character_)
+  }
+  norm <- tryCatch(normalizePath(path, mustWork = FALSE),
+                   error = function(e) path)
+  m <- regmatches(norm, regexec("CloudStorage/([A-Za-z]+)", norm))[[1L]]
+  if (length(m) >= 2L) return(m[2L])
+  if (grepl("Dropbox", norm, ignore.case = TRUE))     return("Dropbox")
+  if (grepl("iCloud Drive", norm, ignore.case = TRUE)) return("iCloud")
+  NA_character_
+}
+
+#' Local cache directory for project outputs (outside any cloud sync)
+#'
+#' @param project A `dronebio_project` object.
+#' @param cache_root Root directory for the cache. Defaults to
+#'   `~/.dronebior/cache`.
+#' @return Absolute path to `<cache_root>/<sanitized-project-name>/`.
+#' @noRd
+local_cache_dir <- function(project, cache_root = file.path(Sys.getenv("HOME"), ".dronebior", "cache")) {
+  slug <- gsub("[^A-Za-z0-9._-]+", "_", basename(project$project_dir))
+  file.path(cache_root, slug)
+}
+
+#' Copy ODM outputs to a fast local cache once, return the new paths
+#'
+#' Use when the project root lives inside OneDrive / Google Drive /
+#' Dropbox and the heavy raster + point-cloud files keep triggering
+#' background re-syncs. After this returns, the Shiny app can be
+#' repointed at the local cache and never touch the cloud-synced
+#' folder again. Files are skipped if a same-size copy already exists.
+#'
+#' @param project A `dronebio_project` object pointing at the
+#'   (typically cloud-synced) outputs you want to migrate.
+#' @param cache_root Root for the cache. Defaults to
+#'   `~/.dronebior/cache`.
+#' @param products Subset of product keys (see [odm_product_paths()])
+#'   to copy. Default covers the analysis essentials.
+#' @return List with `cache_dir` and a named `paths` character vector
+#'   keyed by product (only entries actually present on disk).
+#' @examples
+#' \dontrun{
+#'   project <- dronebio_project("~/cloud_project")
+#'   cache <- sync_outputs_to_local_cache(project)
+#'   cache$paths[["orthomosaic"]]
+#' }
+#' @export
+sync_outputs_to_local_cache <- function(project,
+                                        cache_root = file.path(Sys.getenv("HOME"),
+                                                               ".dronebior", "cache"),
+                                        products = c("orthomosaic", "dsm", "dtm",
+                                                     "point_cloud_copc",
+                                                     "point_cloud_laz",
+                                                     "textured_obj",
+                                                     "textured_glb")) {
+  cache_dir <- local_cache_dir(project, cache_root = cache_root)
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  paths <- odm_product_paths(project)
+  out <- character()
+  for (key in products) {
+    src <- unname(paths[[key]])
+    if (!length(src) || !nzchar(src) || !file.exists(src)) next
+    dest <- file.path(cache_dir, basename(src))
+    src_size  <- file.info(src)$size
+    dest_size <- if (file.exists(dest)) file.info(dest)$size else NA_real_
+    if (!is.na(dest_size) && dest_size == src_size) {
+      out[key] <- dest
+      next
+    }
+    ok <- tryCatch(file.copy(src, dest, overwrite = TRUE),
+                   error = function(e) FALSE)
+    if (isTRUE(ok)) {
+      out[key] <- dest
+    }
+  }
+  list(cache_dir = cache_dir, paths = out)
+}
+
 #' Lightweight existence + size check on ODM outputs
 #'
 #' Cheap counterpart to [validate_odm_outputs()] that never opens a
