@@ -1427,8 +1427,13 @@ ui <- page_navbar(
         textInput("images_dir_pe", "Source images folder",
                   value = default_project$images_dir,
                   placeholder = "Folder containing the drone JPGs / TIFFs"),
+        # Auto-detected ODM project picker: scans <project>/outputs/ for
+        # any <subdir>/<name>/odm_orthophoto/odm_orthophoto.tif and lets
+        # the user point the app at whichever one they want (handy after
+        # multiple ODM runs in the same project root).
+        uiOutput("odm_project_picker_ui"),
         div(class = "sidebar-note small text-muted",
-            "Set these before clicking Run. The same values appear in the GIS Workspace sidebar."),
+            "Project root + source images appear in every tab. ODM outputs (orthomosaic, DEMs, point cloud) are derived from this picker."),
         selectInput(
           "processing_engine",
           "Engine",
@@ -1946,8 +1951,46 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
+  # Discover existing ODM project layouts on disk so the user can
+  # switch between e.g. odm_aerial_dataset/aerial_geoscan and
+  # odm_micasense_dataset/micasense without manually editing paths.
+  available_odm_projects <- reactive({
+    detect_odm_projects(input$project_dir %||% "")
+  })
+
+  output$odm_project_picker_ui <- renderUI({
+    df <- available_odm_projects()
+    if (!nrow(df)) {
+      return(tags$div(class = "sidebar-note small text-muted",
+                      "ODM project: (none on disk yet — defaults will be used until a run finishes)"))
+    }
+    labels <- vapply(seq_len(nrow(df)), function(i) {
+      sprintf("%s/%s", df$dataset_subdir[i], df$project_name[i])
+    }, character(1))
+    selectInput("odm_project_pick", "ODM project (detected on disk)",
+                choices = setNames(labels, labels),
+                selected = labels[1L])
+  })
+
   project <- reactive({
-    p <- dronebio_project(project_dir = input$project_dir)
+    pick <- input$odm_project_pick
+    df <- available_odm_projects()
+    # If the user picked one, use that subdir + project name. Otherwise
+    # fall back to the canonical MicaSense defaults via dronebio_project.
+    if (!is.null(pick) && nzchar(pick) && nrow(df)) {
+      row <- df[paste0(df$dataset_subdir, "/", df$project_name) == pick, ][1L, , drop = FALSE]
+      if (nrow(row) == 1L) {
+        p <- dronebio_project(
+          project_dir        = input$project_dir,
+          odm_dataset_subdir = row$dataset_subdir,
+          odm_project_name   = row$project_name
+        )
+      } else {
+        p <- dronebio_project(project_dir = input$project_dir)
+      }
+    } else {
+      p <- dronebio_project(project_dir = input$project_dir)
+    }
     p$images_dir <- input$images_dir
     p$output_dir <- input$output_dir
     p
@@ -4036,45 +4079,81 @@ server <- function(input, output, session) {
     filled
   }
 
-  # Poll the log every 3s independently of the renderUI; when the
-  # MMMMMMMM banner appears for a new run, fire the auto-load + clear
-  # the active-run record exactly once.
+  # Auto-load fires on EITHER signal:
+  #   (a) Log banner `MMMMMMMMMM` (the canonical ODM-complete marker)
+  #   (b) Valid orthomosaic + DSM already on disk for the current project
+  #       (recovers from runs that crashed in odm_report -- numpy/gdal bug
+  #       in the latest opendronemap/odm Docker image -- without losing
+  #       the actually-good upstream outputs).
+  # Each unique run_id fires the side-effects exactly once per session.
   observe({
     invalidateLater(3000, session)
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+
+    log_done   <- FALSE
+    log_run_id <- NA_character_
     path <- input$odm_log_path
-    if (!is.character(path) || !nzchar(path) || !file.exists(path)) return()
-    lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
-    if (!length(lines)) return()
-    if (!any(grepl("MMMMMMMMMM", lines))) return()
-    init_time <- parse_odm_init_time(lines)
-    run_id <- if (!is.na(init_time))
-      format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC"))
-    else "unknown"
-    if (run_id %in% autoloaded_runs()) return()
+    if (is.character(path) && nzchar(path) && file.exists(path)) {
+      lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
+      if (length(lines)) {
+        log_done <- any(grepl("MMMMMMMMMM", lines))
+        init_time <- parse_odm_init_time(lines)
+        if (!is.na(init_time)) {
+          log_run_id <- format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC"))
+        }
+      }
+    }
+
+    outputs_done <- FALSE
+    outputs_run_id <- NA_character_
+    val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)
+    if (!is.null(val)) {
+      ortho_row <- val[val$product == "Orthomosaic", ]
+      dsm_row   <- val[val$product == "DSM", ]
+      if (nrow(ortho_row) > 0L && nrow(dsm_row) > 0L &&
+          ortho_row$exists && ortho_row$valid &&
+          dsm_row$exists   && dsm_row$valid) {
+        outputs_done <- TRUE
+        # Use the orthomosaic's mtime as a stable per-run identifier so
+        # the same on-disk state doesn't re-trigger every refresh, but a
+        # NEW run (new mtime) does.
+        outputs_run_id <- paste0("ortho-mtime-",
+                                 format(file.info(ortho_row$path)$mtime,
+                                        "%Y-%m-%dT%H:%M:%S"))
+      }
+    }
+
+    if (!(log_done || outputs_done)) return()
+    chosen_run_id <- if (log_done && !is.na(log_run_id)) log_run_id else outputs_run_id
+    if (is.na(chosen_run_id)) return()
+    if (chosen_run_id %in% autoloaded_runs()) return()
 
     filled <- autoload_odm_outputs()
-    autoloaded_runs(c(autoloaded_runs(), run_id))
+    autoloaded_runs(c(autoloaded_runs(), chosen_run_id))
     DroneBioR:::clear_active_run_record()
+    reason <- if (log_done) "MMMMMMMM banner" else "valid outputs on disk (ortho + DSM)"
     showNotification(
-      paste0("ODM pipeline complete. Auto-filled: ",
+      paste0("ODM outputs detected (", reason, "). Auto-filled: ",
              paste(filled, collapse = ", ")),
       type = "message", duration = 15
     )
   })
 
-  # When the project changes (root or images), refresh the 3D Modeling
-  # path inputs so they always point at the active project's outputs.
-  observe({
+  # Path reuse: when the project root or source images folder changes,
+  # update every derived path input across all tabs to the canonical
+  # ODM paths of the new project. Users can still override; switching
+  # projects intentionally resets the overrides. We also do this whether
+  # the files exist yet or not, so the user can see what the next ODM
+  # run will produce.
+  observeEvent(list(input$project_dir, input$images_dir, input$output_dir,
+                    input$odm_project_pick), {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
-    pc <- pick_best_point_cloud(p)
-    if (file.exists(pc)) {
-      updateTextInput(session, "full_cloud_path", value = pc)
-    }
+    updateTextInput(session, "orthomosaic",     value = unname(p$odm_orthomosaic))
+    updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
     paths <- odm_product_paths(p)
-    if (file.exists(paths[["point_cloud_ply"]])) {
-      updateTextInput(session, "ply_path", value = unname(paths[["point_cloud_ply"]]))
-    }
+    updateTextInput(session, "ply_path",        value = unname(paths[["point_cloud_ply"]]))
   })
 
   output$engine_note <- renderText({

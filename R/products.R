@@ -189,6 +189,63 @@ validate_odm_outputs <- function(project) {
   do.call(rbind, rows)
 }
 
+#' Detect existing ODM project subdirectories in a project root
+#'
+#' Walks `<project_dir>/outputs/` looking for any folder layout that
+#' looks like an ODM project — that is, any
+#' `<subdir>/<project_name>/odm_orthophoto/odm_orthophoto.tif`. Lets the
+#' Shiny app populate a selector instead of assuming the canonical
+#' `outputs/odm_micasense_dataset/micasense/` defaults.
+#'
+#' @param project_dir Path to a DroneBioR project root.
+#' @return Data frame with `dataset_subdir`, `project_name`,
+#'   `orthomosaic`, sorted with most-recently-modified first. Empty
+#'   when nothing is found.
+#' @examples
+#' detect_odm_projects(tempdir())
+#' @export
+detect_odm_projects <- function(project_dir) {
+  empty <- data.frame(
+    dataset_subdir = character(),
+    project_name   = character(),
+    orthomosaic    = character(),
+    stringsAsFactors = FALSE
+  )
+  if (!is.character(project_dir) || !length(project_dir) ||
+      !nzchar(project_dir) || !dir.exists(project_dir)) {
+    return(empty)
+  }
+  outputs <- file.path(project_dir, "outputs")
+  if (!dir.exists(outputs)) return(empty)
+  hits <- list.files(outputs,
+                     pattern = "^odm_orthophoto\\.tif$",
+                     recursive = TRUE,
+                     full.names = TRUE)
+  if (!length(hits)) return(empty)
+  rel <- sub(paste0("^", normalizePath(outputs, winslash = "/"), "/"), "",
+             normalizePath(hits, winslash = "/", mustWork = FALSE))
+  # Expect <subdir>/<project_name>/odm_orthophoto/odm_orthophoto.tif
+  parts <- strsplit(rel, "/", fixed = TRUE)
+  keep <- vapply(parts, function(p) length(p) >= 4L &&
+                   p[length(p) - 1L] == "odm_orthophoto", logical(1))
+  parts <- parts[keep]
+  hits  <- hits[keep]
+  if (!length(parts)) return(empty)
+  out <- data.frame(
+    dataset_subdir = vapply(parts, function(p) file.path("outputs",
+                                                         paste(p[seq_len(length(p) - 3L)],
+                                                               collapse = "/")),
+                            character(1)),
+    project_name   = vapply(parts, function(p) p[length(p) - 2L], character(1)),
+    orthomosaic    = hits,
+    stringsAsFactors = FALSE
+  )
+  out$mtime <- file.info(out$orthomosaic)$mtime
+  out <- out[order(out$mtime, decreasing = TRUE), , drop = FALSE]
+  out$mtime <- NULL
+  out
+}
+
 #' Summarize available ODM products
 #'
 #' @param project A `dronebio_project` object.
