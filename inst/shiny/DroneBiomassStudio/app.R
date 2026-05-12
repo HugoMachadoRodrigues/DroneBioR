@@ -2890,17 +2890,50 @@ server <- function(input, output, session) {
   gis_stack <- reactive({
     with_error_toast("Load GIS stack", {
       validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
-      ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
-      refl <- if (isTRUE(input$scale_reflectance)) scale_to_reflectance(ortho$bands) else ortho$bands
-      idx <- compute_spectral_indices(refl)
-      # Biomass_Index_Proxy needs NDVI + SAVI + NDRE; for RGB orthos
-      # the index stack only has VARI, so skip the proxy step silently.
-      if (all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
-        proxy <- compute_biomass_proxy(idx)
-        c(refl, idx, proxy)
-      } else {
-        c(refl, idx)
-      }
+      withProgress(message = "Loading GIS stack", value = 0, {
+        incProgress(0.1, detail = "Reading orthomosaic header")
+        ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
+
+        # Aggregate bands BEFORE radiometric scaling + index math. Full-res
+        # 5 cm/px orthos can be 20k x 20k pixels (437 M pixels per band) --
+        # computing VARI / NDVI etc. on that takes minutes even on a fast
+        # machine. Aggregating to ~4000 px max dimension gives ~25-50 cm/px
+        # for display, which is more than enough for any zoom the leaflet
+        # map will reach. Full-res versions are still readable from disk
+        # for the Analytics / Exports tabs.
+        nc <- terra::ncol(ortho$bands); nr <- terra::nrow(ortho$bands)
+        fact <- max(1, floor(max(nc, nr) / 4000))
+        if (fact > 1) {
+          incProgress(0.2, detail = sprintf("Aggregating %dx%d -> %dx%d (display scale)",
+                                            nc, nr,
+                                            as.integer(nc / fact),
+                                            as.integer(nr / fact)))
+          bands_for_display <- terra::aggregate(ortho$bands, fact = fact,
+                                                fun = mean, na.rm = TRUE)
+        } else {
+          bands_for_display <- ortho$bands
+        }
+
+        incProgress(0.2, detail = "Scaling to reflectance")
+        refl <- if (isTRUE(input$scale_reflectance)) {
+          scale_to_reflectance(bands_for_display)
+        } else bands_for_display
+
+        incProgress(0.2, detail = "Computing spectral indices")
+        idx <- compute_spectral_indices(refl)
+
+        # Biomass_Index_Proxy needs NDVI + SAVI + NDRE; for RGB orthos
+        # the index stack only has VARI, so skip the proxy step silently.
+        incProgress(0.2, detail = "Stacking final layers")
+        if (all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
+          proxy <- compute_biomass_proxy(idx)
+          out <- c(refl, idx, proxy)
+        } else {
+          out <- c(refl, idx)
+        }
+        incProgress(0.1, detail = "Done")
+        out
+      })
     })
   }) |>
     bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance) |>
