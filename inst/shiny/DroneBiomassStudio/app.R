@@ -3089,17 +3089,43 @@ server <- function(input, output, session) {
   # do not redo the terrain math.
   hillshade_raster <- reactive({
     with_error_toast("Compute hillshade", {
-      products <- odm_product_paths(project())
+      p <- project()
+      products <- odm_product_paths(p)
+      dsm_default <- unname(products[["dsm"]])
+      # Prefer the local-cache copy of the DSM when migration ran;
+      # otherwise fall back to the project's canonical (often
+      # cloud-synced) path.
+      cache_dir  <- DroneBioR:::local_cache_dir(p)
+      dsm_cached <- file.path(cache_dir, basename(dsm_default))
+      dsm_path   <- if (file.exists(dsm_cached)) dsm_cached else dsm_default
       validate(need(
-        file.exists(products[["dsm"]]),
+        file.exists(dsm_path),
         "DSM not available - hillshade needs odm_dem/dsm.tif."
       ))
-      dsm <- terra::rast(products[["dsm"]])[[1]]
-      slope <- terra::terrain(dsm, "slope", unit = "radians", neighbors = 8)
-      aspect <- terra::terrain(dsm, "aspect", unit = "radians", neighbors = 8)
-      h <- terra::shade(slope, aspect, angle = 45, direction = 315)
-      names(h) <- "Hillshade"
-      h
+      withProgress(message = "Computing hillshade", value = 0.05, {
+        incProgress(0.1, detail = sprintf("Reading %s", basename(dsm_path)))
+        dsm <- terra::rast(dsm_path)[[1]]
+        # Aggregate down to ~3000 px max so the slope/aspect/shade
+        # math runs in seconds even on a 22k-pixel-wide 5 cm DSM.
+        nc <- terra::ncol(dsm); nr <- terra::nrow(dsm)
+        fact <- max(1, floor(max(nc, nr) / 3000))
+        if (fact > 1) {
+          incProgress(0.25, detail = sprintf("Aggregating %dx%d -> %dx%d",
+                                              nc, nr,
+                                              as.integer(nc / fact),
+                                              as.integer(nr / fact)))
+          dsm <- terra::aggregate(dsm, fact = fact, fun = mean, na.rm = TRUE)
+        }
+        incProgress(0.2, detail = "Computing slope")
+        slope  <- terra::terrain(dsm, "slope",  unit = "radians", neighbors = 8)
+        incProgress(0.2, detail = "Computing aspect")
+        aspect <- terra::terrain(dsm, "aspect", unit = "radians", neighbors = 8)
+        incProgress(0.15, detail = "Shading")
+        h <- terra::shade(slope, aspect, angle = 45, direction = 315)
+        names(h) <- "Hillshade"
+        incProgress(0.1, detail = "Done")
+        h
+      })
     })
   }) |>
     bindCache(input$project_dir)
