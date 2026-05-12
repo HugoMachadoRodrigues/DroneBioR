@@ -2574,21 +2574,39 @@ server <- function(input, output, session) {
     updateTextInput(session, "full_cloud_path", value = normalizePath(path, mustWork = FALSE))
   })
 
+  # Cheap fast outputs: file.exists() on a single path. Render
+  # immediately without project() dependency so they're visible even
+  # while the heavier reactives downstream are still warming up.
   output$metric_images <- renderUI({
-    status_badge(dir.exists(input$images_dir), "Ready", "Missing")
+    status_badge(dir.exists(input$images_dir %||% ""), "Ready", "Missing")
   })
 
   output$metric_ortho <- renderUI({
-    status_badge(file.exists(input$orthomosaic), "Available", "Missing")
+    status_badge(file.exists(input$orthomosaic %||% ""), "Available", "Missing")
   })
 
+  # Slower outputs: depend on project() (which depends on the disk-
+  # scanning available_odm_projects()). We pre-render a placeholder
+  # spinner so the user sees activity instead of an empty box during
+  # the 1-2s warmup window.
   output$metric_cloud <- renderUI({
-    products <- odm_product_paths(project())
-    status_badge(any(file.exists(unname(products[c("point_cloud_las", "point_cloud_laz", "point_cloud_copc")]))), "Available", "Missing")
+    products <- tryCatch(odm_product_paths(project()), error = function(e) NULL)
+    if (is.null(products)) {
+      return(tags$span(class = "status-pill status-bad",
+                       tags$span(class = "status-icon", HTML("&#8230;")),
+                       "Checking..."))
+    }
+    status_badge(any(file.exists(unname(products[c("point_cloud_las", "point_cloud_laz", "point_cloud_copc")]))),
+                 "Available", "Missing")
   })
 
   output$metric_dem <- renderUI({
-    products <- odm_product_paths(project())
+    products <- tryCatch(odm_product_paths(project()), error = function(e) NULL)
+    if (is.null(products)) {
+      return(tags$span(class = "status-pill status-bad",
+                       tags$span(class = "status-icon", HTML("&#8230;")),
+                       "Checking..."))
+    }
     ok <- file.exists(products[["dsm"]]) && file.exists(products[["dtm"]])
     status_badge(ok, "DSM/DTM OK", "Missing")
   })
@@ -2598,10 +2616,13 @@ server <- function(input, output, session) {
   })
 
   # Project status: image count, geographic centre, CRS, last-run
-  # duration, and a per-product validation table. Picks up changes
-  # whenever the orthomosaic input or project changes.
+  # duration, and a per-product validation table. Re-runs whenever
+  # the project reactive changes (e.g. user pastes a new path or
+  # switches the ODM project picker). Also re-polls every 30s so a
+  # background ODM run that's writing new outputs is reflected in
+  # the table without the user needing to refresh manually.
   project_status <- reactive({
-    invalidateLater(5000, session)
+    invalidateLater(30000, session)
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return(NULL)
     val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)

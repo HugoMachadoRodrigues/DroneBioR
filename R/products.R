@@ -217,32 +217,32 @@ detect_odm_projects <- function(project_dir) {
   }
   outputs <- file.path(project_dir, "outputs")
   if (!dir.exists(outputs)) return(empty)
-  hits <- list.files(outputs,
-                     pattern = "^odm_orthophoto\\.tif$",
-                     recursive = TRUE,
-                     full.names = TRUE)
-  if (!length(hits)) return(empty)
-  rel <- sub(paste0("^", normalizePath(outputs, winslash = "/"), "/"), "",
-             normalizePath(hits, winslash = "/", mustWork = FALSE))
-  # Expect <subdir>/<project_name>/odm_orthophoto/odm_orthophoto.tif
-  parts <- strsplit(rel, "/", fixed = TRUE)
-  keep <- vapply(parts, function(p) length(p) >= 4L &&
-                   p[length(p) - 1L] == "odm_orthophoto", logical(1))
-  parts <- parts[keep]
-  hits  <- hits[keep]
-  if (!length(parts)) return(empty)
-  out <- data.frame(
-    dataset_subdir = vapply(parts, function(p) file.path("outputs",
-                                                         paste(p[seq_len(length(p) - 3L)],
-                                                               collapse = "/")),
-                            character(1)),
-    project_name   = vapply(parts, function(p) p[length(p) - 2L], character(1)),
-    orthomosaic    = hits,
-    stringsAsFactors = FALSE
-  )
+
+  # Limited-depth scan instead of `list.files(recursive = TRUE)` — the
+  # recursive variant walks every leaf of the outputs tree and on
+  # OneDrive-synced folders that can take 1+ seconds for large runs.
+  # We only ever need 2 levels: <subdir>/<project_name>/odm_orthophoto/.
+  subdirs <- list.dirs(outputs, recursive = FALSE, full.names = TRUE)
+  results <- list()
+  for (sub in subdirs) {
+    project_dirs <- list.dirs(sub, recursive = FALSE, full.names = TRUE)
+    for (pd in project_dirs) {
+      ortho <- file.path(pd, "odm_orthophoto", "odm_orthophoto.tif")
+      if (file.exists(ortho)) {
+        results[[length(results) + 1L]] <- list(
+          dataset_subdir = file.path("outputs", basename(sub)),
+          project_name   = basename(pd),
+          orthomosaic    = ortho
+        )
+      }
+    }
+  }
+  if (!length(results)) return(empty)
+  out <- do.call(rbind, lapply(results, as.data.frame, stringsAsFactors = FALSE))
   out$mtime <- file.info(out$orthomosaic)$mtime
   out <- out[order(out$mtime, decreasing = TRUE), , drop = FALSE]
   out$mtime <- NULL
+  rownames(out) <- NULL
   out
 }
 
