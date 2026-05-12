@@ -1628,6 +1628,11 @@ ui <- page_navbar(
           div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
         ),
         card(card_header("Project status"),
+             uiOutput("project_status_quick"),
+             actionButton("refresh_project_status",
+                          "Run full validation (opens rasters)",
+                          class = "btn-outline-secondary btn-sm",
+                          style = "margin-bottom:8px;"),
              uiOutput("project_status_header"),
              tableOutput("project_status_table")),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
@@ -2615,14 +2620,42 @@ server <- function(input, output, session) {
     summarize_odm_products(project())
   })
 
-  # Project status: image count, geographic centre, CRS, last-run
-  # duration, and a per-product validation table. Re-runs whenever
-  # the project reactive changes (e.g. user pastes a new path or
-  # switches the ODM project picker). Also re-polls every 30s so a
-  # background ODM run that's writing new outputs is reflected in
-  # the table without the user needing to refresh manually.
+  # Lightweight always-on summary: file existence + size only. Cheap.
+  # Shows up the moment the user lands on the GIS Workspace tab.
+  output$project_status_quick <- renderUI({
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      return(tags$div(class = "text-muted", "Project not configured."))
+    }
+    qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
+    n_imgs <- tryCatch({
+      length(list.files(p$images_dir, pattern = "\\.(jpe?g|tif?f)$",
+                        ignore.case = TRUE, recursive = FALSE))
+    }, error = function(e) NA_integer_)
+    rows <- list(
+      tags$div(tags$strong("Images: "), if (is.na(n_imgs)) "—" else n_imgs),
+      tags$div(tags$strong("Project root: "), tags$code(p$project_dir),
+               tags$br(),
+               tags$strong("Layout: "), tags$code(basename(dirname(p$odm_project_dir)), " / ", basename(p$odm_project_dir)))
+    )
+    if (!is.null(qc)) {
+      icon <- function(ok) if (isTRUE(ok)) "✓" else "—"
+      rows[[length(rows) + 1L]] <- tags$div(
+        tags$strong("Quick check: "),
+        sprintf("ortho %s · DSM %s · DTM %s · point cloud %s",
+                icon(qc[["orthomosaic"]]),
+                icon(qc[["dsm"]]),
+                icon(qc[["dtm"]]),
+                icon(qc[["point_cloud"]])))
+    }
+    tags$div(style = "margin-bottom:8px;", rows)
+  })
+
+  # Heavy validation: opens rasters via terra::rast(). Gated behind a
+  # button so we don't pay for it (slow on OneDrive Files-On-Demand)
+  # unless the user explicitly asks. Once computed, it's cached
+  # against project() + the click counter.
   project_status <- reactive({
-    invalidateLater(30000, session)
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return(NULL)
     val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)
@@ -2669,7 +2702,8 @@ server <- function(input, output, session) {
       centroid = centroid, last_run_seconds = last_run_seconds,
       validation = val
     )
-  })
+  }) |>
+    bindEvent(input$refresh_project_status, ignoreNULL = TRUE)
 
   output$project_status_header <- renderUI({
     s <- project_status()
@@ -3923,19 +3957,17 @@ server <- function(input, output, session) {
 
     # Outputs-on-disk completion check: a run that crashed in
     # odm_report (numpy/gdal bug) is still effectively complete if the
-    # critical products validated. We use this to flip the card into
-    # a "succeeded" state and collapse the historical errors.
+    # critical products exist on disk. We use the lightweight
+    # existence + size check here so the every-3-seconds refresh of
+    # the Progress card never touches the raster headers (which on
+    # OneDrive Files-On-Demand can force minute-long downloads).
     p_for_status <- tryCatch(project(), error = function(e) NULL)
     outputs_complete <- FALSE
     if (!is.null(p_for_status)) {
-      v_status <- tryCatch(validate_odm_outputs(p_for_status),
-                           error = function(e) NULL)
-      if (!is.null(v_status)) {
-        ortho_row_s <- v_status[v_status$product == "Orthomosaic", ]
-        dsm_row_s   <- v_status[v_status$product == "DSM", ]
-        outputs_complete <- nrow(ortho_row_s) > 0L && nrow(dsm_row_s) > 0L &&
-                            ortho_row_s$exists && ortho_row_s$valid &&
-                            dsm_row_s$exists   && dsm_row_s$valid
+      qc_status <- tryCatch(quick_outputs_check(p_for_status),
+                            error = function(e) NULL)
+      if (!is.null(qc_status) && isTRUE(qc_status[["outputs_complete"]])) {
+        outputs_complete <- TRUE
       }
     }
     effectively_done <- done_flag || outputs_complete
@@ -4265,21 +4297,19 @@ server <- function(input, output, session) {
 
     outputs_done <- FALSE
     outputs_run_id <- NA_character_
-    val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)
-    if (!is.null(val)) {
-      ortho_row <- val[val$product == "Orthomosaic", ]
-      dsm_row   <- val[val$product == "DSM", ]
-      if (nrow(ortho_row) > 0L && nrow(dsm_row) > 0L &&
-          ortho_row$exists && ortho_row$valid &&
-          dsm_row$exists   && dsm_row$valid) {
-        outputs_done <- TRUE
-        # Use the orthomosaic's mtime as a stable per-run identifier so
-        # the same on-disk state doesn't re-trigger every refresh, but a
-        # NEW run (new mtime) does.
-        outputs_run_id <- paste0("ortho-mtime-",
-                                 format(file.info(ortho_row$path)$mtime,
-                                        "%Y-%m-%dT%H:%M:%S"))
-      }
+    # Use the lightweight existence + size check here -- the full
+    # validate_odm_outputs() opens rasters via terra::rast(), which on
+    # OneDrive Files-On-Demand folders can trigger minute-long
+    # downloads of header/COG-overview blocks. We don't need raster
+    # geometry to decide autoload should fire; existence + non-zero
+    # size is enough.
+    qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
+    if (!is.null(qc) && isTRUE(qc[["outputs_complete"]])) {
+      outputs_done <- TRUE
+      ortho_path <- odm_product_paths(p)[["orthomosaic"]]
+      outputs_run_id <- paste0("ortho-mtime-",
+                               format(file.info(ortho_path)$mtime,
+                                      "%Y-%m-%dT%H:%M:%S"))
     }
 
     if (!(log_done || outputs_done)) return()

@@ -81,6 +81,41 @@ pick_best_point_cloud <- function(project) {
   unname(paths[["point_cloud_copc"]])
 }
 
+#' Lightweight existence + size check on ODM outputs
+#'
+#' Cheap counterpart to [validate_odm_outputs()] that never opens a
+#' raster file (so it doesn't trigger OneDrive Files-On-Demand
+#' downloads on cloud-synced project folders). Just checks that the
+#' orthomosaic and DSM exist and are bigger than `min_size_mb` MB.
+#'
+#' @param project A `dronebio_project` object.
+#' @param min_size_mb Numeric size threshold (MB) below which a file
+#'   is treated as a placeholder / aborted artifact. Default 1 MB.
+#' @return Named logical vector with `orthomosaic`, `dsm`, `dtm`,
+#'   `point_cloud`, plus a top-level `outputs_complete` summary that
+#'   is TRUE iff the orthomosaic and DSM both pass.
+#' @examples
+#' p <- dronebio_project(project_dir = tempdir())
+#' quick_outputs_check(p)
+#' @export
+quick_outputs_check <- function(project, min_size_mb = 1) {
+  paths <- odm_product_paths(project)
+  size_ok <- function(p) {
+    if (!file.exists(p)) return(FALSE)
+    info <- tryCatch(file.info(p), error = function(e) NULL)
+    if (is.null(info) || !is.finite(info$size)) return(FALSE)
+    info$size / 1e6 >= min_size_mb
+  }
+  ortho <- size_ok(paths[["orthomosaic"]])
+  dsm   <- size_ok(paths[["dsm"]])
+  dtm   <- size_ok(paths[["dtm"]])
+  pc    <- any(c(size_ok(paths[["point_cloud_copc"]]),
+                 size_ok(paths[["point_cloud_laz"]]),
+                 size_ok(paths[["point_cloud_las"]])))
+  c(orthomosaic = ortho, dsm = dsm, dtm = dtm,
+    point_cloud = pc, outputs_complete = (ortho && dsm))
+}
+
 #' Validate ODM output products against sanity thresholds
 #'
 #' Inspects each rasterizable product (orthomosaic, DSM, DTM) and the
