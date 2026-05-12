@@ -3413,6 +3413,7 @@ server <- function(input, output, session) {
       withProgress(message = "Rendering raster products",
                    value = 0, {
         for (layer_name in external_products) {
+          tryCatch({
           incProgress(0.05, detail = sprintf("Loading %s", layer_name))
           path_key <- switch(layer_name,
                              `RGB Orthomosaic` = "orthomosaic",
@@ -3437,19 +3438,39 @@ server <- function(input, output, session) {
           incProgress(0.05, detail = sprintf("Adding %s to map", layer_name))
 
           if (identical(layer_name, "RGB Orthomosaic")) {
-            # Natural-colour composite. read_multispectral_orthomosaic
-            # output order is Blue, Green, Red (+ optional alpha), so
-            # the band indices for RGB display are r=3, g=2, b=1.
-            idx_blue  <- 1L; idx_green <- 2L; idx_red <- 3L
+            # Natural-colour composite. ODM writes the orthomosaic as
+            # (Red, Green, Blue, Alpha). leafem::addRasterRGB delegates
+            # to leaflet::addRasterImage which has a 4 MB raster limit;
+            # any subsampled RGB stack above ~1100 px on a side trips
+            # it. We write a temp COG and stream via addGeotiff(rgbBands
+            # = ...) which has no size cap.
             if (terra::nlyr(r) >= 3L) {
-              proxy <- proxy |>
-                leafem::addRasterRGB(
-                  r[[c(idx_red, idx_green, idx_blue)]],
-                  r = 1, g = 2, b = 3,
-                  group   = "RGB Orthomosaic",
-                  opacity = opacity,
-                  project = TRUE,
-                  quantiles = c(0.02, 0.98))
+              rgb_stack <- r[[1:3]]
+              rgb_path  <- tempfile(fileext = ".tif")
+              ok_rgb <- tryCatch({
+                terra::writeRaster(
+                  rgb_stack, rgb_path,
+                  overwrite = TRUE,
+                  filetype  = "COG",
+                  gdal      = c("COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"))
+                TRUE
+              }, error = function(e) {
+                # COG driver unsupported on older GDAL -> plain GeoTIFF.
+                terra::writeRaster(
+                  rgb_stack, rgb_path,
+                  overwrite = TRUE, filetype = "GTiff",
+                  gdal = c("COMPRESS=DEFLATE"))
+                TRUE
+              })
+              if (isTRUE(ok_rgb)) {
+                proxy <- proxy |>
+                  leafem::addGeotiff(
+                    file     = rgb_path,
+                    rgbBands = c(1, 2, 3),
+                    group    = "RGB Orthomosaic",
+                    opacity  = opacity,
+                    project  = TRUE)
+              }
             }
           } else {
             # DSM / DTM in metres -> viridis; CHM uses BuGn so 0 is
@@ -3477,6 +3498,12 @@ server <- function(input, output, session) {
             }
           }
           if (is.null(first_layer)) first_layer <- r
+          }, error = function(e) {
+            showNotification(
+              sprintf("Failed to render '%s': %s", layer_name,
+                      conditionMessage(e)),
+              type = "warning", duration = 8)
+          })
         }  # end for(layer_name in external_products)
       })   # end withProgress
     }      # end if (length(external_products) > 0L)
