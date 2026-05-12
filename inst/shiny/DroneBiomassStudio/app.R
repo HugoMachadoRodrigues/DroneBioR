@@ -4352,6 +4352,35 @@ server <- function(input, output, session) {
     DroneBioR:::detect_camera_from_folder(input$images_dir %||% "")
   })
 
+  # Auto-correct the Camera type selector on the first detection of a
+  # mismatch for a given images_dir. After the auto-correction the path
+  # is remembered, so if the user manually switches the dropdown back
+  # we never fight them. Pasting a different path that also mismatches
+  # triggers another auto-correction.
+  auto_corrected_image_paths <- reactiveVal(character(0))
+  observe({
+    imgs <- input$images_dir %||% ""
+    if (!nzchar(imgs) || !dir.exists(imgs)) return()
+    if (imgs %in% auto_corrected_image_paths()) return()
+    d   <- detected_camera()
+    sel <- input$camera_type %||% "multispectral"
+    if (!is.na(d) && !identical(d, sel)) {
+      updateSelectInput(session, "camera_type", selected = d)
+      auto_corrected_image_paths(c(auto_corrected_image_paths(), imgs))
+      showNotification(
+        paste0("Camera type auto-set to ", sQuote(d),
+               " based on the contents of the Source images folder. ",
+               "Change the dropdown if this is wrong."),
+        type = "message", duration = 8
+      )
+    } else if (!is.na(d) && identical(d, sel)) {
+      # Already matching: still remember the path so a later
+      # spurious mismatch (e.g. user toggles the dropdown then
+      # toggles back) doesn't force another auto-correction.
+      auto_corrected_image_paths(c(auto_corrected_image_paths(), imgs))
+    }
+  })
+
   output$camera_detected_note <- renderUI({
     d <- detected_camera()
     sel <- input$camera_type %||% "multispectral"
