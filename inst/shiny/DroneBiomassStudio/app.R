@@ -1415,6 +1415,14 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 380,
+        # Project setup: must come first. These mirror the inputs in GIS
+        # Workspace; both panels stay in sync via observers below.
+        textInput("project_dir_pe", "Project root", value = default_project$project_dir),
+        textInput("images_dir_pe", "Source images folder",
+                  value = default_project$images_dir,
+                  placeholder = "Folder containing the drone JPGs / TIFFs"),
+        div(class = "sidebar-note small text-muted",
+            "Set these before clicking Run. The same values appear in the GIS Workspace sidebar."),
         selectInput(
           "processing_engine",
           "Engine",
@@ -1444,6 +1452,7 @@ ui <- page_navbar(
           ),
           selected = "multispectral"
         ),
+        uiOutput("camera_detected_note"),
         selectInput(
           "processing_preset",
           "Processing preset",
@@ -1478,6 +1487,11 @@ ui <- page_navbar(
       card(card_header("What this preset creates"), tableOutput("preset_outputs")),
       card(card_header("ODM Docker command"), verbatimTextOutput("odm_command")),
       card(card_header("Processing guidance"), textOutput("engine_note")),
+      card(card_header("ODM run progress"),
+           textInput("odm_log_path", "Log file (live)",
+                     value = "/tmp/dronebior_logs/odm.log",
+                     placeholder = "Auto-filled when you click Run ODM"),
+           uiOutput("odm_progress_ui")),
       card(card_header("Product status"), tableOutput("processing_products"))
     )
   ),
@@ -1897,6 +1911,31 @@ ui <- page_navbar(
 )
 
 server <- function(input, output, session) {
+  # Sync the project-root and images-dir inputs between the Processing
+  # Engine sidebar (`*_pe`) and the GIS Workspace sidebar. Each observer
+  # only updates when the value actually differs, so the cross-update
+  # is a no-op and the loop terminates after one hop.
+  observeEvent(input$project_dir_pe, {
+    if (!identical(input$project_dir_pe, input$project_dir)) {
+      updateTextInput(session, "project_dir", value = input$project_dir_pe)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$project_dir, {
+    if (!identical(input$project_dir, input$project_dir_pe)) {
+      updateTextInput(session, "project_dir_pe", value = input$project_dir)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir_pe, {
+    if (!identical(input$images_dir_pe, input$images_dir)) {
+      updateTextInput(session, "images_dir", value = input$images_dir_pe)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir, {
+    if (!identical(input$images_dir, input$images_dir_pe)) {
+      updateTextInput(session, "images_dir_pe", value = input$images_dir)
+    }
+  }, ignoreInit = TRUE)
+
   project <- reactive({
     p <- dronebio_project(project_dir = input$project_dir)
     p$images_dir <- input$images_dir
@@ -3413,6 +3452,236 @@ server <- function(input, output, session) {
     })
   })
 
+  # ODM stages, in pipeline order. Used by the live progress card.
+  odm_stage_order <- c("dataset", "split", "merge", "opensfm", "openmvs",
+                       "odm_filterpoints", "odm_meshing", "mvs_texturing",
+                       "odm_georeferencing", "odm_dem", "odm_orthophoto",
+                       "odm_report", "odm_postprocess")
+
+  format_duration <- function(seconds) {
+    if (!is.finite(seconds) || seconds < 0) return("--")
+    h <- floor(seconds / 3600)
+    m <- floor((seconds %% 3600) / 60)
+    s <- floor(seconds %% 60)
+    if (h > 0) sprintf("%dh %02dm %02ds", h, m, s)
+    else if (m > 0) sprintf("%dm %02ds", m, s)
+    else sprintf("%ds", s)
+  }
+
+  parse_odm_init_time <- function(lines) {
+    # Match `Initializing ODM 3.6.0 - Tue May 12 00:30:51  2026` (ODM uses
+    # two spaces before the year because the day is %e not %d).
+    hit <- grep("Initializing ODM", lines, value = TRUE)
+    if (!length(hit)) return(NA_real_)
+    m <- regmatches(hit[1L], regexec(" - (.+)$", hit[1L]))[[1L]]
+    if (length(m) < 2L) return(NA_real_)
+    raw <- gsub("\\s+", " ", trimws(m[2L]))
+    # Try common formats and locales.
+    fmts <- c("%a %b %d %H:%M:%S %Y", "%a %b %e %H:%M:%S %Y")
+    for (f in fmts) {
+      t <- suppressWarnings(strptime(raw, f, tz = "UTC"))
+      if (!is.na(t)) return(as.numeric(as.POSIXct(t)))
+    }
+    NA_real_
+  }
+
+  # Session-local map of (run_id, stage) -> wall-clock first-seen timings.
+  # Stored so we can compute per-stage durations and persist them to history
+  # when the user has the Progress card open across stage transitions.
+  stage_timing <- reactiveVal(list(run_id = NA_character_, image_count = NA_integer_,
+                                   stages = list()))
+
+  output$odm_progress_ui <- renderUI({
+    invalidateLater(3000, session)
+    path <- input$odm_log_path
+    if (!is.character(path) || !nzchar(path) || !file.exists(path)) {
+      return(tags$div(class = "text-muted",
+                      "No ODM log found yet. Click Run ODM, or paste the path of a log written by docker."))
+    }
+    lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
+    if (!length(lines)) {
+      return(tags$div(class = "text-muted", "Log file is empty — ODM may still be initializing."))
+    }
+    running_stages  <- regmatches(lines, regexpr("Running [a-z_]+ stage", lines))
+    finished_stages <- regmatches(lines, regexpr("Finished [a-z_]+ stage", lines))
+    running_names   <- sub("Running ([a-z_]+) stage", "\\1", running_stages)
+    finished_names  <- sub("Finished ([a-z_]+) stage", "\\1", finished_stages)
+
+    started_but_not_finished <- setdiff(running_names, finished_names)
+    active_stage <- if (length(started_but_not_finished))
+      started_but_not_finished[length(started_but_not_finished)] else NA_character_
+    done_flag <- any(grepl("MMMMMMMMMM", lines))
+    err_lines <- grep("\\[ERROR\\]|Traceback|out of memory|Killed", lines, value = TRUE)
+
+    init_time <- parse_odm_init_time(lines)
+    now_time  <- as.numeric(Sys.time())
+    total_elapsed <- if (is.finite(init_time)) now_time - init_time else NA_real_
+
+    # Parse image count from "Loading N images" / "Found N usable images".
+    image_count <- NA_integer_
+    img_hit <- grep("Loading [0-9]+ images|Found [0-9]+ usable images", lines, value = TRUE)
+    if (length(img_hit)) {
+      m <- regmatches(img_hit[1L], regexpr("[0-9]+", img_hit[1L]))
+      if (length(m)) image_count <- as.integer(m)
+    }
+
+    # Update session state: reset on new run, record first-seen timings.
+    # On run discovery, mark stages already past Running as `pre_observed` —
+    # we missed their true start, so their measured duration is unreliable
+    # and gets excluded from the persistent history.
+    cur <- stage_timing()
+    run_id <- if (!is.na(init_time)) format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC")) else NA_character_
+    if (!identical(cur$run_id, run_id)) {
+      cur <- list(run_id       = run_id,
+                  image_count  = image_count,
+                  pre_observed = union(running_names, finished_names),
+                  stages       = list())
+    } else if (is.na(cur$image_count) && !is.na(image_count)) {
+      cur$image_count <- image_count
+    }
+    for (stg in running_names) {
+      if (is.null(cur$stages[[stg]])) cur$stages[[stg]] <- list()
+      if (is.null(cur$stages[[stg]]$running_at)) {
+        cur$stages[[stg]]$running_at <- now_time
+      }
+    }
+    for (stg in finished_names) {
+      if (is.null(cur$stages[[stg]])) cur$stages[[stg]] <- list()
+      if (is.null(cur$stages[[stg]]$finished_at)) {
+        cur$stages[[stg]]$finished_at <- now_time
+        # Persist to history only when we observed the WHOLE run live
+        # (stage wasn't already in flight when the card opened).
+        if (!is.null(cur$stages[[stg]]$running_at) &&
+            !isTRUE(cur$stages[[stg]]$history_written) &&
+            !(stg %in% (cur$pre_observed %||% character()))) {
+          dur <- cur$stages[[stg]]$finished_at - cur$stages[[stg]]$running_at
+          if (is.finite(dur) && dur > 2) {
+            DroneBioR:::record_odm_stage_completion(
+              run_started_at  = cur$run_id %||% "unknown",
+              image_count     = cur$image_count %||% NA_integer_,
+              stage           = stg,
+              duration_seconds = dur
+            )
+          }
+          cur$stages[[stg]]$history_written <- TRUE
+        }
+      }
+    }
+    stage_timing(cur)
+
+    # ETA: active-stage remaining + sum of pending estimates.
+    pending_stages <- setdiff(odm_stage_order,
+                              union(finished_names, na.omit(active_stage)))
+    active_elapsed <- if (!is.na(active_stage) &&
+                          !is.null(cur$stages[[active_stage]]$running_at)) {
+      max(0, now_time - cur$stages[[active_stage]]$running_at)
+    } else 0
+    eta_seconds <- if (done_flag) 0 else {
+      DroneBioR:::estimate_remaining_seconds(
+        active_stage           = if (is.na(active_stage)) NULL else active_stage,
+        pending_stages         = pending_stages,
+        active_elapsed_seconds = active_elapsed,
+        image_count            = cur$image_count
+      )
+    }
+
+    rows <- lapply(odm_stage_order, function(stg) {
+      icon <- if (stg %in% finished_names) "✅"
+              else if (identical(stg, active_stage)) "\U0001F501"
+              else "⬜"
+      label <- if (identical(stg, active_stage)) tags$strong(stg) else stg
+
+      # Time column: duration for done, running-for/est for active, est for pending.
+      time_text <- if (stg %in% finished_names &&
+                       !is.null(cur$stages[[stg]]$running_at) &&
+                       !is.null(cur$stages[[stg]]$finished_at)) {
+        dur <- cur$stages[[stg]]$finished_at - cur$stages[[stg]]$running_at
+        if (is.finite(dur) && dur > 0) format_duration(dur) else "—"
+      } else if (identical(stg, active_stage)) {
+        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count)
+        paste0(format_duration(active_elapsed), " / est ", format_duration(est))
+      } else if (stg %in% pending_stages) {
+        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count)
+        paste0("est ", format_duration(est))
+      } else "—"
+
+      tags$tr(
+        tags$td(icon, style = "font-size:1.1em; padding-right:8px;"),
+        tags$td(label),
+        tags$td(time_text, class = "text-muted small", style = "text-align:right;")
+      )
+    })
+
+    header_eta <- if (done_flag) {
+      tags$span(style = "color:#16a34a; margin-left:12px;", "✓ Pipeline complete")
+    } else if (!is.na(active_stage)) {
+      tagList(
+        tags$span(style = "margin-left:12px;",
+                  "· Active: ", tags$code(active_stage)),
+        tags$span(style = "margin-left:12px;",
+                  "· ETA: ", tags$strong(format_duration(eta_seconds)))
+      )
+    } else {
+      tags$span(style = "margin-left:12px;", "· No active stage yet")
+    }
+
+    header <- tags$div(
+      style = "margin-bottom:8px;",
+      tags$div(tags$strong("Total elapsed: "), format_duration(total_elapsed),
+               header_eta,
+               if (!is.na(image_count))
+                 tags$span(style = "margin-left:12px; color:#6b7280;",
+                          "· ", image_count, " images"))
+    )
+
+    last_info <- tail(grep("\\[INFO\\]|\\[ERROR\\]", lines, value = TRUE), 1L)
+    last_info_clean <- gsub("\033\\[[0-9;]*m", "", last_info)
+    footer <- tags$div(style = "margin-top:8px; font-size:0.85em; color:#6b7280;",
+                       tags$em("Last log line: "),
+                       tags$code(substr(last_info_clean, 1L, 160L)),
+                       tags$div(style = "margin-top:4px;",
+                                tags$em("ETA uses history at ~/.dronebior/odm_stage_history.csv (or hardcoded baseline)")))
+
+    err_block <- if (length(err_lines)) {
+      tags$div(style = "margin-top:8px; color:#dc2626; font-size:0.85em;",
+               tags$strong("Errors detected:"),
+               tags$ul(lapply(tail(err_lines, 5L),
+                              function(x) tags$li(tags$code(gsub("\033\\[[0-9;]*m", "", x))))))
+    } else NULL
+
+    tagList(
+      header,
+      tags$table(class = "table table-sm", style = "margin-bottom:4px;",
+                 tags$tbody(rows)),
+      footer,
+      err_block
+    )
+  })
+
+  # Auto-detected camera type based on the contents of the images folder.
+  # Drives the badge below the camera_type selector and the run-time guard.
+  detected_camera <- reactive({
+    DroneBioR:::detect_camera_from_folder(input$images_dir %||% "")
+  })
+
+  output$camera_detected_note <- renderUI({
+    d <- detected_camera()
+    sel <- input$camera_type %||% "multispectral"
+    if (is.na(d)) {
+      tags$div(class = "small text-muted",
+               style = "margin-top:-8px; margin-bottom:8px;",
+               "Auto-detect: no images found in 'Source images folder' yet.")
+    } else if (identical(d, sel)) {
+      tags$div(class = "small",
+               style = "margin-top:-8px; margin-bottom:8px; color:#16a34a;",
+               sprintf("Auto-detect: %s ✓ matches selection", d))
+    } else {
+      tags$div(class = "small",
+               style = "margin-top:-8px; margin-bottom:8px; color:#d97706;",
+               sprintf("Auto-detect: %s ⚠ differs from selection (%s)", d, sel))
+    }
+  })
+
   output$engine_note <- renderText({
     if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
       "Fast orthophoto prioritizes rapid orthomosaic generation and ODM can skip full textured 3D outputs. Disable fast orthophoto for commercial-style 3D deliverables."
@@ -3423,9 +3692,10 @@ server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$run_odm, {
+  # Factor out the actual launch so we can call it from the modal
+  # confirmation paths as well as the direct Run button.
+  launch_odm_run <- function(cam) {
     engine <- input$processing_engine %||% "odm_docker"
-    cam    <- input$camera_type        %||% "multispectral"
     common_args <- list(
       project()                            ,
       camera_type             = cam        ,
@@ -3463,14 +3733,87 @@ server <- function(input, output, session) {
         showNotification("WebODM task completed; outputs downloaded.",
                          type = "message", duration = 8)
       } else {
-        showNotification(
-          "ODM Docker processing started. This blocks this Shiny session until ODM exits.",
-          type = "message", duration = 8
+        # Non-blocking dispatch: stage images, build docker args, then
+        # system2(wait = FALSE) so the Shiny session stays responsive
+        # and the ODM run progress card can refresh live.
+        if (!nzchar(Sys.which("docker"))) {
+          stop("Docker not found in PATH. Install/start Docker Desktop.", call. = FALSE)
+        }
+        p <- project()
+        manifest <- switch(cam,
+          multispectral = list_micasense_images(p$images_dir),
+          rgb           = list_aerial_images(p$images_dir))
+        copy_images_for_odm(manifest, p$odm_images_dir)
+
+        args <- build_odm_args(
+          dataset_dir              = p$odm_dataset_dir,
+          project_name             = p$odm_project_name,
+          camera_type              = cam,
+          orthophoto_resolution_cm = input$resolution,
+          fast_orthophoto          = input$fast_orthophoto,
+          build_dsm                = input$build_dsm,
+          build_dtm                = input$build_dtm,
+          pc_las                   = input$pc_las,
+          pc_copc                  = input$pc_copc,
+          pc_csv                   = input$pc_csv,
+          tiles                    = input$tiles,
+          three_d_tiles            = input$three_d_tiles,
+          gltf                     = input$gltf
         )
-        do.call(run_odm_project, c(common_args, list(run = TRUE)))
-        showNotification("ODM processing finished.", type = "message", duration = 8)
+
+        log_path <- file.path(p$odm_dataset_dir, "odm_run.log")
+        dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+        writeLines(character(), log_path)
+        updateTextInput(session, "odm_log_path", value = log_path)
+
+        # wait = FALSE means system2 returns immediately; ODM keeps running.
+        system2("docker", args = args, stdout = log_path, stderr = log_path, wait = FALSE)
+
+        showNotification(
+          paste0("ODM started in background. Watch the 'ODM run progress' card. ",
+                 "Log: ", log_path),
+          type = "message", duration = 12
+        )
       }
     })
+  }
+
+  # Main Run button: if the user-selected camera type matches the
+  # auto-detected one (or detection is ambiguous), launch directly.
+  # Otherwise pop a modal so the user can confirm or switch.
+  observeEvent(input$run_odm, {
+    cam <- input$camera_type %||% "multispectral"
+    det <- detected_camera()
+    if (!is.na(det) && !identical(det, cam)) {
+      showModal(modalDialog(
+        title = "Camera type mismatch",
+        sprintf(paste0("You selected %s but the source images folder looks like %s. ",
+                       "Running with the wrong camera type can add ODM warnings or ",
+                       "(for multispectral with no reflectance panel) skip radiometric ",
+                       "calibration silently.\n\nWhat do you want to do?"),
+                sQuote(cam), sQuote(det)),
+        footer = tagList(
+          modalButton("Cancel"),
+          actionButton("run_odm_confirm_keep", sprintf("Continue with %s", cam),
+                       class = "btn-warning"),
+          actionButton("run_odm_confirm_switch", sprintf("Switch to %s and run", det),
+                       class = "btn-primary")
+        ),
+        easyClose = TRUE
+      ))
+    } else {
+      launch_odm_run(cam)
+    }
+  })
+  observeEvent(input$run_odm_confirm_keep, {
+    removeModal()
+    launch_odm_run(input$camera_type %||% "multispectral")
+  })
+  observeEvent(input$run_odm_confirm_switch, {
+    removeModal()
+    d <- detected_camera()
+    if (!is.na(d)) updateSelectInput(session, "camera_type", selected = d)
+    launch_odm_run(if (is.na(d)) (input$camera_type %||% "multispectral") else d)
   })
 
   output$mosaic_meta <- renderTable({
