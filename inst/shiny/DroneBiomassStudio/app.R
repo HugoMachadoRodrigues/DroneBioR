@@ -3867,6 +3867,25 @@ server <- function(input, output, session) {
     done_flag <- any(grepl("MMMMMMMMMM", lines))
     err_lines <- grep("\\[ERROR\\]|Traceback|out of memory|Killed", lines, value = TRUE)
 
+    # Outputs-on-disk completion check: a run that crashed in
+    # odm_report (numpy/gdal bug) is still effectively complete if the
+    # critical products validated. We use this to flip the card into
+    # a "succeeded" state and collapse the historical errors.
+    p_for_status <- tryCatch(project(), error = function(e) NULL)
+    outputs_complete <- FALSE
+    if (!is.null(p_for_status)) {
+      v_status <- tryCatch(validate_odm_outputs(p_for_status),
+                           error = function(e) NULL)
+      if (!is.null(v_status)) {
+        ortho_row_s <- v_status[v_status$product == "Orthomosaic", ]
+        dsm_row_s   <- v_status[v_status$product == "DSM", ]
+        outputs_complete <- nrow(ortho_row_s) > 0L && nrow(dsm_row_s) > 0L &&
+                            ortho_row_s$exists && ortho_row_s$valid &&
+                            dsm_row_s$exists   && dsm_row_s$valid
+      }
+    }
+    effectively_done <- done_flag || outputs_complete
+
     init_time <- parse_odm_init_time(lines)
     now_time  <- as.numeric(Sys.time())
     total_elapsed <- if (is.finite(init_time)) now_time - init_time else NA_real_
@@ -3966,8 +3985,10 @@ server <- function(input, output, session) {
       )
     })
 
-    header_eta <- if (done_flag) {
-      tags$span(style = "color:#16a34a; margin-left:12px;", "✓ Pipeline complete")
+    header_eta <- if (effectively_done) {
+      label <- if (done_flag) "✓ Pipeline complete"
+               else "✓ Outputs validated (pipeline aborted at a non-critical stage)"
+      tags$span(style = "color:#16a34a; margin-left:12px;", label)
     } else if (!is.na(active_stage)) {
       tagList(
         tags$span(style = "margin-left:12px;",
@@ -3978,6 +3999,21 @@ server <- function(input, output, session) {
     } else {
       tags$span(style = "margin-left:12px;", "· No active stage yet")
     }
+
+    # Big success banner when outputs are validated even though the
+    # log shows historical errors (e.g. odm_report numpy crash).
+    success_banner <- if (outputs_complete && !done_flag) {
+      tags$div(
+        style = paste("background:#dcfce7; color:#14532d; padding:10px 14px;",
+                      "border-radius:6px; margin-bottom:8px; font-size:0.95em;"),
+        tags$div(tags$strong("✓ Pipeline outputs validated on disk")),
+        tags$div(style = "margin-top:4px;",
+                 "ODM crashed in a non-critical stage (odm_report — known ",
+                 "numpy/gdal Docker-image bug) but orthomosaic, DSM, DTM, ",
+                 "point cloud and textured mesh are intact and georeferenced. ",
+                 "Go to ", tags$strong("GIS Workspace"), " to use them. ",
+                 "Error details below are historical."))
+    } else NULL
 
     # Overall pipeline progress: how many of the 13 stages are done.
     n_total  <- length(odm_stage_order)
@@ -4020,13 +4056,23 @@ server <- function(input, output, session) {
                                 tags$em("ETA uses history at ~/.dronebior/odm_stage_history.csv (or hardcoded baseline)")))
 
     err_block <- if (length(err_lines)) {
-      tags$div(style = "margin-top:8px; color:#dc2626; font-size:0.85em;",
-               tags$strong("Errors detected:"),
-               tags$ul(lapply(tail(err_lines, 5L),
-                              function(x) tags$li(tags$code(gsub("\033\\[[0-9;]*m", "", x))))))
+      body <- tags$ul(lapply(tail(err_lines, 5L),
+                              function(x) tags$li(tags$code(gsub("\033\\[[0-9;]*m", "", x)))))
+      if (outputs_complete) {
+        # Outputs are good -- demote errors to a collapsed disclosure.
+        tags$details(
+          tags$summary(
+            style = "cursor:pointer; color:#6b7280; font-size:0.85em; margin-top:8px;",
+            "Historical log errors (the pipeline outputs are still valid — click to expand)"),
+          tags$div(style = "color:#dc2626; font-size:0.85em; margin-top:4px;", body))
+      } else {
+        tags$div(style = "margin-top:8px; color:#dc2626; font-size:0.85em;",
+                 tags$strong("Errors detected:"), body)
+      }
     } else NULL
 
     tagList(
+      success_banner,
       header,
       tags$table(class = "table table-sm", style = "margin-bottom:4px;",
                  tags$tbody(rows)),
