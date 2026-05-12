@@ -24,26 +24,36 @@ read_geoscan_cameras <- function(path) {
   parts <- strsplit(data_lines, "\\s+")
   # Each row should have at least 12 columns (file lat lon H roll pitch
   # yaw time std_n std_e std_u std_hz). Trim trailing empty fields.
-  n_cols <- max(vapply(parts, length, integer(1)))
-  pad <- function(p, n) c(p, rep(NA_character_, n - length(p)))
+  # Pad rows to at least 12 columns so the schema is stable even when
+  # the source file truncates trailing fields (some GeoScan exports
+  # drop time / std-dev columns).
+  n_cols <- max(12L, max(vapply(parts, length, integer(1))))
+  pad <- function(p, n) c(p, rep(NA_character_, max(0, n - length(p))))
   m <- do.call(rbind, lapply(parts, pad, n = n_cols))
-  num <- function(j) suppressWarnings(as.numeric(m[, j]))
+  num <- function(j) {
+    if (j > ncol(m)) return(rep(NA_real_, nrow(m)))
+    suppressWarnings(as.numeric(m[, j]))
+  }
+  chr <- function(j) {
+    if (j > ncol(m)) return(rep(NA_character_, nrow(m)))
+    m[, j]
+  }
   out <- data.frame(
-    file   = m[, 1L],
+    file   = chr(1L),
     lat    = num(2L),
     lon    = num(3L),
     H      = num(4L),
     roll   = num(5L),
     pitch  = num(6L),
     yaw    = num(7L),
-    time   = m[, 8L],
+    time   = chr(8L),
     std_n  = num(9L),
     std_e  = num(10L),
     std_u  = num(11L),
     std_hz = num(12L),
     stringsAsFactors = FALSE
   )
-  out[!is.na(out$lat) & !is.na(out$lon), , drop = FALSE]
+  out[!is.na(out$lat) & !is.na(out$lon) & nzchar(out$file), , drop = FALSE]
 }
 
 #' Read GeoScan GNSS-to-camera offset file
@@ -73,6 +83,51 @@ read_geoscan_gnss_offset <- function(path) {
     }
   }
   vals
+}
+
+#' Detect GeoScan metadata sibling of a source-images folder
+#'
+#' GeoScan datasets ship as `<root>/Images/` (the JPGs) and
+#' `<root>/Metadata/` (the per-image camera positions, the GCPs and the
+#' GNSS lever-arm offset). When `run_odm_project()` is pointed at the
+#' images folder, this helper walks up to a few levels looking for a
+#' `Metadata/Cameras_WGS84.txt` sibling and returns the paths it found.
+#'
+#' @param images_dir Folder containing the drone JPGs / TIFFs.
+#' @param max_levels_up How many parent directories to inspect for a
+#'   `Metadata/` sibling. Default 3 covers the common
+#'   `dataset/Images/*.JPG` layout.
+#' @return `NULL` when nothing was found, otherwise a list with
+#'   `cameras_path`, `gnss_offset_path`, `gcps_path` and `metadata_dir`.
+#'   Paths to non-existent files (e.g. `GNSS_offset.txt` when only
+#'   cameras are provided) are still returned so the caller can decide
+#'   what to do.
+#' @examples
+#' \dontrun{
+#'   detect_geoscan_metadata("aerial_images_with_gcps/Images")
+#' }
+#' @export
+detect_geoscan_metadata <- function(images_dir, max_levels_up = 3L) {
+  if (!is.character(images_dir) || !length(images_dir) ||
+      !nzchar(images_dir) || !dir.exists(images_dir)) {
+    return(NULL)
+  }
+  current <- normalizePath(images_dir, mustWork = FALSE)
+  for (i in seq_len(max_levels_up)) {
+    candidate <- file.path(current, "Metadata", "Cameras_WGS84.txt")
+    if (file.exists(candidate)) {
+      return(list(
+        cameras_path     = candidate,
+        gnss_offset_path = file.path(current, "Metadata", "GNSS_offset.txt"),
+        gcps_path        = file.path(current, "Metadata", "GCPs_WGS84.txt"),
+        metadata_dir     = file.path(current, "Metadata")
+      ))
+    }
+    parent <- dirname(current)
+    if (identical(parent, current)) break
+    current <- parent
+  }
+  NULL
 }
 
 #' Convert GeoScan camera metadata to ODM `geo.txt` and write to disk

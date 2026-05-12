@@ -1459,6 +1459,7 @@ ui <- page_navbar(
           selected = "multispectral"
         ),
         uiOutput("camera_detected_note"),
+        uiOutput("geoscan_detected_note"),
         selectInput(
           "processing_preset",
           "Processing preset",
@@ -3847,6 +3848,29 @@ server <- function(input, output, session) {
     }
   })
 
+  # GeoScan sidecar detection — surfaces when run_odm_project() would
+  # auto-attach --geo. The badge tells the user the override is in
+  # effect before they hit Run.
+  geoscan_detected <- reactive({
+    DroneBioR::detect_geoscan_metadata(input$images_dir %||% "")
+  })
+
+  output$geoscan_detected_note <- renderUI({
+    meta <- geoscan_detected()
+    if (is.null(meta)) return(NULL)
+    n_cams <- tryCatch(
+      nrow(DroneBioR::read_geoscan_cameras(meta$cameras_path)),
+      error = function(e) NA_integer_
+    )
+    n_label <- if (is.na(n_cams)) "?" else as.character(n_cams)
+    tags$div(class = "small",
+             style = "margin-top:-4px; margin-bottom:8px; color:#2563eb;",
+             sprintf("GeoScan metadata detected: %s camera positions in %s",
+                     n_label, basename(meta$metadata_dir)),
+             tags$br(),
+             tags$em("Will auto-attach --geo and --matcher-neighbors 8 on Run."))
+  })
+
   # ------------------------------------------------------------------ #
   # Auto-load ODM outputs on pipeline completion + active-run recovery #
   # ------------------------------------------------------------------ #
@@ -4006,6 +4030,31 @@ server <- function(input, output, session) {
           rgb           = list_aerial_images(p$images_dir))
         copy_images_for_odm(manifest, p$odm_images_dir)
 
+        # Mirror run_odm_project()'s GeoScan auto-detection: if the user's
+        # source images folder has a Metadata/Cameras_WGS84.txt sibling,
+        # generate <project>/geo.txt and append --geo + --matcher-neighbors.
+        auto_extra <- character()
+        if (identical(cam, "rgb")) {
+          geo_meta <- DroneBioR::detect_geoscan_metadata(p$images_dir)
+          if (!is.null(geo_meta)) {
+            dir.create(p$odm_project_dir, recursive = TRUE, showWarnings = FALSE)
+            DroneBioR::convert_geoscan_to_odm_geo(
+              cameras_path = geo_meta$cameras_path,
+              geo_txt_path = file.path(p$odm_project_dir, "geo.txt"),
+              gnss_offset  = geo_meta$gnss_offset_path
+            )
+            auto_extra <- c(
+              "--geo",
+              paste0("/datasets/", p$odm_project_name, "/geo.txt"),
+              "--matcher-neighbors", "8"
+            )
+            showNotification(
+              paste0("GeoScan metadata detected. Auto-attached --geo + --matcher-neighbors 8."),
+              type = "message", duration = 8
+            )
+          }
+        }
+
         args <- build_odm_args(
           dataset_dir              = p$odm_dataset_dir,
           project_name             = p$odm_project_name,
@@ -4019,7 +4068,8 @@ server <- function(input, output, session) {
           pc_csv                   = input$pc_csv,
           tiles                    = input$tiles,
           three_d_tiles            = input$three_d_tiles,
-          gltf                     = input$gltf
+          gltf                     = input$gltf,
+          extra_args               = auto_extra
         )
 
         log_path <- file.path(p$odm_dataset_dir, "odm_run.log")

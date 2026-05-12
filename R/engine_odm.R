@@ -184,6 +184,13 @@ convert_undistorted_tiffs_for_texturing <- function(odm_project_dir) {
 #'   MicaSense filename pattern via [list_micasense_images()]) or `"rgb"`
 #'   (uses [list_aerial_images()] which accepts any JPG/PNG/TIF without
 #'   a band-id suffix).
+#' @param auto_geoscan When `TRUE` (default) and `camera_type = "rgb"`,
+#'   look for a `Metadata/Cameras_WGS84.txt` sibling of the source images
+#'   folder (via [detect_geoscan_metadata()]); if found, generate
+#'   `<project_dir>/geo.txt` and append `--geo` + `--matcher-neighbors 8`
+#'   to the ODM args. Sony RX1R / GeoScan datasets ship with empty EXIF
+#'   GPS but per-image WGS84 records in this sidecar — without it, ODM
+#'   reconstructs at scene origin.
 #' @param ... Additional arguments passed to `build_odm_args()`.
 #' @return A list with command, status and output orthomosaic path.
 #' @examples
@@ -199,6 +206,7 @@ run_odm_project <- function(project,
                             run = TRUE,
                             force = FALSE,
                             camera_type = c("multispectral", "rgb"),
+                            auto_geoscan = TRUE,
                             ...) {
   camera_type <- match.arg(camera_type)
   dir.create(project$odm_images_dir, recursive = TRUE, showWarnings = FALSE)
@@ -211,12 +219,40 @@ run_odm_project <- function(project,
     unlink(project$odm_orthomosaic)
   }
 
-  args <- build_odm_args(
-    dataset_dir = project$odm_dataset_dir,
+  # Auto-detect GeoScan camera metadata (RGB datasets only) and inject
+  # --geo + --matcher-neighbors 8. The user can still pass extra_args
+  # via ...; we merge so explicit user args win when they conflict.
+  passthrough <- list(...)
+  user_extra <- passthrough$extra_args %||% character()
+  passthrough$extra_args <- NULL
+  auto_extra <- character()
+  if (isTRUE(auto_geoscan) && identical(camera_type, "rgb")) {
+    geo_meta <- detect_geoscan_metadata(project$images_dir)
+    if (!is.null(geo_meta)) {
+      geo_path <- file.path(project$odm_project_dir, "geo.txt")
+      dir.create(project$odm_project_dir, recursive = TRUE, showWarnings = FALSE)
+      convert_geoscan_to_odm_geo(
+        cameras_path = geo_meta$cameras_path,
+        geo_txt_path = geo_path,
+        gnss_offset  = geo_meta$gnss_offset_path
+      )
+      auto_extra <- c(
+        "--geo", paste0("/datasets/", project$odm_project_name, "/geo.txt"),
+        "--matcher-neighbors", "8"
+      )
+      message("[DroneBioR] GeoScan camera metadata detected at ",
+              geo_meta$cameras_path,
+              "\n              -> wrote ", geo_path,
+              "\n              -> appending --geo and --matcher-neighbors 8 to ODM args")
+    }
+  }
+
+  args <- do.call(build_odm_args, c(list(
+    dataset_dir  = project$odm_dataset_dir,
     project_name = project$odm_project_name,
-    camera_type = camera_type,
-    ...
-  )
+    camera_type  = camera_type,
+    extra_args   = c(auto_extra, user_extra)
+  ), passthrough))
   command <- paste("docker", paste(shQuote(args), collapse = " "))
 
   if (!isTRUE(run)) {

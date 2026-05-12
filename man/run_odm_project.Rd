@@ -9,6 +9,7 @@ run_odm_project(
   run = TRUE,
   force = FALSE,
   camera_type = c("multispectral", "rgb"),
+  auto_geoscan = TRUE,
   ...
 )
 }
@@ -23,6 +24,14 @@ run_odm_project(
 MicaSense filename pattern via \code{\link[=list_micasense_images]{list_micasense_images()}}) or \code{"rgb"}
 (uses \code{\link[=list_aerial_images]{list_aerial_images()}} which accepts any JPG/PNG/TIF without
 a band-id suffix).}
+
+\item{auto_geoscan}{When \code{TRUE} (default) and \code{camera_type = "rgb"},
+look for a \code{Metadata/Cameras_WGS84.txt} sibling of the source images
+folder (via \code{\link[=detect_geoscan_metadata]{detect_geoscan_metadata()}}); if found, generate
+\verb{<project_dir>/geo.txt} and append \code{--geo} + \verb{--matcher-neighbors 8}
+to the ODM args. Sony RX1R / GeoScan datasets ship with empty EXIF
+GPS but per-image WGS84 records in this sidecar — without it, ODM
+reconstructs at scene origin.}
 
 \item{...}{Additional arguments passed to \code{build_odm_args()}.}
 }
