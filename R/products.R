@@ -195,8 +195,17 @@ sync_outputs_to_local_cache <- function(project,
 #' @export
 quick_outputs_check <- function(project, min_size_mb = 1) {
   paths <- odm_product_paths(project)
+  cache_dir <- local_cache_dir(project)
   size_ok <- function(p) {
-    if (!file.exists(p)) return(FALSE)
+    # Prefer the cache copy when the project path is missing -- this
+    # catches CHM (which we always write to the cache when DSM + DTM
+    # are cached) and migrated outputs that no longer round-trip
+    # through the OneDrive folder.
+    if (!file.exists(p)) {
+      cached <- file.path(cache_dir, basename(p))
+      if (!file.exists(cached)) return(FALSE)
+      p <- cached
+    }
     info <- tryCatch(file.info(p), error = function(e) NULL)
     if (is.null(info) || !is.finite(info$size)) return(FALSE)
     info$size / 1e6 >= min_size_mb
@@ -230,6 +239,16 @@ quick_outputs_check <- function(project, min_size_mb = 1) {
 #' @export
 validate_odm_outputs <- function(project) {
   paths <- odm_product_paths(project)
+  cache_dir <- local_cache_dir(project)
+  # Prefer cache paths over project paths for the validation pass --
+  # we want to validate the file the app will actually read, which
+  # is the cache copy once migration / Build CHM has run.
+  for (k in names(paths)) {
+    cached <- file.path(cache_dir, basename(paths[[k]]))
+    if (!file.exists(paths[[k]]) && file.exists(cached)) {
+      paths[[k]] <- cached
+    }
+  }
 
   empty_row <- function(name, key, type, msg) {
     p <- unname(paths[[key]])

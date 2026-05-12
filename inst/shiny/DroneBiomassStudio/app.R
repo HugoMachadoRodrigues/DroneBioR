@@ -3439,38 +3439,50 @@ server <- function(input, output, session) {
 
           if (identical(layer_name, "RGB Orthomosaic")) {
             # Natural-colour composite. ODM writes the orthomosaic as
-            # (Red, Green, Blue, Alpha). leafem::addRasterRGB delegates
-            # to leaflet::addRasterImage which has a 4 MB raster limit;
-            # any subsampled RGB stack above ~1100 px on a side trips
-            # it. We write a temp COG and stream via addGeotiff(rgbBands
-            # = ...) which has no size cap.
+            # (Red, Green, Blue, Alpha). leaflet's addRasterImage caps
+            # at 4 MB and leafem 0.2.5 doesn't expose an rgbBands arg
+            # to addGeotiff, so we sidestep both: render the 3-band
+            # stack to a PNG (transparent where alpha=0) and overlay
+            # the PNG. No leaflet size cap, true colour, alpha-masked
+            # so the white scene-border pixels don't bleed through.
             if (terra::nlyr(r) >= 3L) {
+              # Mask the RGB stack by the alpha band when present.
               rgb_stack <- r[[1:3]]
-              rgb_path  <- tempfile(fileext = ".tif")
-              ok_rgb <- tryCatch({
-                terra::writeRaster(
-                  rgb_stack, rgb_path,
-                  overwrite = TRUE,
-                  filetype  = "COG",
-                  gdal      = c("COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"))
-                TRUE
-              }, error = function(e) {
-                # COG driver unsupported on older GDAL -> plain GeoTIFF.
-                terra::writeRaster(
-                  rgb_stack, rgb_path,
-                  overwrite = TRUE, filetype = "GTiff",
-                  gdal = c("COMPRESS=DEFLATE"))
-                TRUE
-              })
-              if (isTRUE(ok_rgb)) {
-                proxy <- proxy |>
-                  leafem::addGeotiff(
-                    file     = rgb_path,
-                    rgbBands = c(1, 2, 3),
-                    group    = "RGB Orthomosaic",
-                    opacity  = opacity,
-                    project  = TRUE)
+              if (terra::nlyr(r) >= 4L) {
+                rgb_stack <- terra::mask(rgb_stack, r[[4L]],
+                                         maskvalues = 0, updatevalue = NA)
               }
+              # Reproject to web mercator so the PNG aligns 1:1 with
+              # the leaflet basemap (addImageOverlay assumes the image
+              # is in EPSG:3857 when project = TRUE, or otherwise
+              # WGS84 lon/lat bounds).
+              rgb_wgs <- tryCatch(
+                terra::project(rgb_stack, "EPSG:4326", method = "near"),
+                error = function(e) rgb_stack)
+              # Stable resource path so multiple loads accumulate
+              # under one dir Shiny is aware of.
+              rgb_dir <- file.path(tempdir(), "dronebior_rgb_overlays")
+              dir.create(rgb_dir, recursive = TRUE, showWarnings = FALSE)
+              shiny::addResourcePath("dronebior_rgb_overlays", rgb_dir)
+              png_name <- sprintf("rgb_%d.png", as.integer(Sys.time()))
+              png_path <- file.path(rgb_dir, png_name)
+              # Cap PNG dimensions to keep the file small. terra::plotRGB
+              # will scale internally via maxcell.
+              w <- min(terra::ncol(rgb_wgs), 2000L)
+              h <- min(terra::nrow(rgb_wgs), 2000L)
+              grDevices::png(png_path, width = w, height = h, bg = "transparent")
+              graphics::par(mar = c(0, 0, 0, 0))
+              terra::plotRGB(rgb_wgs, r = 1, g = 2, b = 3,
+                             stretch = "lin", bgalpha = 0, axes = FALSE,
+                             mar = 0)
+              grDevices::dev.off()
+              e <- terra::ext(rgb_wgs)
+              proxy <- proxy |>
+                leaflet::addImageOverlay(
+                  imageUrl = paste0("dronebior_rgb_overlays/", png_name),
+                  bounds   = list(c(e$ymin, e$xmin), c(e$ymax, e$xmax)),
+                  opacity  = opacity,
+                  group    = "RGB Orthomosaic")
             }
           } else {
             # DSM / DTM in metres -> viridis; CHM uses BuGn so 0 is
