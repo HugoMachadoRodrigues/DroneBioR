@@ -1281,7 +1281,7 @@ ui <- page_navbar(
         banner.dataset.kind = (msg && msg.action === 'start') ? 'task' : '';
       });
 
-      // Heartbeat watchdog: the server sends a heartbeat every 500 ms
+      // Heartbeat watchdog: the server sends a heartbeat every second
       // via dronebior_heartbeat. When R is blocked on synchronous
       // work, the heartbeats stop arriving. The client-side timer
       // below notices the gap and surfaces a generic R-is-processing
@@ -1289,14 +1289,26 @@ ui <- page_navbar(
       // net for slow operations that we have not (or cannot) wrap in
       // with_gis_task individually - the user always sees that R is
       // busy, even if we cannot say exactly which reactive is running.
-      window.__db_last_heartbeat = Date.now();
+      //
+      // We deliberately do NOT activate the watchdog until the first
+      // heartbeat has actually been received. Otherwise the page-load
+      // / WebSocket-handshake interval (which is usually > 2 s on a
+      // complex Shiny app like this) would falsely trip the watchdog
+      // before R has even had a chance to register the observer.
+      window.__db_last_heartbeat = 0;
+      window.__db_heartbeat_seen = false;
       Shiny.addCustomMessageHandler('dronebior_heartbeat', function(_msg) {
         window.__db_last_heartbeat = Date.now();
+        window.__db_heartbeat_seen = true;
       });
       setInterval(function() {
-        var since = Date.now() - (window.__db_last_heartbeat || 0);
+        if (!window.__db_heartbeat_seen) return;
+        var since = Date.now() - window.__db_last_heartbeat;
         var banner = document.getElementById('gis-task-banner');
-        if (since > 1500) {
+        // 2.5 s threshold gives ~1.5 s of slack on the 1 s heartbeat
+        // cadence, so brief stalls (~1 s render bursts) do not flash
+        // the banner on/off. Anything genuinely stuck shows up.
+        if (since > 2500) {
           if (!banner) {
             banner = document.createElement('div');
             banner.id = 'gis-task-banner';
@@ -1304,8 +1316,8 @@ ui <- page_navbar(
             document.body.insertBefore(banner, document.body.firstChild);
           }
           // Only take over the banner when there is no named task
-          // already shown. Named tasks are the more informative signal
-          // and we let them stay visible until their own stop message.
+          // already shown. Named tasks (with_gis_task) are the more
+          // informative signal and stay visible until their stop.
           if (banner.dataset.kind !== 'task') {
             var secs = Math.round(since / 1000);
             banner.innerHTML =
@@ -2644,21 +2656,23 @@ server <- function(input, output, session) {
   project_dir_debounced <- debounce(reactive(input$project_dir), 700)
   images_dir_debounced  <- debounce(reactive(input$images_dir),  700)
 
-  # Heartbeat for the client-side watchdog. Every 500 ms while the R
+  # Heartbeat for the client-side watchdog. Every 1 s while the R
   # session is idle, we send a tiny custom message. The browser tracks
-  # the time since the last heartbeat - when that gap exceeds 1.5 s
+  # the time since the last heartbeat - when that gap exceeds 2.5 s
   # the watchdog assumes R is blocked on synchronous work and pops up
   # the "R is processing in the background..." banner with a live
   # elapsed-time counter. This is the safety net for slow operations
   # we did not wrap in with_gis_task individually: the user always
   # sees that something is running, even if we cannot name it.
+  #
+  # We do NOT call httpuv::service here on purpose. The observer body
+  # is just a single sendCustomMessage; Shiny flushes the message
+  # automatically when the observer finishes. Calling service(0) on
+  # every tick would do unnecessary work and risk re-entrancy.
   observe({
-    invalidateLater(500, session)
+    invalidateLater(1000, session)
     session$sendCustomMessage("dronebior_heartbeat",
                               list(t = as.numeric(Sys.time())))
-    if (requireNamespace("httpuv", quietly = TRUE)) {
-      tryCatch(httpuv::service(0), error = function(e) NULL)
-    }
   })
 
   # Discover existing ODM project layouts on disk so the user can
