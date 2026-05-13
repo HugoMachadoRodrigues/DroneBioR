@@ -3598,6 +3598,10 @@ server <- function(input, output, session) {
     finish_csf <- function(res = NULL, err = NULL) {
       csf_running(FALSE)
       shiny::removeNotification("csf_progress")
+      # Pull down the top-of-viewport "Now: CSF ground classification"
+      # banner. The watchdog heartbeat will keep the UI responsive
+      # from this point on.
+      gis_task_stop(session)
       if (!is.null(err)) {
         showNotification(
           paste("CSF refinement failed:", conditionMessage(err)),
@@ -3636,6 +3640,20 @@ server <- function(input, output, session) {
 
     if (isTRUE(.dronebior_async_available)) {
       csf_running(TRUE)
+      # Two-track visibility for the user:
+      #   * a corner notification ("Refining DTM via CSF...") that
+      #     stays up until finish_csf removes it, and
+      #   * the floating top-of-viewport banner ("Now: CSF ground
+      #     classification...") whose client-side timer ticks the
+      #     elapsed seconds in real time even though the worker is
+      #     in a separate R process (so the watchdog heartbeat is
+      #     happily ticking in the main session and would otherwise
+      #     hide its own generic banner). Without this banner the
+      #     user perceives nothing happening - main R is idle, the
+      #     worker is doing the heavy lifting in a child process.
+      gis_task_start(session,
+                     name   = "CSF ground classification (background worker)",
+                     detail = basename(p_snapshot$odm_project_dir))
       showNotification(
         "Refining DTM via CSF in a background worker. The UI stays responsive - this notification will go away when it finishes.",
         type     = "message",
