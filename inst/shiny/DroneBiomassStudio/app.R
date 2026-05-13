@@ -2705,24 +2705,38 @@ server <- function(input, output, session) {
                 selected = labels[1L])
   })
 
+  # Pick the right ODM dataset/project layout for the current root.
+  # Precedence:
+  #   1. the user's explicit selection in the ODM project picker;
+  #   2. the first auto-detected ODM project on disk (covers users
+  #      who never touched the picker - e.g. a Sony aerial run that
+  #      writes to outputs/odm_aerial_dataset/aerial_geoscan/);
+  #   3. the canonical MicaSense defaults via dronebio_project()
+  #      (only when nothing has been detected yet).
+  # The previous version of this reactive went straight from 1 to 3,
+  # so any project that did not match the user's picker (which itself
+  # might not have rendered yet on first paint) silently used the
+  # MicaSense default - the banner / DTM / CHM all pointed at the
+  # wrong odm_<subdir>/<project>/ tree.
   project <- reactive({
     pick <- input$odm_project_pick
     df <- available_odm_projects()
-    # If the user picked one, use that subdir + project name. Otherwise
-    # fall back to the canonical MicaSense defaults via dronebio_project.
-    if (!is.null(pick) && nzchar(pick) && nrow(df)) {
-      row <- df[paste0(df$dataset_subdir, "/", df$project_name) == pick, ][1L, , drop = FALSE]
-      if (nrow(row) == 1L) {
-        p <- dronebio_project(
-          project_dir        = input$project_dir,
-          odm_dataset_subdir = row$dataset_subdir,
-          odm_project_name   = row$project_name
-        )
-      } else {
-        p <- dronebio_project(project_dir = input$project_dir)
-      }
+    chosen_row <- NULL
+    if (!is.null(pick) && nzchar(pick) && !is.null(df) && nrow(df)) {
+      match_idx <- which(paste0(df$dataset_subdir, "/", df$project_name) == pick)
+      if (length(match_idx)) chosen_row <- df[match_idx[1L], , drop = FALSE]
+    }
+    if (is.null(chosen_row) && !is.null(df) && nrow(df) >= 1L) {
+      chosen_row <- df[1L, , drop = FALSE]
+    }
+    p <- if (!is.null(chosen_row)) {
+      dronebio_project(
+        project_dir        = input$project_dir,
+        odm_dataset_subdir = chosen_row$dataset_subdir,
+        odm_project_name   = chosen_row$project_name
+      )
     } else {
-      p <- dronebio_project(project_dir = input$project_dir)
+      dronebio_project(project_dir = input$project_dir)
     }
     p$images_dir <- input$images_dir
     p$output_dir <- input$output_dir
@@ -4968,23 +4982,26 @@ server <- function(input, output, session) {
     if (!nzchar(proj_dir)) {
       return(data.frame())
     }
-    # Honour the ODM project picker so the flight overlay points at
-    # the same dataset (e.g. odm_aerial_dataset/aerial_geoscan vs
-    # odm_micasense_dataset/micasense) that the rest of the GIS
-    # Workspace is loading from. Falls back to the canonical
-    # dronebio_project() defaults when no picker selection exists.
+    # Same precedence as the main project() reactive: user pick
+    # first, then first auto-detected ODM project on disk, then
+    # MicaSense defaults. Picking the first auto-detected layout
+    # matters for Sony / GeoScan aerial runs that write to
+    # outputs/odm_aerial_dataset/<project>/.
     df <- isolate(available_odm_projects())
-    p <- if (!is.null(pick) && nzchar(pick) && !is.null(df) && nrow(df)) {
-      row <- df[paste0(df$dataset_subdir, "/", df$project_name) == pick, ][1L, , drop = FALSE]
-      if (nrow(row) == 1L) {
-        dronebio_project(
-          project_dir        = proj_dir,
-          odm_dataset_subdir = row$dataset_subdir,
-          odm_project_name   = row$project_name
-        )
-      } else {
-        dronebio_project(project_dir = proj_dir)
-      }
+    chosen_row <- NULL
+    if (!is.null(pick) && nzchar(pick) && !is.null(df) && nrow(df)) {
+      match_idx <- which(paste0(df$dataset_subdir, "/", df$project_name) == pick)
+      if (length(match_idx)) chosen_row <- df[match_idx[1L], , drop = FALSE]
+    }
+    if (is.null(chosen_row) && !is.null(df) && nrow(df) >= 1L) {
+      chosen_row <- df[1L, , drop = FALSE]
+    }
+    p <- if (!is.null(chosen_row)) {
+      dronebio_project(
+        project_dir        = proj_dir,
+        odm_dataset_subdir = chosen_row$dataset_subdir,
+        odm_project_name   = chosen_row$project_name
+      )
     } else {
       dronebio_project(project_dir = proj_dir)
     }
