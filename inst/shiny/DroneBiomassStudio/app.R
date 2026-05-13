@@ -2845,6 +2845,20 @@ server <- function(input, output, session) {
         actionButton("build_chm", "Build CHM (DSM - DTM)",
                      class = "btn-outline-primary btn-sm"))
     }
+    # Always offer the CSF refinement when we have a point cloud +
+    # DSM. ODM's default ground classification is conservative on
+    # dense canopy; CSF often dramatically improves the CHM.
+    if (isTRUE(qc[["point_cloud"]]) && isTRUE(qc[["dsm"]])) {
+      rows[[length(rows) + 1L]] <- tags$div(
+        style = "margin-top:6px;",
+        actionButton("refine_dtm_csf",
+                     "Refine DTM + CHM via CSF (lidR)",
+                     class = "btn-outline-success btn-sm"),
+        tags$div(style = "color:#6b7280; font-size:0.8em; margin-top:4px;",
+                 "Re-classifies the point cloud with Cloth Simulation Filter ",
+                 "(handles dense vegetation better than ODM's SMRF default), ",
+                 "writes a new DTM and rebuilds the CHM. Takes a few minutes."))
+    }
     tags$div(style = "margin-bottom:8px;", rows)
   })
 
@@ -2867,6 +2881,46 @@ server <- function(input, output, session) {
       if (!is.null(out)) {
         showNotification(paste0("CHM written to ", out),
                          type = "message", duration = 8)
+      }
+    })
+  })
+
+  # Observer for the 'Refine DTM + CHM via CSF (lidR)' button. Reads
+  # the cached LAZ, runs Cloth Simulation Filter ground classification,
+  # writes a new DTM into the cache (overwriting the ODM one in place),
+  # then rebuilds the CHM = DSM - DTM. Honest progress so the user
+  # isn't staring at a frozen UI.
+  observeEvent(input$refine_dtm_csf, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    if (!requireNamespace("lidR", quietly = TRUE)) {
+      showNotification(paste("lidR is not installed. Install it from R:",
+                              "install.packages('lidR')"),
+                       type = "error", duration = 12)
+      return()
+    }
+    withProgress(message = "Refining DTM via CSF", value = 0.05, {
+      incProgress(0.10, detail = "Reading point cloud")
+      res <- tryCatch(
+        improve_dtm_csf(p, resolution = 0.5,
+                        class_threshold = 0.5,
+                        cloth_resolution = 0.5,
+                        rigidness = 1L,
+                        rebuild_chm = TRUE),
+        error = function(e) {
+          showNotification(
+            paste("CSF refinement failed:", conditionMessage(e)),
+            type = "error", duration = 12)
+          NULL
+        }
+      )
+      incProgress(0.9, detail = "Done")
+      if (!is.null(res)) {
+        showNotification(
+          paste0("CSF complete. New DTM: ", basename(res$dtm),
+                 " | New CHM: ", basename(res$chm),
+                 ". Reload the GIS Workspace overlays to see them."),
+          type = "message", duration = 12)
       }
     })
   })

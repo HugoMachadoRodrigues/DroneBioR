@@ -131,3 +131,109 @@ classify_ground_csf <- function(las_path,
   )
   lidR::classify_ground(las, algorithm = csf)
 }
+
+#' Re-classify ground via CSF and rebuild the DTM (and optionally the CHM)
+#'
+#' ODM's default SMRF ground classification with `--smrf-threshold 0.5`
+#' is conservative on dense canopy and often labels the entire scene
+#' as ground, producing a DTM nearly identical to the DSM and a CHM
+#' around zero. Cloth Simulation Filter (CSF) from lidR handles dense
+#' vegetation more reliably. This helper:
+#'
+#' 1. Reads the LAZ / LAS point cloud (preferring the local cache when
+#'    migration has run).
+#' 2. Runs CSF via [classify_ground_csf()].
+#' 3. Rasterises the ground points to a new DTM at the requested
+#'    resolution.
+#' 4. Writes the DTM into the project's cache directory (or, when no
+#'    cache is set up, alongside the original DTM).
+#' 5. Optionally regenerates the CHM via [build_chm_raster()].
+#'
+#' @param project A `dronebio_project` object.
+#' @param resolution DTM grid spacing in metres. Default 0.5 m, plenty
+#'   of detail for vegetation work while keeping the rasterisation fast.
+#' @param class_threshold,cloth_resolution,rigidness Passed straight
+#'   through to [classify_ground_csf()]. Defaults are sensible for
+#'   moderate-to-dense canopy; lower `class_threshold` (0.1-0.3) and
+#'   smaller `cloth_resolution` (0.3) for sparser vegetation.
+#' @param rebuild_chm Logical. Run [build_chm_raster()] after writing
+#'   the new DTM so the canopy height model picks up the improvement.
+#' @param dtm_filename Output filename. Default `"dtm.tif"` replaces
+#'   the existing cached DTM in place.
+#' @return Absolute path to the new DTM (invisibly returns
+#'   `list(dtm = ..., chm = ...)` when `rebuild_chm = TRUE`).
+#' @examples
+#' \dontrun{
+#'   project <- dronebio_project("~/aerial_geoscan_project")
+#'   improve_dtm_csf(project, resolution = 0.5, rebuild_chm = TRUE)
+#' }
+#' @export
+improve_dtm_csf <- function(project,
+                            resolution       = 0.5,
+                            class_threshold  = 0.5,
+                            cloth_resolution = 0.5,
+                            rigidness        = 1L,
+                            rebuild_chm      = TRUE,
+                            dtm_filename     = "dtm.tif") {
+  if (!requireNamespace("lidR", quietly = TRUE)) {
+    stop("The 'lidR' package is required. install.packages('lidR').",
+         call. = FALSE)
+  }
+
+  paths <- odm_product_paths(project)
+  cache <- local_cache_dir(project)
+  cache_exists <- dir.exists(cache)
+  candidates <- character()
+  for (k in c("point_cloud_laz", "point_cloud_las", "point_cloud_copc")) {
+    if (cache_exists) {
+      candidates <- c(candidates, file.path(cache, basename(paths[[k]])))
+    }
+    candidates <- c(candidates, unname(paths[[k]]))
+  }
+  laz_path <- NULL
+  for (p in candidates) {
+    if (file.exists(p)) { laz_path <- p; break }
+  }
+  if (is.null(laz_path)) {
+    stop("No point cloud (LAZ / LAS / COPC) was found in the project.",
+         call. = FALSE)
+  }
+
+  message("[DroneBioR] Reading point cloud: ", laz_path)
+  las <- classify_ground_csf(
+    laz_path,
+    class_threshold  = class_threshold,
+    cloth_resolution = cloth_resolution,
+    rigidness        = rigidness
+  )
+  if (is.null(las)) {
+    stop("CSF classification produced no points; check the LAS file.",
+         call. = FALSE)
+  }
+
+  message("[DroneBioR] Rasterising ground points to DTM @ ", resolution, " m")
+  # knnidw is much faster than tin() on dense clouds and visually
+  # equivalent for sub-metre DTMs. Override by switching algorithm
+  # in a future refactor if needed.
+  dtm <- lidR::rasterize_terrain(las, res = resolution,
+                                 algorithm = lidR::knnidw(k = 10L, p = 2))
+
+  out_path <- if (cache_exists) {
+    file.path(cache, dtm_filename)
+  } else {
+    file.path(dirname(unname(paths[["dtm"]])), dtm_filename)
+  }
+  dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+  terra::writeRaster(
+    dtm, out_path,
+    overwrite = TRUE, datatype = "FLT4S",
+    gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER")
+  )
+  message("[DroneBioR] DTM written: ", out_path)
+
+  if (isTRUE(rebuild_chm)) {
+    chm_path <- build_chm_raster(project, force = TRUE, cache_aware = TRUE)
+    return(invisible(list(dtm = out_path, chm = chm_path)))
+  }
+  invisible(out_path)
+}
