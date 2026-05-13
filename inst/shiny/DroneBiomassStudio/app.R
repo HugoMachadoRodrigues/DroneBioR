@@ -2834,8 +2834,11 @@ server <- function(input, output, session) {
   # counter that downstream UI reads to know when on-disk products
   # have changed under it (CSF rewrites DTM and CHM, but no reactive
   # input changes, so we bump the token to force a re-render of the
-  # project status card).
+  # project status card). `csf_cancelled` flips to TRUE when the user
+  # clicks Cancel - finish_csf reads it to suppress the "failed" toast
+  # that would otherwise show when the killed worker's promise rejects.
   csf_running            <- reactiveVal(FALSE)
+  csf_cancelled          <- reactiveVal(FALSE)
   outputs_refresh_token  <- reactiveVal(0L)
   panel_coefficients <- reactiveVal(data.frame(
     band = c("Blue", "Green", "Red", "RedEdge", "NIR"),
@@ -3518,11 +3521,23 @@ server <- function(input, output, session) {
                        label   = btn_label,
                        class   = "btn-outline-success btn-sm"),
                   btn_extra)),
+        # While the worker is running, expose a Cancel button so the
+        # user can abort if it looks stuck. Cancel kills the worker
+        # by resetting future::plan(); the in-flight future rejects
+        # but finish_csf swallows the toast because csf_cancelled is
+        # TRUE at that point.
+        if (csf_busy) tags$div(
+          style = "margin-top:4px;",
+          actionButton("cancel_csf", "Cancel CSF refinement",
+                       class = "btn-outline-danger btn-sm")),
         tags$div(style = "color:#6b7280; font-size:0.8em; margin-top:4px;",
                  if (csf_busy)
-                   paste0("Running in a background worker. The UI stays ",
-                          "responsive while CSF re-classifies the point ",
-                          "cloud and rebuilds the CHM.")
+                   paste0("Running in a separate R process (future::multisession ",
+                          "worker). The main R console you see in RStudio stays ",
+                          "idle because the heavy lidR + terra work happens in a ",
+                          "child process - check Activity Monitor for an R ",
+                          "process with high CPU to confirm. Click Cancel if it ",
+                          "looks stuck.")
                  else
                    paste0("Re-classifies the point cloud with Cloth Simulation Filter ",
                           "(handles dense vegetation better than ODM's SMRF default), ",
@@ -3596,12 +3611,15 @@ server <- function(input, output, session) {
     }
 
     finish_csf <- function(res = NULL, err = NULL) {
+      cancelled <- isTRUE(csf_cancelled())
       csf_running(FALSE)
+      csf_cancelled(FALSE)  # reset for the next attempt
       shiny::removeNotification("csf_progress")
-      # Pull down the top-of-viewport "Now: CSF ground classification"
-      # banner. The watchdog heartbeat will keep the UI responsive
-      # from this point on.
       gis_task_stop(session)
+      # When the user clicked Cancel, the worker's eventual rejection
+      # is the EXPECTED side-effect of plan() reset - swallow the
+      # "CSF refinement failed: ..." toast in that case.
+      if (cancelled) return(invisible(NULL))
       if (!is.null(err)) {
         showNotification(
           paste("CSF refinement failed:", conditionMessage(err)),
@@ -3720,6 +3738,39 @@ server <- function(input, output, session) {
         )
         incProgress(0.9, detail = "Done")
         if (!is.null(res)) finish_csf(res = res)
+      })
+    }
+  })
+
+  # Cancel CSF refinement: tears down all multisession workers via
+  # future::plan() reset and immediately rebuilds the pool, so the
+  # in-flight future is killed and the next CSF click gets a clean
+  # worker. The killed worker's promise eventually rejects, but
+  # finish_csf checks csf_cancelled() and swallows the toast.
+  observeEvent(input$cancel_csf, {
+    if (!isTRUE(csf_running())) return()
+    csf_cancelled(TRUE)
+    csf_running(FALSE)
+    shiny::removeNotification("csf_progress")
+    gis_task_stop(session)
+    showNotification(
+      paste0("CSF cancellation requested. The background worker is being ",
+             "killed; if it had already written partial outputs, they may ",
+             "still be on disk. Click Refine again to start a fresh run."),
+      type = "warning", duration = 10, id = "csf_cancel"
+    )
+    if (isTRUE(.dronebior_async_available)) {
+      tryCatch({
+        # Force-rebuild the worker pool. This terminates any future
+        # in flight in the previous workers.
+        future::plan(future::sequential)
+        future::plan(future::multisession,
+                     workers = max(1L, future::availableCores() - 1L))
+      }, error = function(e) {
+        showNotification(
+          paste("Could not reset background worker pool:", conditionMessage(e)),
+          type = "warning", duration = 8
+        )
       })
     }
   })
