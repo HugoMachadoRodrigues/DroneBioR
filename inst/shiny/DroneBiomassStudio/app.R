@@ -60,6 +60,98 @@ studio_assets_rois_path <- function(project_dir) {
 # rewriting GeoTIFFs on every load.
 .dronebior_tile_cache <- new.env(parent = emptyenv())
 
+# Cache of raster header reads (band count, extent, CRS) keyed by
+# (path, mtime, size). Without this, every keystroke in the project_dir
+# / orthomosaic textInput re-opens the same multi-GB orthomosaic from
+# disk (or worse, from OneDrive Files-On-Demand), printing terra's
+# ASCII progress bar to the console and freezing the UI for seconds.
+# With the cache, the FIRST read of a given file is slow and visible
+# (we wrap it in withProgress); every subsequent read is instant.
+.dronebior_header_cache <- new.env(parent = emptyenv())
+
+raster_header_key <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  info <- file.info(path)
+  paste0(normalizePath(path, mustWork = FALSE), "|", info$mtime, "|", info$size)
+}
+
+# Read selected raster header fields (nlyr, ext, crs) once per
+# file-version. The first read shows a top-of-page "Now loading" banner
+# with a client-side elapsed-time ticker; subsequent reads of the same
+# (path, mtime, size) hit the cache and return instantly. Returns NULL
+# when the file does not exist or terra fails to open it.
+raster_header <- function(path, progress_msg = "Reading raster header") {
+  if (!is.character(path) || !length(path) || !nzchar(path) || !file.exists(path)) {
+    return(NULL)
+  }
+  key <- raster_header_key(path)
+  if (!is.null(key)) {
+    cached <- .dronebior_header_cache[[key]]
+    if (!is.null(cached)) return(cached)
+  }
+
+  do_read <- function() {
+    r <- tryCatch(terra::rast(path), error = function(e) NULL)
+    if (is.null(r)) return(NULL)
+    # Compute the WGS84 bounds here too so add_project_footprint and
+    # fit_leaflet_to_orthomosaic do not have to re-open the file - all
+    # downstream callers can use this single cached header.
+    bounds_4326 <- tryCatch(raster_bounds_4326(r[[1]]), error = function(e) NULL)
+    list(
+      nlyr        = as.integer(terra::nlyr(r)),
+      ext         = as.vector(terra::ext(r)),
+      crs         = tryCatch(terra::crs(r, describe = TRUE), error = function(e) NULL),
+      ncol        = as.integer(terra::ncol(r)),
+      nrow        = as.integer(terra::nrow(r)),
+      bounds_4326 = bounds_4326
+    )
+  }
+  session <- if (requireNamespace("shiny", quietly = TRUE))
+    shiny::getDefaultReactiveDomain() else NULL
+  header <- with_gis_task(session,
+                          name   = progress_msg,
+                          detail = basename(path),
+                          do_read())
+  if (!is.null(header) && !is.null(key)) {
+    .dronebior_header_cache[[key]] <- header
+  }
+  header
+}
+
+# "Now loading" banner at the top of the GIS Workspace. R-side helpers
+# push/pop task names via a Shiny custom message; the JS handler (in
+# tags$head) writes the message into a div with a setInterval-driven
+# elapsed-time counter so the timer keeps ticking even while the R
+# session is blocked on a synchronous terra::rast() call. Without the
+# client-side ticker the elapsed display would freeze along with the
+# rest of the UI.
+gis_task_start <- function(session, name) {
+  if (is.null(session)) return(invisible(NULL))
+  session$sendCustomMessage("dronebior_gis_task",
+                            list(action = "start", name = name))
+}
+gis_task_stop <- function(session) {
+  if (is.null(session)) return(invisible(NULL))
+  session$sendCustomMessage("dronebior_gis_task",
+                            list(action = "stop"))
+}
+
+# Wrap an expression with both the top-banner ticker and a Shiny
+# withProgress notification. The banner is the headline indicator
+# ("Now: X · 12s"); the corner notification adds the file basename for
+# context. Both come down on exit. Works fine when session is NULL
+# (the wrapper falls through to plain evaluation outside Shiny).
+with_gis_task <- function(session, name, detail = NULL, expr) {
+  gis_task_start(session, name)
+  on.exit(gis_task_stop(session), add = TRUE)
+  has_session <- !is.null(session)
+  if (has_session) {
+    shiny::withProgress(message = name, detail = detail, value = 0.5, expr)
+  } else {
+    force(expr)
+  }
+}
+
 raster_tile_path <- function(x) {
   key <- digest_raster(x)
   cached <- .dronebior_tile_cache[[key]]
@@ -1120,6 +1212,43 @@ ui <- page_navbar(
         });
       });
 
+      // Now-loading banner driven by R-side gis_task_start/stop. The R
+      // thread is single-threaded, so when it is blocked on a slow
+      // terra::rast() open the UI cannot rerun any reactive output -
+      // but the WebSocket pushes the start-message BEFORE entering the
+      // block and the stop-message right after, so the banner appears
+      // and disappears at the right moments. The elapsed counter
+      // updates via a client-side setInterval that keeps ticking even
+      // while R is blocked.
+      Shiny.addCustomMessageHandler('dronebior_gis_task', function(msg) {
+        var banner = document.getElementById('gis-task-banner');
+        if (!banner) return;
+        if (window.__db_gis_task_timer) {
+          clearInterval(window.__db_gis_task_timer);
+          window.__db_gis_task_timer = null;
+        }
+        if (msg && msg.action === 'start' && msg.name) {
+          var startedAt = Date.now();
+          banner.dataset.startedAt = String(startedAt);
+          var safe = String(msg.name).replace(/</g, '&lt;');
+          banner.innerHTML =
+            '<span class=\"gis-task-spinner\"></span>' +
+            '<span class=\"gis-task-label\">Now: <strong>' + safe + '</strong></span>' +
+            '<span class=\"gis-task-elapsed\" id=\"gis-task-elapsed\">0s</span>';
+          banner.style.display = 'flex';
+          window.__db_gis_task_timer = setInterval(function() {
+            var el = document.getElementById('gis-task-elapsed');
+            if (!el) return;
+            var s = Math.round((Date.now() - startedAt) / 1000);
+            el.textContent = (s < 60) ? (s + 's')
+                              : (Math.floor(s/60) + 'm ' + (s%60) + 's');
+          }, 500);
+        } else {
+          banner.style.display = 'none';
+          banner.innerHTML = '';
+        }
+      });
+
       // 3D Modeling viewer remote controls. The Shiny app exposes
       // window.__dronebior_viewer = { camera, controls, defaultPosition,
       // defaultTarget } from inside the three.js render function. These
@@ -1592,6 +1721,44 @@ ui <- page_navbar(
       .sidebar-section-chip.actions { background: linear-gradient(135deg, #102a43, #475569); box-shadow: 0 0 0 2px rgba(71,85,105,0.18); }
       .sidebar-section-chip.link    { background: linear-gradient(135deg, #7c3aed, #c026d3); box-shadow: 0 0 0 2px rgba(192,38,211,0.20); }
 
+      /* Now-loading banner at the top of the GIS Workspace. R-side
+         heavy operations push a name through the dronebior_gis_task
+         custom-message channel; the banner renders the name with a
+         JS-driven elapsed time. Hidden by default (display:none in
+         the inline style) so it does not reserve vertical space. */
+      .gis-task-banner {
+        display: none;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        margin-bottom: 12px;
+        border-radius: 8px;
+        background: linear-gradient(90deg, #fef3c7, #fde68a);
+        border: 1px solid #f59e0b;
+        color: #78350f;
+        font-size: 0.92rem;
+        box-shadow: 0 2px 6px rgba(245, 158, 11, 0.15);
+      }
+      .gis-task-banner .gis-task-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(120, 53, 15, 0.25);
+        border-top-color: #b45309;
+        border-radius: 50%;
+        animation: dronebior-spin 0.8s linear infinite;
+      }
+      .gis-task-banner .gis-task-label { flex: 1; }
+      .gis-task-banner .gis-task-elapsed {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: #92400e;
+      }
+      @keyframes dronebior-spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
+
       /* Scene sources strip: at-a-glance view of which ODM products are
          already available for the current project. Each pill is the same
          status-pill used elsewhere in the app, so the affordance is
@@ -1885,6 +2052,12 @@ ui <- page_navbar(
           "Choose product overlays in the sidebar and click 'Load' to render them on the basemap. Use the measurement tool to draw distances or areas on the map; results land in the 'Map measurement' card below. New here? Try 'run_drone_biomass_studio(sample = TRUE)' to open a clickable demo project.",
           vignette = "dronebior-overview"
         ),
+        # "Now loading" banner. Hidden by default; the JS handler shows
+        # it whenever R-side calls gis_task_start(session, name) and
+        # hides it on gis_task_stop(session). The elapsed-time counter
+        # is driven client-side, so it keeps ticking even while the R
+        # thread is blocked reading a slow OneDrive raster header.
+        tags$div(id = "gis-task-banner", class = "gis-task-banner"),
         div(
           class = "metric-strip",
           div(class = "metric", div(class = "label", "Image folder"), div(class = "value", uiOutput("metric_images", inline = TRUE))),
@@ -2464,13 +2637,17 @@ server <- function(input, output, session) {
   )
   # Cheap peek at the orthomosaic so the overlay panel can hide layers
   # the file cannot support, BEFORE the user clicks Load Mosaic. Returns
-  # NA when no file is set yet.
+  # NA when no file is set yet. Goes through raster_header() so the
+  # underlying terra::rast open is cached by (path, mtime, size) and
+  # surfaced in the "Now loading" banner on its first hit - keystrokes
+  # in input$orthomosaic do not re-open the same multi-GB file.
   overlay_orthomosaic_nlyr <- reactive({
     path <- input$orthomosaic
     if (!is.character(path) || !length(path) || !nzchar(path) || !file.exists(path)) {
       return(NA_integer_)
     }
-    tryCatch(as.integer(terra::nlyr(terra::rast(path))), error = function(e) NA_integer_)
+    hdr <- raster_header(path, progress_msg = "Reading orthomosaic band count")
+    if (is.null(hdr)) NA_integer_ else hdr$nlyr
   })
   available_overlays <- reactive({
     n <- overlay_orthomosaic_nlyr()
@@ -2595,10 +2772,13 @@ server <- function(input, output, session) {
     if (!file.exists(orthomosaic_path)) {
       return(map)
     }
-    bounds <- tryCatch(
-      raster_bounds_4326(terra::rast(orthomosaic_path)[[1]]),
-      error = function(e) NULL
-    )
+    # Pull bounds from the cached header so we never re-open the file.
+    # First open shows the "Now loading" banner; subsequent calls hit
+    # the cache and return microseconds. Saves the multi-second
+    # terra::rast() trip every time renderLeaflet invalidates.
+    hdr <- raster_header(orthomosaic_path,
+                         progress_msg = "Reading orthomosaic footprint")
+    bounds <- if (!is.null(hdr)) hdr$bounds_4326 else NULL
     if (is.null(bounds) || any(!is.finite(bounds))) {
       return(map)
     }
@@ -2625,10 +2805,9 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
 
-    bounds <- tryCatch(
-      raster_bounds_4326(terra::rast(orthomosaic_path)[[1]]),
-      error = function(e) NULL
-    )
+    hdr <- raster_header(orthomosaic_path,
+                         progress_msg = "Centering map on orthomosaic")
+    bounds <- if (!is.null(hdr)) hdr$bounds_4326 else NULL
     if (is.null(bounds) || any(!is.finite(bounds))) {
       if (isTRUE(notify_missing)) {
         showNotification("Orthomosaic bounds could not be read.", type = "warning", duration = 4)
@@ -3144,10 +3323,15 @@ server <- function(input, output, session) {
     ortho_path_resolved  <- if (file.exists(ortho_path_cached)) ortho_path_cached
                             else ortho_path_canonical
     if (file.exists(ortho_path_resolved)) {
-      nl <- tryCatch(terra::nlyr(terra::rast(ortho_path_resolved)),
-                     error = function(e) NA_integer_)
-      if (!is.na(nl)) {
-        ortho_label <- if (nl >= 5L) "Multispectral Orthomosaic" else "RGB Orthomosaic"
+      # Goes through the cached raster_header() so re-renders of this
+      # output (e.g. when the user types in project_dir/output_dir)
+      # do not re-open the same orthomosaic file. The "Now loading"
+      # banner appears on the FIRST open while terra reads the header.
+      hdr <- raster_header(ortho_path_resolved,
+                           progress_msg = "Detecting orthomosaic type")
+      if (!is.null(hdr) && !is.na(hdr$nlyr)) {
+        ortho_label <- if (hdr$nlyr >= 5L) "Multispectral Orthomosaic"
+                       else "RGB Orthomosaic"
       }
     }
 
