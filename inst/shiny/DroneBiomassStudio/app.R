@@ -1269,10 +1269,59 @@ ui <- page_navbar(
                               : (Math.floor(s/60) + 'm ' + (s%60) + 's');
           }, 500);
         } else {
+          // A 'stop' message clears ONLY task-specific banners. The
+          // heartbeat watchdog below may immediately re-open the
+          // banner if R is still busy.
+          if (banner.dataset.kind !== 'heartbeat') {
+            banner.style.display = 'none';
+            banner.innerHTML = '';
+            delete banner.dataset.kind;
+          }
+        }
+        banner.dataset.kind = (msg && msg.action === 'start') ? 'task' : '';
+      });
+
+      // Heartbeat watchdog: the server sends a heartbeat every 500 ms
+      // via dronebior_heartbeat. When R is blocked on synchronous
+      // work, the heartbeats stop arriving. The client-side timer
+      // below notices the gap and surfaces a generic R-is-processing
+      // banner with a live elapsed-time counter. This is the safety
+      // net for slow operations that we have not (or cannot) wrap in
+      // with_gis_task individually - the user always sees that R is
+      // busy, even if we cannot say exactly which reactive is running.
+      window.__db_last_heartbeat = Date.now();
+      Shiny.addCustomMessageHandler('dronebior_heartbeat', function(_msg) {
+        window.__db_last_heartbeat = Date.now();
+      });
+      setInterval(function() {
+        var since = Date.now() - (window.__db_last_heartbeat || 0);
+        var banner = document.getElementById('gis-task-banner');
+        if (since > 1500) {
+          if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'gis-task-banner';
+            banner.className = 'gis-task-banner';
+            document.body.insertBefore(banner, document.body.firstChild);
+          }
+          // Only take over the banner when there is no named task
+          // already shown. Named tasks are the more informative signal
+          // and we let them stay visible until their own stop message.
+          if (banner.dataset.kind !== 'task') {
+            var secs = Math.round(since / 1000);
+            banner.innerHTML =
+              '<span class=\"gis-task-spinner\"></span>' +
+              '<span class=\"gis-task-label\">R is processing in the background...</span>' +
+              '<span class=\"gis-task-elapsed\">' + secs + 's</span>';
+            banner.style.display = 'flex';
+            banner.dataset.kind = 'heartbeat';
+          }
+        } else if (banner && banner.dataset.kind === 'heartbeat' &&
+                   banner.style.display !== 'none') {
           banner.style.display = 'none';
           banner.innerHTML = '';
+          banner.dataset.kind = '';
         }
-      });
+      }, 500);
 
       // 3D Modeling viewer remote controls. The Shiny app exposes
       // window.__dronebior_viewer = { camera, controls, defaultPosition,
@@ -2594,6 +2643,23 @@ server <- function(input, output, session) {
   # waits until typing settles.
   project_dir_debounced <- debounce(reactive(input$project_dir), 700)
   images_dir_debounced  <- debounce(reactive(input$images_dir),  700)
+
+  # Heartbeat for the client-side watchdog. Every 500 ms while the R
+  # session is idle, we send a tiny custom message. The browser tracks
+  # the time since the last heartbeat - when that gap exceeds 1.5 s
+  # the watchdog assumes R is blocked on synchronous work and pops up
+  # the "R is processing in the background..." banner with a live
+  # elapsed-time counter. This is the safety net for slow operations
+  # we did not wrap in with_gis_task individually: the user always
+  # sees that something is running, even if we cannot name it.
+  observe({
+    invalidateLater(500, session)
+    session$sendCustomMessage("dronebior_heartbeat",
+                              list(t = as.numeric(Sys.time())))
+    if (requireNamespace("httpuv", quietly = TRUE)) {
+      tryCatch(httpuv::service(0), error = function(e) NULL)
+    }
+  })
 
   # Discover existing ODM project layouts on disk so the user can
   # switch between e.g. odm_aerial_dataset/aerial_geoscan and
