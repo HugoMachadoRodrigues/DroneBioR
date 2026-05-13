@@ -3307,6 +3307,20 @@ server <- function(input, output, session) {
     # would not survive the trip otherwise).
     p_snapshot <- p
 
+    # Capture the on-disk DroneBioR location from the MAIN session so
+    # the worker can find the package no matter how it was loaded
+    # here. `find.package("DroneBioR")` returns:
+    #   * the installed library path when the user did install.packages
+    #     / R CMD INSTALL, OR
+    #   * the repo source path when the user did pkgload::load_all().
+    # That value travels into the worker via `globals` and the worker
+    # falls back to pkgload::load_all(dronebior_pkg_path) when the
+    # package is not in its own library.
+    dronebior_pkg_path <- tryCatch(
+      find.package("DroneBioR"),
+      error = function(e) NA_character_
+    )
+
     if (isTRUE(.dronebior_async_available)) {
       csf_running(TRUE)
       showNotification(
@@ -3318,13 +3332,30 @@ server <- function(input, output, session) {
       )
       fut <- promises::future_promise({
         # The worker is a fresh R session - it has not loaded
-        # DroneBioR or lidR. requireNamespace makes both available
-        # via the package's installed library path.
+        # DroneBioR or lidR. Try the installed library first; when
+        # the user is running from source via pkgload::load_all
+        # (no installed copy), bootstrap DroneBioR in the worker
+        # by calling pkgload::load_all() against the captured repo
+        # path so the same edits visible to the main session are
+        # also visible to the worker.
         if (!requireNamespace("DroneBioR", quietly = TRUE)) {
-          stop("DroneBioR package not installed in worker")
+          if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+              !dir.exists(dronebior_pkg_path)) {
+            stop("DroneBioR is not installed and no source path is available ",
+                 "for the worker (try install.packages locally, ",
+                 "or run from the package repo with pkgload::load_all()).",
+                 call. = FALSE)
+          }
+          if (!requireNamespace("pkgload", quietly = TRUE)) {
+            stop("DroneBioR is not installed in this worker and pkgload is ",
+                 "not available to load it from source.", call. = FALSE)
+          }
+          pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
+                            attach = FALSE, helpers = FALSE)
         }
         if (!requireNamespace("lidR", quietly = TRUE)) {
-          stop("lidR package not installed in worker")
+          stop("lidR package not installed in worker. Install with ",
+               "install.packages('lidR') from R.", call. = FALSE)
         }
         DroneBioR::improve_dtm_csf(
           p_snapshot,
@@ -3334,7 +3365,9 @@ server <- function(input, output, session) {
           rigidness        = 1L,
           rebuild_chm      = TRUE
         )
-      }, seed = TRUE)
+      }, seed = TRUE,
+         globals = list(p_snapshot         = p_snapshot,
+                        dronebior_pkg_path = dronebior_pkg_path))
 
       promises::then(
         fut,
