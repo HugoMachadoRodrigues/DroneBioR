@@ -1221,8 +1221,17 @@ ui <- page_navbar(
       // updates via a client-side setInterval that keeps ticking even
       // while R is blocked.
       Shiny.addCustomMessageHandler('dronebior_gis_task', function(msg) {
+        // Banner is global and floats at the top of the viewport. We
+        // create it lazily here (idempotent) so it works regardless of
+        // which tab the user is on - the GIS Workspace, Processing
+        // Engine, 3D Modeling, anywhere. Position: fixed in the CSS.
         var banner = document.getElementById('gis-task-banner');
-        if (!banner) return;
+        if (!banner) {
+          banner = document.createElement('div');
+          banner.id = 'gis-task-banner';
+          banner.className = 'gis-task-banner';
+          document.body.insertBefore(banner, document.body.firstChild);
+        }
         if (window.__db_gis_task_timer) {
           clearInterval(window.__db_gis_task_timer);
           window.__db_gis_task_timer = null;
@@ -1231,9 +1240,13 @@ ui <- page_navbar(
           var startedAt = Date.now();
           banner.dataset.startedAt = String(startedAt);
           var safe = String(msg.name).replace(/</g, '&lt;');
+          var detail = msg.detail ?
+            ('<span class=\"gis-task-detail\"> &middot; ' +
+             String(msg.detail).replace(/</g, '&lt;') + '</span>') : '';
           banner.innerHTML =
             '<span class=\"gis-task-spinner\"></span>' +
-            '<span class=\"gis-task-label\">Now: <strong>' + safe + '</strong></span>' +
+            '<span class=\"gis-task-label\">Now: <strong>' + safe + '</strong>' +
+              detail + '</span>' +
             '<span class=\"gis-task-elapsed\" id=\"gis-task-elapsed\">0s</span>';
           banner.style.display = 'flex';
           window.__db_gis_task_timer = setInterval(function() {
@@ -1721,23 +1734,32 @@ ui <- page_navbar(
       .sidebar-section-chip.actions { background: linear-gradient(135deg, #102a43, #475569); box-shadow: 0 0 0 2px rgba(71,85,105,0.18); }
       .sidebar-section-chip.link    { background: linear-gradient(135deg, #7c3aed, #c026d3); box-shadow: 0 0 0 2px rgba(192,38,211,0.20); }
 
-      /* Now-loading banner at the top of the GIS Workspace. R-side
-         heavy operations push a name through the dronebior_gis_task
-         custom-message channel; the banner renders the name with a
-         JS-driven elapsed time. Hidden by default (display:none in
-         the inline style) so it does not reserve vertical space. */
+      /* Now-loading banner: floats at the top-center of the viewport
+         on every tab, so the user always sees what R is busy with -
+         not just while they are on the GIS Workspace tab. The R-side
+         heavy operations push a task name through the dronebior_gis_task
+         custom-message channel; a JS-driven setInterval keeps the
+         elapsed-time counter ticking even while the R thread is
+         blocked on a synchronous terra::rast() open. */
       .gis-task-banner {
         display: none;
+        position: fixed;
+        top: 76px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10000;
+        min-width: 320px;
+        max-width: min(720px, 90vw);
         align-items: center;
         gap: 12px;
-        padding: 10px 14px;
-        margin-bottom: 12px;
-        border-radius: 8px;
+        padding: 10px 16px;
+        border-radius: 999px;
         background: linear-gradient(90deg, #fef3c7, #fde68a);
         border: 1px solid #f59e0b;
         color: #78350f;
         font-size: 0.92rem;
-        box-shadow: 0 2px 6px rgba(245, 158, 11, 0.15);
+        box-shadow: 0 8px 22px rgba(245, 158, 11, 0.25),
+                    0 2px 4px rgba(15, 23, 42, 0.10);
       }
       .gis-task-banner .gis-task-spinner {
         display: inline-block;
@@ -1747,12 +1769,24 @@ ui <- page_navbar(
         border-top-color: #b45309;
         border-radius: 50%;
         animation: dronebior-spin 0.8s linear infinite;
+        flex: 0 0 auto;
       }
-      .gis-task-banner .gis-task-label { flex: 1; }
+      .gis-task-banner .gis-task-label {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .gis-task-banner .gis-task-detail {
+        color: #92400e;
+        font-style: italic;
+        opacity: 0.85;
+      }
       .gis-task-banner .gis-task-elapsed {
         font-variant-numeric: tabular-nums;
         font-weight: 700;
         color: #92400e;
+        flex: 0 0 auto;
       }
       @keyframes dronebior-spin {
         from { transform: rotate(0deg); }
@@ -2052,12 +2086,6 @@ ui <- page_navbar(
           "Choose product overlays in the sidebar and click 'Load' to render them on the basemap. Use the measurement tool to draw distances or areas on the map; results land in the 'Map measurement' card below. New here? Try 'run_drone_biomass_studio(sample = TRUE)' to open a clickable demo project.",
           vignette = "dronebior-overview"
         ),
-        # "Now loading" banner. Hidden by default; the JS handler shows
-        # it whenever R-side calls gis_task_start(session, name) and
-        # hides it on gis_task_stop(session). The elapsed-time counter
-        # is driven client-side, so it keeps ticking even while the R
-        # thread is blocked reading a slow OneDrive raster header.
-        tags$div(id = "gis-task-banner", class = "gis-task-banner"),
         div(
           class = "metric-strip",
           div(class = "metric", div(class = "label", "Image folder"), div(class = "value", uiOutput("metric_images", inline = TRUE))),
@@ -2559,7 +2587,16 @@ server <- function(input, output, session) {
   # switch between e.g. odm_aerial_dataset/aerial_geoscan and
   # odm_micasense_dataset/micasense without manually editing paths.
   available_odm_projects <- reactive({
-    detect_odm_projects(input$project_dir %||% "")
+    # detect_odm_projects walks outputs/*/*/ to find existing ODM
+    # project layouts. On OneDrive Files-On-Demand each list.dirs()
+    # may round-trip metadata over the network, which freezes the UI
+    # for seconds per keystroke in project_dir. Wrap in with_gis_task
+    # so the floating banner tells the user what is running.
+    pd <- input$project_dir %||% ""
+    with_gis_task(session,
+                  name   = "Scanning project for ODM outputs",
+                  detail = basename(pd),
+                  detect_odm_projects(pd))
   })
 
   output$odm_project_picker_ui <- renderUI({
