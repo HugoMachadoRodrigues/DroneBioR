@@ -4839,12 +4839,24 @@ server <- function(input, output, session) {
     } else {
       dronebio_project(project_dir = proj_dir)
     }
-    withProgress(
-      message = "Reading flight metadata",
-      detail  = "preparing...",
-      value   = 0,
-      read_odm_exif_flight_plan(images_dir, p$odm_project_dir)
-    )
+    # Use the floating GIS task banner (with_gis_task) so the user
+    # actually sees what is running - the corner withProgress
+    # notification on its own sits in the message queue and never
+    # appears until the work completes. We still establish a
+    # withProgress context around the call because the inner
+    # read_odm_exif_flight_plan() calls setProgress() to publish
+    # incremental "X / N EXIF JSONs" detail; without the wrapping
+    # withProgress those would emit warnings.
+    withProgress(message = "Reading flight metadata",
+                 detail  = "preparing...",
+                 value   = 0.05, {
+      with_gis_task(
+        session,
+        name   = "Reading flight metadata",
+        detail = basename(images_dir),
+        read_odm_exif_flight_plan(images_dir, p$odm_project_dir)
+      )
+    })
   }) |>
     bindCache(images_dir_debounced(),
               project_dir_debounced(),
