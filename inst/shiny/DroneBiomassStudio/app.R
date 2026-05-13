@@ -834,6 +834,27 @@ status_badge <- function(available, ready_label = "Ready", missing_label = "Miss
   }
 }
 
+# Sidebar grouping header used inside `layout_sidebar(sidebar = sidebar(...))`.
+# `tone` colours the leading chip so related groups read as a unit at a glance
+# (scene / select / trees / volume / actions / link). Falls back to the
+# default green chip when no tone is given.
+sidebar_section <- function(label, tone = NULL) {
+  chip_class <- if (is.null(tone)) "sidebar-section-chip" else paste("sidebar-section-chip", tone)
+  div(class = "sidebar-section",
+      tags$span(class = chip_class),
+      tags$span(label))
+}
+
+# A single tile in the "Scene sources" row at the top of the 3D Modeling
+# main area. `output_id` is rendered server-side and produces a status_badge
+# (Available / Missing); the tile name above it makes the layer explicit
+# even when the badge is in its missing state.
+scene_source_tile <- function(label, output_id) {
+  div(class = "scene-source-tile",
+      div(class = "scene-source-name", label),
+      uiOutput(output_id))
+}
+
 haversine_m <- function(lon1, lat1, lon2, lat2) {
   r <- 6371008.8
   to_rad <- pi / 180
@@ -872,7 +893,8 @@ flight_arrow_icon <- function(heading) {
   paste0("data:image/svg+xml;utf8,", utils::URLencode(svg, reserved = TRUE))
 }
 
-read_odm_exif_flight_plan <- function(images_dir, odm_project_dir) {
+read_odm_exif_flight_plan <- function(images_dir, odm_project_dir,
+                                      max_files = 1200) {
   exif_dir <- file.path(odm_project_dir, "opensfm", "exif")
   if (!dir.exists(exif_dir)) {
     return(data.frame())
@@ -882,28 +904,61 @@ read_odm_exif_flight_plan <- function(images_dir, odm_project_dir) {
     return(data.frame())
   }
 
-  rows <- lapply(files, function(path) {
-    x <- tryCatch(jsonlite::fromJSON(path), error = function(e) NULL)
-    if (is.null(x) || is.null(x$gps$latitude) || is.null(x$gps$longitude)) {
-      return(NULL)
-    }
-    filename <- sub("\\.exif$", "", basename(path), ignore.case = TRUE)
-    parsed <- regexec("^(.+)_([0-9]+)\\.[A-Za-z0-9]+$", filename)
-    match <- regmatches(filename, parsed)[[1]]
-    if (length(match) != 3) {
-      return(NULL)
-    }
-    data.frame(
-      capture_id = match[[2]],
-      band_id = as.integer(match[[3]]),
-      filename = filename,
-      longitude = as.numeric(x$gps$longitude),
-      latitude = as.numeric(x$gps$latitude),
-      altitude_m = as.numeric(x$gps$altitude %||% NA_real_),
-      capture_time = as.numeric(x$capture_time %||% NA_real_),
-      stringsAsFactors = FALSE
+  # Subsample huge EXIF lists. MicaSense flights with thousands of
+  # captures (5 bands * 1000+ captures) produce 5000+ EXIF JSONs, and
+  # parsing them all synchronously on the main R thread blocks the
+  # Shiny session for minutes - especially when the files live on a
+  # cloud-synced drive (OneDrive, iCloud) where stat'ing each file
+  # may trigger an on-demand download. A strided sample is more than
+  # enough to draw a recognisable flight path on the map.
+  if (length(files) > max_files) {
+    stride <- ceiling(length(files) / max_files)
+    files <- files[seq(1L, length(files), by = stride)]
+  }
+
+  # When called from a Shiny session, drive a progress bar so the user
+  # sees the parsing advance rather than guessing whether the app
+  # froze. Falls back to a no-op `incProgress` when called outside Shiny.
+  has_progress <- requireNamespace("shiny", quietly = TRUE) &&
+    !is.null(shiny::getDefaultReactiveDomain())
+  if (has_progress) {
+    shiny::setProgress(
+      value = 0,
+      message = "Reading flight metadata",
+      detail = paste0("0 / ", length(files), " EXIF JSONs")
     )
-  })
+  }
+
+  parse_step <- max(1L, length(files) %/% 40L)
+  rows <- vector("list", length(files))
+  for (i in seq_along(files)) {
+    path <- files[[i]]
+    x <- tryCatch(jsonlite::fromJSON(path), error = function(e) NULL)
+    if (!is.null(x) && !is.null(x$gps$latitude) && !is.null(x$gps$longitude)) {
+      filename <- sub("\\.exif$", "", basename(path), ignore.case = TRUE)
+      parsed <- regexec("^(.+)_([0-9]+)\\.[A-Za-z0-9]+$", filename)
+      match  <- regmatches(filename, parsed)[[1]]
+      if (length(match) == 3L) {
+        rows[[i]] <- data.frame(
+          capture_id  = match[[2]],
+          band_id     = as.integer(match[[3]]),
+          filename    = filename,
+          longitude   = as.numeric(x$gps$longitude),
+          latitude    = as.numeric(x$gps$latitude),
+          altitude_m  = as.numeric(x$gps$altitude %||% NA_real_),
+          capture_time = as.numeric(x$capture_time %||% NA_real_),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+    if (has_progress && (i %% parse_step == 0L || i == length(files))) {
+      shiny::setProgress(
+        value = i / length(files),
+        detail = paste0(format(i, big.mark = ","), " / ",
+                        format(length(files), big.mark = ","), " EXIF JSONs")
+      )
+    }
+  }
   raw <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
   if (is.null(raw) || nrow(raw) == 0) {
     return(data.frame())
@@ -1405,6 +1460,175 @@ ui <- page_navbar(
         line-height: 1.3;
         margin-top: 8px;
       }
+      /* Sidebar grouping: each section gets a small heading bar with a
+         coloured chip that hints at the section role (source, scene,
+         selection, trees, volumes, actions). The chip uses a CSS
+         gradient on a 10x10 square so we do not depend on emoji fonts. */
+      .sidebar-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 0.72rem;
+        color: #102a43;
+        margin: 18px 0 8px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid var(--db-border);
+      }
+      .sidebar-section:first-child { margin-top: 2px; }
+      .sidebar-section-chip {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        background: linear-gradient(135deg, #168a5b, #14b8a6);
+        box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.18);
+      }
+      .sidebar-section-chip.scene   { background: linear-gradient(135deg, #2563eb, #38bdf8); box-shadow: 0 0 0 2px rgba(56,189,248,0.18); }
+      .sidebar-section-chip.select  { background: linear-gradient(135deg, #f59e0b, #facc15); box-shadow: 0 0 0 2px rgba(250,204,21,0.20); }
+      .sidebar-section-chip.trees   { background: linear-gradient(135deg, #15803d, #84cc16); box-shadow: 0 0 0 2px rgba(132,204,22,0.20); }
+      .sidebar-section-chip.volume  { background: linear-gradient(135deg, #7c2d12, #d97706); box-shadow: 0 0 0 2px rgba(217,119,6,0.20); }
+      .sidebar-section-chip.actions { background: linear-gradient(135deg, #102a43, #475569); box-shadow: 0 0 0 2px rgba(71,85,105,0.18); }
+      .sidebar-section-chip.link    { background: linear-gradient(135deg, #7c3aed, #c026d3); box-shadow: 0 0 0 2px rgba(192,38,211,0.20); }
+
+      /* Scene sources strip: at-a-glance view of which ODM products are
+         already available for the current project. Each pill is the same
+         status-pill used elsewhere in the app, so the affordance is
+         consistent across tabs. */
+      .scene-sources-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 8px;
+        padding: 4px 0 2px;
+      }
+      .scene-source-tile {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 9px 11px;
+        background: #ffffff;
+        border: 1px solid var(--db-border);
+        border-radius: 8px;
+      }
+      .scene-source-tile .scene-source-name {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--db-text-soft);
+        font-weight: 700;
+      }
+
+      /* Modeling-tab metric strip: same .metric tile shape used in
+         GIS Workspace, with a small mono-line second row for context
+         (e.g. \"of 35,000 sampled\"). */
+      .modeling-metric-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .modeling-metric-strip .metric { padding: 11px 13px; }
+      .modeling-metric-strip .metric .label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.74rem;
+      }
+      .modeling-metric-strip .metric .value {
+        font-size: 1.24rem;
+        font-weight: 760;
+        color: #102a43;
+        letter-spacing: -0.01em;
+      }
+      .modeling-metric-strip .metric .sublabel {
+        color: var(--db-text-soft);
+        font-size: 0.74rem;
+        margin-top: 2px;
+      }
+      .metric-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #168a5b;
+        box-shadow: 0 0 0 2px rgba(22, 138, 91, 0.18);
+      }
+      .metric-dot.warn   { background: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,0.20); }
+      .metric-dot.muted  { background: #94a3b8; box-shadow: 0 0 0 2px rgba(148,163,184,0.20); }
+      .metric-dot.select { background: #facc15; box-shadow: 0 0 0 2px rgba(250,204,21,0.20); }
+      .metric-dot.tree   { background: #84cc16; box-shadow: 0 0 0 2px rgba(132,204,22,0.20); }
+      .metric-dot.scene  { background: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.20); }
+
+      /* Toolbar grouping above the 3D viewer: visually separate
+         load / camera / export controls so the user can find the
+         right control without reading every button label. */
+      .modeling-toolbar .toolbar-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .modeling-toolbar .toolbar-divider {
+        width: 1px;
+        height: 22px;
+        background: var(--db-border);
+        margin: 0 4px;
+      }
+      .modeling-toolbar .toolbar-group-label {
+        font-size: 0.70rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--db-text-soft);
+        margin-right: 2px;
+      }
+      .modeling-toolbar .viewer-status {
+        background: #ffffff;
+        border: 1px solid var(--db-border);
+        border-radius: 999px;
+        padding: 4px 12px;
+        font-size: 0.82rem;
+      }
+
+      /* Viewer chrome polish: subtle inner shadow on the dark canvas
+         frame plus a slightly larger, multi-row legend tile. The
+         tooltip pill in the top-right shows which point cloud is
+         loaded and which heightsource is active (CHM vs local-Z). */
+      .viewer-frame {
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04),
+                    0 6px 14px rgba(15, 23, 42, 0.10);
+      }
+      .viewer-overlay.scene-info {
+        top: 10px;
+        right: 10px;
+        max-width: 280px;
+        background: rgba(15, 23, 42, 0.75);
+        font-size: 0.72rem;
+        line-height: 1.35;
+      }
+      .viewer-overlay.scene-info .info-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .viewer-overlay.scene-info .info-key {
+        color: #cbd5e1;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 0.66rem;
+      }
+      .viewer-overlay.scene-info .info-val {
+        color: #f8fafc;
+        font-weight: 600;
+        text-align: right;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 180px;
+      }
+
       pre { white-space: pre-wrap; }
       .btn { border-radius: 6px; }
       table { font-size: 0.88rem; }
@@ -1561,21 +1785,31 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 340,
-        textInput("full_cloud_path", "Full-resolution point cloud (LAS/LAZ/COPC)", value = default_full_cloud(default_products)),
+        sidebar_section("Scene source", tone = "scene"),
         selectInput(
           "viewer_cloud_source",
           "3D viewer source",
           choices = c("Full georeferenced LAS/LAZ/COPC sample", "PLY preview fallback"),
           selected = if (file.exists(default_full_cloud(default_products))) "Full georeferenced LAS/LAZ/COPC sample" else "PLY preview fallback"
         ),
-        checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
-        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = TRUE),
-        checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
+        textInput("full_cloud_path", "Full-resolution point cloud (LAS/LAZ/COPC)", value = default_full_cloud(default_products)),
         textInput("ply_path", "Preview point cloud (PLY)", value = file.path(default_project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")),
         numericInput("max_points", "Maximum preview points", value = 35000, min = 1000, max = 150000, step = 1000),
-        numericInput("tree_grid", "Tree candidate grid size (m)", value = 4, min = 1, max = 15, step = 0.5),
-        numericInput("min_tree_height", "Minimum canopy height (m)", value = 1.5, min = 0.1, max = 20, step = 0.1),
-        numericInput("min_tree_points", "Minimum points per candidate", value = 5, min = 1, max = 100, step = 1),
+        div(class = "sidebar-note", "Switch to the PLY preview for fast iteration; the LAS/LAZ/COPC source gives full georeferenced metrics and feeds ROI recalculation."),
+
+        sidebar_section("Scene composition", tone = "scene"),
+        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = TRUE),
+        checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
+        selectInput(
+          "point_color_mode",
+          "Point symbology",
+          choices = c("RGB", "Classification", "Height"),
+          selected = "RGB"
+        ),
+        numericInput("min_point_height", "Point height filter min (m)", value = 0, min = 0, max = 100, step = 0.5),
+        numericInput("max_point_height", "Point height filter max (m)", value = 100, min = 0, max = 150, step = 0.5),
+
+        sidebar_section("Selection & classification", tone = "select"),
         selectInput(
           "selection_tool",
           "3D interaction tool",
@@ -1590,25 +1824,32 @@ ui <- page_navbar(
           selected = "Box selection"
         ),
         selectInput(
-          "point_color_mode",
-          "Point symbology",
-          choices = c("RGB", "Classification", "Height"),
-          selected = "RGB"
-        ),
-        selectInput(
           "classification_label",
           "Class to assign",
           choices = c("Unclassified", "Canopy", "Ground", "Tree crown", "Stem/trunk", "Low vegetation", "Noise", "Exclude")
         ),
         actionButton("classify_selection", "Classify selected points", class = "btn-outline-secondary"),
-        numericInput("min_point_height", "Point height filter min (m)", value = 0, min = 0, max = 100, step = 0.5),
-        numericInput("max_point_height", "Point height filter max (m)", value = 100, min = 0, max = 150, step = 0.5),
+
+        sidebar_section("Use GIS Workspace ROI", tone = "link"),
+        selectInput("gis_roi_to_3d", "Saved ROI", choices = character(0),
+                    selected = NULL),
+        actionButton("apply_gis_roi_to_3d", "Pull ROI into 3D selection",
+                     class = "btn-outline-secondary"),
+        div(class = "sidebar-note",
+            "Saved ROIs from the GIS Workspace tab show up here. Use them to drive 3D ROI metrics from polygons you already drew on the orthomosaic."),
+
+        sidebar_section("Tree detection", tone = "trees"),
+        numericInput("tree_grid", "Tree candidate grid size (m)", value = 4, min = 1, max = 15, step = 0.5),
+        numericInput("min_tree_height", "Minimum canopy height (m)", value = 1.5, min = 0.1, max = 20, step = 0.1),
+        numericInput("min_tree_points", "Minimum points per candidate", value = 5, min = 1, max = 100, step = 1),
+        checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
+
+        sidebar_section("Volume & profile", tone = "volume"),
         numericInput("voxel_size", "Volume voxel size (m)", value = 0.5, min = 0.05, max = 5, step = 0.05),
         numericInput("profile_bin_size", "Vertical profile bin size (m)", value = 1, min = 0.1, max = 10, step = 0.1),
-        div(class = "form-label", "Survey volumes"),
         selectInput(
           "survey_volume_method",
-          "Base reference",
+          "Survey volumes - base reference",
           choices = c(
             "External DTM (canopy / true biomass)"      = "dtm",
             "Minimum Z inside ROI (classic stockpile)"  = "min_z",
@@ -1622,6 +1863,8 @@ ui <- page_navbar(
         numericInput("survey_user_plane_z", "User-plane Z (m)", value = 0, step = 0.1),
         numericInput("survey_ground_quantile", "Ground quantile (0..1)",
                      value = 0.05, min = 0, max = 0.5, step = 0.01),
+
+        sidebar_section("Actions", tone = "actions"),
         textInput("selection_label", "Selection / ROI label", value = "roi_1"),
         actionButton("clear_point_selection", "Clear selection", class = "btn-outline-secondary"),
         actionButton("save_manual_crown", "Save/update crown ROI", class = "btn-outline-secondary"),
@@ -1638,18 +1881,77 @@ ui <- page_navbar(
           "Loads a dense point cloud (LAS/LAZ/COPC or a PLY preview) and lets you select ROIs by box, lasso or polygon. Computes survey-grade volumes (canopy biomass via DTM, or Pix4D-style perimeter-TIN stockpile), per-selection metrics, vertical profile, and approximate tree candidates. Switch the source to PLY for fast iteration; LAS gives full georeferenced metrics.",
           vignette = "point-clouds-and-chm"
         ),
+        # Top metric strip: live numeric counts for the current scene so
+        # the user can see at a glance how much data is loaded, how big
+        # the active selection is, how many trees were detected, and what
+        # surfaces are being drawn in the viewer. Mirrors the GIS
+        # Workspace metric strip so the layout feels consistent.
+        div(
+          class = "modeling-metric-strip",
+          div(class = "metric",
+              div(class = "label",
+                  tags$span(class = "metric-dot scene"),
+                  "Points"),
+              div(class = "value", uiOutput("modeling_metric_points", inline = TRUE)),
+              div(class = "sublabel", uiOutput("modeling_metric_points_sub", inline = TRUE))),
+          div(class = "metric",
+              div(class = "label",
+                  tags$span(class = "metric-dot select"),
+                  "Selection"),
+              div(class = "value", uiOutput("modeling_metric_selected", inline = TRUE)),
+              div(class = "sublabel", uiOutput("modeling_metric_selected_sub", inline = TRUE))),
+          div(class = "metric",
+              div(class = "label",
+                  tags$span(class = "metric-dot tree"),
+                  "Trees"),
+              div(class = "value", uiOutput("modeling_metric_trees", inline = TRUE)),
+              div(class = "sublabel", uiOutput("modeling_metric_trees_sub", inline = TRUE))),
+          div(class = "metric",
+              div(class = "label",
+                  tags$span(class = "metric-dot muted"),
+                  "Scene surface"),
+              div(class = "value", uiOutput("modeling_metric_surface", inline = TRUE)),
+              div(class = "sublabel", uiOutput("modeling_metric_surface_sub", inline = TRUE)))
+        ),
+        # Scene sources status card: cross-tab feedback. Each tile reflects
+        # what the Processing Engine has produced and what GIS Workspace
+        # is currently pointing at, so the user does not have to flip tabs
+        # to know whether the 3D scene can be built.
+        card(
+          card_header(
+            div(class = "map-card-header",
+                tags$span("Scene sources"),
+                tags$span(class = "viewer-status",
+                          textOutput("scene_sources_status", inline = TRUE)))
+          ),
+          div(class = "scene-sources-row",
+              scene_source_tile("Orthomosaic",  "scene_source_ortho"),
+              scene_source_tile("DSM",          "scene_source_dsm"),
+              scene_source_tile("DTM",          "scene_source_dtm"),
+              scene_source_tile("Point cloud",  "scene_source_cloud"),
+              scene_source_tile("Textured mesh","scene_source_mesh"))
+        ),
         div(
           class = "modeling-toolbar",
-          actionButton("open_file_browser_3d_main", "Browse files", class = "btn-outline-secondary"),
-          actionButton("load_3d_scene_main", "Load 3D scene", class = "btn-primary"),
-          actionButton("reset_3d_view", "Reset view", class = "btn-outline-secondary"),
-          actionButton("zoom_in_3d",  "Zoom +",     class = "btn-outline-secondary"),
-          actionButton("zoom_out_3d", "Zoom -",     class = "btn-outline-secondary"),
-          actionButton("screenshot_3d",   "Screenshot",     class = "btn-outline-secondary"),
-          actionButton("export_3d_gltf",  "Export glTF",    class = "btn-outline-secondary"),
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Load"),
+              actionButton("open_file_browser_3d_main", "Browse files", class = "btn-outline-secondary"),
+              actionButton("load_3d_scene_main", "Load 3D scene", class = "btn-primary")),
+          tags$span(class = "toolbar-divider"),
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Camera"),
+              actionButton("reset_3d_view", "Reset view", class = "btn-outline-secondary"),
+              actionButton("zoom_in_3d",  "Zoom +",     class = "btn-outline-secondary"),
+              actionButton("zoom_out_3d", "Zoom -",     class = "btn-outline-secondary")),
+          tags$span(class = "toolbar-divider"),
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Export"),
+              actionButton("screenshot_3d",   "Screenshot",     class = "btn-outline-secondary"),
+              actionButton("export_3d_gltf",  "Export glTF",    class = "btn-outline-secondary")),
           span(class = "viewer-status", textOutput("point_cloud_status", inline = TRUE))
         ),
-        # Large 3D viewport with overlays (legend + scale bar + axis hint).
+        # Large 3D viewport with overlays (legend + scale bar + axis hint
+        # + top-right scene info chip showing source + height source).
         div(
           class = "viewer-frame",
           uiOutput("point_cloud_viewer"),
@@ -1667,6 +1969,18 @@ ui <- page_navbar(
               tags$span(style = "color:#22c55e;", "Y"), " ",
               tags$span(style = "color:#3b82f6;", "Z")
             )
+          ),
+          div(
+            class = "viewer-overlay scene-info",
+            div(class = "info-row",
+                tags$span(class = "info-key", "Source"),
+                tags$span(class = "info-val", textOutput("viewer_info_source", inline = TRUE))),
+            div(class = "info-row",
+                tags$span(class = "info-key", "Heights"),
+                tags$span(class = "info-val", textOutput("viewer_info_heights", inline = TRUE))),
+            div(class = "info-row",
+                tags$span(class = "info-key", "CRS"),
+                tags$span(class = "info-val", textOutput("viewer_info_crs", inline = TRUE)))
           ),
           div(
             class = "viewer-overlay scale",
@@ -1700,6 +2014,14 @@ ui <- page_navbar(
               card(card_header("Selected tree"),               tableOutput("selected_tree"))
             ),
             nav_panel(
+              "Spectral signature",
+              div(class = "small text-muted mb-2",
+                  "Per-tree (or per-ROI) spectral means computed in Spectral Analytics. ",
+                  "Run \"Compute tree / ROI spectral metrics\" there to populate this table; ",
+                  "selecting a tree in the 3D viewer highlights the corresponding row."),
+              tableOutput("modeling_tree_spectral")
+            ),
+            nav_panel(
               "Vertical profile",
               plotOutput("vertical_profile_plot", height = "260px")
             ),
@@ -1730,7 +2052,8 @@ ui <- page_navbar(
                 tags$li(tags$strong("Measure distance: "), "click two visible points; distance in meters."),
                 tags$li(tags$strong("Manual crown edit: "), "lasso a crown, save with the Selection / ROI label."),
                 tags$li(tags$strong("Volume: "), "reported as occupied voxel volume; see also the Survey volumes tab."),
-                tags$li(tags$strong("Reset view / Zoom +/-: "), "in the toolbar above the viewer, controls the OrbitControls camera.")
+                tags$li(tags$strong("Reset view / Zoom +/-: "), "in the toolbar above the viewer, controls the OrbitControls camera."),
+                tags$li(tags$strong("Pull ROI into 3D selection: "), "in the sidebar, takes a polygon you saved in GIS Workspace and highlights the matching preview points here.")
               )
             )
           )
@@ -1897,6 +2220,17 @@ ui <- page_navbar(
 )
 
 server <- function(input, output, session) {
+  # Debounced shadows of the path inputs. Every keystroke in a textInput
+  # fires the reactive graph; without debouncing, heavy follow-up work
+  # (EXIF parsing for the flight overlay, raster header reads, etc.)
+  # runs once per character typed and freezes the session. We keep the
+  # raw `input$project_dir` etc. for immediate UI feedback (the file
+  # browser opens against the path the user is editing right now), but
+  # any expensive observer reads the debounced versions so the work
+  # waits until typing settles.
+  project_dir_debounced <- debounce(reactive(input$project_dir), 700)
+  images_dir_debounced  <- debounce(reactive(input$images_dir),  700)
+
   project <- reactive({
     p <- dronebio_project(project_dir = input$project_dir)
     p$images_dir <- input$images_dir
@@ -2680,7 +3014,11 @@ server <- function(input, output, session) {
     refresh_gis_flight_layers(fit_to_flight = isTRUE(input$show_raw_flight))
   }, ignoreInit = TRUE)
 
-  observeEvent(list(input$images_dir, input$project_dir), {
+  # Refresh the flight overlay after the user finishes typing a new
+  # project_dir or images_dir. Reads the *debounced* values so the
+  # observer waits ~700 ms of quiet before firing - one parse per
+  # path change, not one parse per keystroke.
+  observeEvent(list(images_dir_debounced(), project_dir_debounced()), {
     refresh_gis_flight_layers(fit_to_flight = isTRUE(input$show_raw_flight))
   }, ignoreInit = TRUE)
 
@@ -3384,12 +3722,42 @@ server <- function(input, output, session) {
     list_micasense_images(input$images_dir)
   })
 
+  # Flight overlay (image-centre markers + arrow icons on the GIS map).
+  # Reads thousands of per-image EXIF JSONs from ODM's opensfm cache.
+  # On large flights this is the slowest user-visible operation in the
+  # app, so we are aggressive about avoiding it:
+  #   * key on the debounced inputs, so mid-typing keystrokes never
+  #     trigger a parse;
+  #   * skip entirely when the "Show raw image flight plan" overlay is
+  #     off - no point parsing 5000 JSONs to populate a layer that is
+  #     not shown;
+  #   * wrap in withProgress so the user sees concrete progress rather
+  #     than a frozen window;
+  #   * bindCache on (images_dir, odm_project_dir) so revisiting the
+  #     same project is free after the first parse.
   flight_plan <- reactive({
-    if (!dir.exists(input$images_dir)) {
+    images_dir <- images_dir_debounced()
+    proj_dir   <- project_dir_debounced()
+    if (!isTRUE(input$show_raw_flight)) {
       return(data.frame())
     }
-    read_odm_exif_flight_plan(input$images_dir, project()$odm_project_dir)
-  })
+    if (!nzchar(images_dir) || !dir.exists(images_dir)) {
+      return(data.frame())
+    }
+    if (!nzchar(proj_dir)) {
+      return(data.frame())
+    }
+    p <- dronebio_project(project_dir = proj_dir)
+    withProgress(
+      message = "Reading flight metadata",
+      detail  = "preparing...",
+      value   = 0,
+      read_odm_exif_flight_plan(images_dir, p$odm_project_dir)
+    )
+  }) |>
+    bindCache(images_dir_debounced(),
+              project_dir_debounced(),
+              isTRUE(input$show_raw_flight))
 
   output$odm_command <- renderText({
     input$refresh_command
@@ -4893,6 +5261,273 @@ server <- function(input, output, session) {
       " loaded points; ",
       format(length(selected_point_ids()), big.mark = ","),
       " selected."
+    )
+  })
+
+  # ---- 3D Modeling: top metric strip -------------------------------------
+  # Live numeric counts for the current scene. Each metric is a small UI
+  # output so we can render bold numbers + a muted sub-line (e.g. "of N
+  # sampled") without hand-coding strings on every reactive change.
+  modeling_scene_descriptors <- reactive({
+    if (point_cloud_event() == 0) {
+      return(list(
+        scene_loaded = FALSE,
+        visible      = 0L,
+        loaded       = 0L,
+        selected     = 0L,
+        trees        = 0L,
+        source_path  = "",
+        coord_source = "",
+        height_src   = ""
+      ))
+    }
+    pts <- tryCatch(point_cloud(), error = function(e) NULL)
+    disp <- tryCatch(display_points(), error = function(e) NULL)
+    trees <- tryCatch(tree_candidates(), error = function(e) data.frame())
+    list(
+      scene_loaded = TRUE,
+      visible      = if (is.null(disp)) 0L else nrow(disp),
+      loaded       = if (is.null(pts)) 0L else nrow(pts),
+      selected     = length(selected_point_ids()),
+      trees        = nrow(trees),
+      source_path  = attr(pts, "point_cloud_source") %||% "",
+      coord_source = attr(pts, "coordinate_source") %||% "",
+      height_src   = attr(pts, "height_source") %||% ""
+    )
+  })
+
+  output$modeling_metric_points <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return(HTML("&mdash;"))
+    HTML(paste0(format(d$visible, big.mark = ","),
+                " / ",
+                format(d$loaded, big.mark = ",")))
+  })
+  output$modeling_metric_points_sub <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("Load the 3D scene to see live counts")
+    coord <- if (identical(d$coord_source, "full_georeferenced")) "georeferenced" else "PLY preview"
+    HTML(paste0("visible / loaded &middot; ", coord))
+  })
+
+  output$modeling_metric_selected <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return(HTML("&mdash;"))
+    HTML(format(d$selected, big.mark = ","))
+  })
+  output$modeling_metric_selected_sub <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("0 points")
+    method <- input$selection_method %||% ""
+    method_label <- switch(method,
+      box                 = "box selection",
+      lasso               = "lasso selection",
+      polygon             = "polygon selection",
+      manual_crown_lasso  = "manual crown lasso",
+      if (d$selected == 0) "no active selection" else "active selection"
+    )
+    HTML(paste0(method_label, " &middot; ", input$selection_tool %||% ""))
+  })
+
+  output$modeling_metric_trees <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return(HTML("&mdash;"))
+    HTML(format(d$trees, big.mark = ","))
+  })
+  output$modeling_metric_trees_sub <- renderUI({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("Tree candidates from canopy grid")
+    HTML(paste0("min canopy ", formatC(input$min_tree_height %||% 0, format = "f", digits = 1),
+                " m &middot; grid ", formatC(input$tree_grid %||% 0, format = "f", digits = 1), " m"))
+  })
+
+  output$modeling_metric_surface <- renderUI({
+    layers <- character()
+    if (isTRUE(input$show_draped_dsm))    layers <- c(layers, "Draped DSM")
+    if (isTRUE(input$show_textured_mesh)) layers <- c(layers, "Textured mesh")
+    if (length(layers) == 0) {
+      return(HTML("Points only"))
+    }
+    paste(layers, collapse = " + ")
+  })
+  output$modeling_metric_surface_sub <- renderUI({
+    products <- odm_product_paths(project())
+    ortho_ok <- file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]])
+    dsm_ok   <- file.exists(products[["dsm"]])
+    mesh_ok  <- file.exists(products[["textured_obj"]])
+    bits <- c(
+      if (ortho_ok) "ortho" else NULL,
+      if (dsm_ok)   "DSM"   else NULL,
+      if (mesh_ok)  "OBJ"   else NULL
+    )
+    if (length(bits) == 0) return("No surface products yet")
+    HTML(paste0("available: ", paste(bits, collapse = ", ")))
+  })
+
+  # ---- 3D Modeling: Scene sources card -----------------------------------
+  # One status pill per ODM product family, plus a one-line summary header.
+  # Drives the cross-tab feedback: as soon as Processing Engine finishes,
+  # or as soon as the user changes the orthomosaic path on the GIS
+  # Workspace tab, the pills here flip from Missing to Available without
+  # any extra action.
+  scene_sources_state <- reactive({
+    products <- odm_product_paths(project())
+    list(
+      ortho = file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]]),
+      dsm   = file.exists(products[["dsm"]]),
+      dtm   = file.exists(products[["dtm"]]),
+      cloud = any(file.exists(unname(products[c("point_cloud_las",
+                                                "point_cloud_laz",
+                                                "point_cloud_copc")]))),
+      mesh  = file.exists(products[["textured_obj"]])
+    )
+  })
+
+  output$scene_source_ortho <- renderUI(status_badge(scene_sources_state()$ortho, "Available", "Missing"))
+  output$scene_source_dsm   <- renderUI(status_badge(scene_sources_state()$dsm,   "Available", "Missing"))
+  output$scene_source_dtm   <- renderUI(status_badge(scene_sources_state()$dtm,   "Available", "Missing"))
+  output$scene_source_cloud <- renderUI(status_badge(scene_sources_state()$cloud, "Available", "Missing"))
+  output$scene_source_mesh  <- renderUI(status_badge(scene_sources_state()$mesh,  "Available", "Missing"))
+
+  output$scene_sources_status <- renderText({
+    s <- scene_sources_state()
+    have <- sum(unlist(s))
+    total <- length(s)
+    if (have == 0) return("No sources yet - run Processing Engine or point the project to existing products.")
+    if (have == total) return("All scene sources are ready.")
+    paste0(have, " of ", total, " scene sources ready.")
+  })
+
+  # ---- 3D Modeling: viewer scene-info overlay ----------------------------
+  output$viewer_info_source <- renderText({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("no scene loaded")
+    if (nzchar(d$source_path)) basename(d$source_path) else "(unknown)"
+  })
+  output$viewer_info_heights <- renderText({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("-")
+    if (nzchar(d$height_src)) d$height_src else "local low-Z proxy"
+  })
+  output$viewer_info_crs <- renderText({
+    d <- modeling_scene_descriptors()
+    if (!isTRUE(d$scene_loaded)) return("-")
+    if (identical(d$coord_source, "full_georeferenced")) "projected metres" else "PLY local frame"
+  })
+
+  # ---- 3D Modeling: Spectral signature tab -------------------------------
+  # Mirrors the per-tree / per-ROI spectral table produced in Spectral
+  # Analytics. The same reactiveVal feeds both views so the 3D tab does
+  # not need its own compute button - users run the computation where
+  # the inputs live, then see the rows here in 3D context.
+  output$modeling_tree_spectral <- renderTable({
+    x <- tree_spectral_metrics_value()
+    if (is.null(x) || nrow(x) == 0) {
+      return(data.frame(
+        info = paste0(
+          "No tree/ROI spectral metrics yet. Open Spectral Analytics, ",
+          "click 'Compute tree / ROI spectral metrics', then return here."
+        ),
+        stringsAsFactors = FALSE,
+        check.names = FALSE
+      ))
+    }
+    x
+  })
+
+  # ---- 3D Modeling: pull a GIS Workspace ROI into the 3D selection -------
+  # The GIS Workspace lets users draw polygons on the orthomosaic and
+  # save them as named ROIs. Here we let the user pick any of those
+  # named ROIs and convert it back into a 3D selection: the polygon is
+  # projected into the same x/y frame the preview points use, then
+  # point-in-polygon picks which preview points fall inside. Driving the
+  # 3D selection by GIS Workspace polygons is the most common cross-tab
+  # request - the user has already drawn the right region on the map.
+  observe({
+    rois <- roi_collection()
+    updateSelectInput(
+      session,
+      "gis_roi_to_3d",
+      choices  = if (length(rois) == 0) character(0) else names(rois),
+      selected = isolate(input$gis_roi_to_3d) %||% NULL
+    )
+  })
+
+  observeEvent(input$apply_gis_roi_to_3d, {
+    name <- input$gis_roi_to_3d %||% ""
+    rois <- roi_collection()
+    if (!nzchar(name) || !name %in% names(rois)) {
+      showNotification("Pick a saved ROI in the dropdown first (Use GIS Workspace ROI section).",
+                       type = "warning", duration = 5)
+      return()
+    }
+    if (point_cloud_event() == 0) {
+      showNotification("Load the 3D scene first, then pull the ROI in.",
+                       type = "warning", duration = 5)
+      return()
+    }
+    pts <- tryCatch(point_cloud(), error = function(e) NULL)
+    if (is.null(pts) || nrow(pts) == 0) {
+      showNotification("Point cloud is empty - nothing to select.",
+                       type = "warning", duration = 5)
+      return()
+    }
+
+    ref_raster <- point_cloud_reference_raster()
+    if (is.null(ref_raster)) {
+      showNotification(
+        "Project has no DSM or orthomosaic with a known CRS, so the ROI cannot be reprojected.",
+        type = "warning", duration = 6)
+      return()
+    }
+
+    roi <- rois[[name]]
+    ll  <- data.frame(lng = roi$lng, lat = roi$lat)
+    poly_xy <- tryCatch({
+      ll_sf  <- sf::st_as_sf(ll, coords = c("lng", "lat"), crs = 4326)
+      proj_s <- sf::st_transform(ll_sf, terra::crs(ref_raster))
+      coords <- sf::st_coordinates(proj_s)
+      if (points_are_georeferenced(pts)) {
+        data.frame(x = coords[, 1], y = coords[, 2])
+      } else {
+        e  <- terra::ext(ref_raster)
+        xr <- range(pts$x, na.rm = TRUE)
+        yr <- range(pts$y, na.rm = TRUE)
+        denom_x <- as.numeric(e[2] - e[1])
+        denom_y <- as.numeric(e[4] - e[3])
+        if (!is.finite(denom_x) || denom_x == 0 || !is.finite(denom_y) || denom_y == 0) return(NULL)
+        x_local <- xr[1] + (coords[, 1] - as.numeric(e[1])) * diff(xr) / denom_x
+        y_local <- yr[1] + (coords[, 2] - as.numeric(e[3])) * diff(yr) / denom_y
+        data.frame(x = x_local, y = y_local)
+      }
+    }, error = function(err) NULL)
+
+    if (is.null(poly_xy) || nrow(poly_xy) < 3) {
+      showNotification("Could not project the ROI into the point-cloud frame.",
+                       type = "warning", duration = 5)
+      return()
+    }
+
+    poly_closed <- rbind(poly_xy, poly_xy[1, , drop = FALSE])
+    hit_ids <- tryCatch({
+      pts_sf  <- sf::st_as_sf(pts[, c("x", "y", "point_id")], coords = c("x", "y"))
+      poly_sf <- sf::st_sfc(sf::st_polygon(list(as.matrix(poly_closed))))
+      inside  <- sf::st_intersects(pts_sf, poly_sf, sparse = FALSE)[, 1]
+      pts$point_id[inside]
+    }, error = function(err) integer())
+
+    if (length(hit_ids) == 0) {
+      showNotification(paste0("ROI '", name, "' did not intersect any preview points."),
+                       type = "warning", duration = 5)
+      return()
+    }
+
+    selected_ids_value(unique(as.integer(hit_ids)))
+    updateTextInput(session, "selection_label", value = name)
+    showNotification(
+      paste0("ROI '", name, "' applied to 3D selection: ",
+             format(length(hit_ids), big.mark = ","), " preview points."),
+      type = "message", duration = 5
     )
   })
 
