@@ -1672,13 +1672,7 @@ ui <- page_navbar(
         # so the app never re-triggers cloud downloads on Load.
         uiOutput("cloud_sync_banner"),
         card(card_header("Project status"),
-             uiOutput("project_status_quick"),
-             actionButton("refresh_project_status",
-                          "Run full validation (opens rasters)",
-                          class = "btn-outline-secondary btn-sm",
-                          style = "margin-bottom:8px;"),
-             uiOutput("project_status_header"),
-             tableOutput("project_status_table")),
+             uiOutput("project_status_quick")),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
@@ -2191,6 +2185,16 @@ server <- function(input, output, session) {
   # same ROI against different rasters / dates later.
   roi_collection <- reactiveVal(list())
   roi_comparison_request <- reactiveVal(0L)
+
+  # Async state for the 'Refine DTM + CHM via CSF (lidR)' button.
+  # `csf_running` gates the button so it cannot be fired twice in
+  # parallel; `outputs_refresh_token` is a monotonically-incrementing
+  # counter that downstream UI reads to know when on-disk products
+  # have changed under it (CSF rewrites DTM and CHM, but no reactive
+  # input changes, so we bump the token to force a re-render of the
+  # project status card).
+  csf_running            <- reactiveVal(FALSE)
+  outputs_refresh_token  <- reactiveVal(0L)
   panel_coefficients <- reactiveVal(data.frame(
     band = c("Blue", "Green", "Red", "RedEdge", "NIR"),
     certified_reflectance = NA_real_,
@@ -2779,7 +2783,12 @@ server <- function(input, output, session) {
 
   # Lightweight always-on summary: file existence + size only. Cheap.
   # Shows up the moment the user lands on the GIS Workspace tab.
+  # Reads outputs_refresh_token() so the card re-renders automatically
+  # after a background job (CSF refinement, etc.) finishes rewriting
+  # products on disk - file mtimes do not invalidate reactives, so we
+  # explicitly bump the token from the job's onFulfilled callback.
   output$project_status_quick <- renderUI({
+    outputs_refresh_token()  # invalidates this render when CSF finishes
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) {
       return(tags$div(class = "text-muted", "Project not configured."))
@@ -2849,15 +2858,28 @@ server <- function(input, output, session) {
     # DSM. ODM's default ground classification is conservative on
     # dense canopy; CSF often dramatically improves the CHM.
     if (isTRUE(qc[["point_cloud"]]) && isTRUE(qc[["dsm"]])) {
+      csf_busy   <- isTRUE(csf_running())
+      btn_label  <- if (csf_busy) "CSF refinement running..."
+                    else "Refine DTM + CHM via CSF (lidR)"
+      btn_extra  <- if (csf_busy) list(disabled = "disabled") else list()
       rows[[length(rows) + 1L]] <- tags$div(
         style = "margin-top:6px;",
-        actionButton("refine_dtm_csf",
-                     "Refine DTM + CHM via CSF (lidR)",
-                     class = "btn-outline-success btn-sm"),
+        do.call(actionButton,
+                c(list(inputId = "refine_dtm_csf",
+                       label   = btn_label,
+                       class   = "btn-outline-success btn-sm"),
+                  btn_extra)),
         tags$div(style = "color:#6b7280; font-size:0.8em; margin-top:4px;",
-                 "Re-classifies the point cloud with Cloth Simulation Filter ",
-                 "(handles dense vegetation better than ODM's SMRF default), ",
-                 "writes a new DTM and rebuilds the CHM. Takes a few minutes."))
+                 if (csf_busy)
+                   paste0("Running in a background worker. The UI stays ",
+                          "responsive while CSF re-classifies the point ",
+                          "cloud and rebuilds the CHM.")
+                 else
+                   paste0("Re-classifies the point cloud with Cloth Simulation Filter ",
+                          "(handles dense vegetation better than ODM's SMRF default), ",
+                          "writes a new DTM and rebuilds the CHM. Runs in a ",
+                          "background worker so the rest of the app stays ",
+                          "responsive while it takes a few minutes.")))
     }
     tags$div(style = "margin-bottom:8px;", rows)
   })
@@ -2885,11 +2907,28 @@ server <- function(input, output, session) {
     })
   })
 
-  # Observer for the 'Refine DTM + CHM via CSF (lidR)' button. Reads
-  # the cached LAZ, runs Cloth Simulation Filter ground classification,
-  # writes a new DTM into the cache (overwriting the ODM one in place),
-  # then rebuilds the CHM = DSM - DTM. Honest progress so the user
-  # isn't staring at a frozen UI.
+  # Observer for the 'Refine DTM + CHM via CSF (lidR)' button.
+  #
+  # CSF on a real ODM cloud (millions of points) takes a few minutes,
+  # so running it on the main R thread freezes the entire app (every
+  # other tab, every slider, every leaflet pan). The observer instead
+  # ships the work into a background `future_promise` (multisession
+  # worker initialised at the top of this file) and returns
+  # immediately. The user gets:
+  #   * a persistent in-app notification that the job is running,
+  #     stays up until the worker resolves or rejects;
+  #   * a disabled button so a double-click does not enqueue two CSF
+  #     jobs against the same cloud;
+  #   * a follow-up notification when the worker finishes (success
+  #     reports the new DTM/CHM basenames; failure surfaces the
+  #     error message);
+  #   * an automatic refresh of the Project status card via
+  #     `outputs_refresh_token`, because CSF writes new files on
+  #     disk but does not change any reactive input.
+  #
+  # When `future` / `promises` are not available (e.g. an old env),
+  # we fall back to the previous synchronous behaviour so the button
+  # still works - just blocking again.
   observeEvent(input$refine_dtm_csf, {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
@@ -2899,139 +2938,91 @@ server <- function(input, output, session) {
                        type = "error", duration = 12)
       return()
     }
-    withProgress(message = "Refining DTM via CSF", value = 0.05, {
-      incProgress(0.10, detail = "Reading point cloud")
-      res <- tryCatch(
-        improve_dtm_csf(p, resolution = 0.5,
-                        class_threshold = 0.5,
-                        cloth_resolution = 0.5,
-                        rigidness = 1L,
-                        rebuild_chm = TRUE),
-        error = function(e) {
-          showNotification(
-            paste("CSF refinement failed:", conditionMessage(e)),
-            type = "error", duration = 12)
-          NULL
-        }
+    if (isTRUE(csf_running())) {
+      showNotification(
+        "CSF refinement is already running in the background. Wait for it to finish before starting another.",
+        type = "warning", duration = 6
       )
-      incProgress(0.9, detail = "Done")
-      if (!is.null(res)) {
+      return()
+    }
+
+    finish_csf <- function(res = NULL, err = NULL) {
+      csf_running(FALSE)
+      shiny::removeNotification("csf_progress")
+      if (!is.null(err)) {
         showNotification(
-          paste0("CSF complete. New DTM: ", basename(res$dtm),
-                 " | New CHM: ", basename(res$chm),
-                 ". Reload the GIS Workspace overlays to see them."),
-          type = "message", duration = 12)
+          paste("CSF refinement failed:", conditionMessage(err)),
+          type = "error", duration = 12, id = "csf_result"
+        )
+        return(invisible(NULL))
       }
-    })
-  })
+      if (is.null(res)) return(invisible(NULL))
+      outputs_refresh_token(outputs_refresh_token() + 1L)
+      showNotification(
+        paste0("CSF complete. New DTM: ", basename(res$dtm),
+               " | New CHM: ", basename(res$chm),
+               ". Reload the GIS Workspace overlays to see them."),
+        type = "message", duration = 12, id = "csf_result"
+      )
+    }
 
-  # Heavy validation: opens rasters via terra::rast(). Gated behind a
-  # button so we don't pay for it (slow on OneDrive Files-On-Demand)
-  # unless the user explicitly asks. Once computed, it's cached
-  # against project() + the click counter.
-  project_status <- reactive({
-    p <- tryCatch(project(), error = function(e) NULL)
-    if (is.null(p)) return(NULL)
-    val <- tryCatch(validate_odm_outputs(p), error = function(e) NULL)
+    # Snapshot the project list so the worker has a self-contained
+    # value (futures serialise their globals - the reactive `project()`
+    # would not survive the trip otherwise).
+    p_snapshot <- p
 
-    # Image count from images_dir (RGB or multispectral).
-    n_imgs <- tryCatch({
-      ext_re <- "\\.(jpe?g|tif?f)$"
-      length(list.files(p$images_dir, pattern = ext_re,
-                        ignore.case = TRUE, recursive = FALSE))
-    }, error = function(e) NA_integer_)
-
-    # Geographic centroid / CRS from the orthomosaic, if loadable.
-    centroid <- NULL; crs_name <- NA_character_; area_ha <- NA_real_
-    ortho <- if (!is.null(val)) val$path[val$product == "Orthomosaic"][1L] else NULL
-    if (!is.null(ortho) && length(ortho) && file.exists(ortho)) {
-      r <- tryCatch(terra::rast(ortho), error = function(e) NULL)
-      if (!is.null(r)) {
-        e <- terra::ext(r)
-        crs_name <- tryCatch(terra::crs(r, describe = TRUE)$name,
-                             error = function(e) NA_character_)
-        width  <- e$xmax - e$xmin; height <- e$ymax - e$ymin
-        area_ha <- (width * height) / 10000
-        # Reproject centroid to lon/lat for human readability.
-        cx <- (e$xmax + e$xmin) / 2; cy <- (e$ymax + e$ymin) / 2
-        pt <- terra::vect(cbind(cx, cy), crs = terra::crs(r))
-        pt_ll <- tryCatch(terra::project(pt, "EPSG:4326"),
-                          error = function(e) NULL)
-        if (!is.null(pt_ll)) {
-          xy <- terra::crds(pt_ll)
-          centroid <- c(lon = xy[1, 1], lat = xy[1, 2])
+    if (isTRUE(.dronebior_async_available)) {
+      csf_running(TRUE)
+      showNotification(
+        "Refining DTM via CSF in a background worker. The UI stays responsive - this notification will go away when it finishes.",
+        type     = "message",
+        duration = NULL,
+        closeButton = FALSE,
+        id       = "csf_progress"
+      )
+      fut <- promises::future_promise({
+        # The worker is a fresh R session - it has not loaded
+        # DroneBioR or lidR. requireNamespace makes both available
+        # via the package's installed library path.
+        if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+          stop("DroneBioR package not installed in worker")
         }
-      }
-    }
+        if (!requireNamespace("lidR", quietly = TRUE)) {
+          stop("lidR package not installed in worker")
+        }
+        DroneBioR::improve_dtm_csf(
+          p_snapshot,
+          resolution       = 0.5,
+          class_threshold  = 0.5,
+          cloth_resolution = 0.5,
+          rigidness        = 1L,
+          rebuild_chm      = TRUE
+        )
+      }, seed = TRUE)
 
-    # Most recent stage history (sum of durations) for this run, if any.
-    last_run_seconds <- tryCatch({
-      h <- DroneBioR:::read_odm_stage_history()
-      if (nrow(h)) sum(h$duration_seconds[h$run_started_at == max(h$run_started_at)],
-                       na.rm = TRUE) else NA_real_
-    }, error = function(e) NA_real_)
-
-    list(
-      n_imgs = n_imgs, crs_name = crs_name, area_ha = area_ha,
-      centroid = centroid, last_run_seconds = last_run_seconds,
-      validation = val
-    )
-  }) |>
-    bindEvent(input$refresh_project_status, ignoreNULL = TRUE)
-
-  output$project_status_header <- renderUI({
-    s <- project_status()
-    if (is.null(s)) return(tags$em("Project not configured."))
-    bits <- list()
-    bits[[length(bits) + 1L]] <- tags$div(
-      tags$strong("Images: "),
-      if (is.na(s$n_imgs)) "—" else s$n_imgs)
-    bits[[length(bits) + 1L]] <- tags$div(
-      tags$strong("CRS: "),
-      if (is.na(s$crs_name)) "(no orthomosaic loaded)" else s$crs_name)
-    if (!is.null(s$centroid)) {
-      bits[[length(bits) + 1L]] <- tags$div(
-        tags$strong("Centroid: "),
-        sprintf("%.5f, %.5f (lat, lon)", s$centroid["lat"], s$centroid["lon"]))
+      promises::then(
+        fut,
+        onFulfilled = function(res) finish_csf(res = res),
+        onRejected  = function(err) finish_csf(err = err)
+      )
+      invisible(NULL)
+    } else {
+      # Synchronous fallback when async is not available.
+      withProgress(message = "Refining DTM via CSF", value = 0.05, {
+        incProgress(0.10, detail = "Reading point cloud")
+        res <- tryCatch(
+          improve_dtm_csf(p_snapshot, resolution = 0.5,
+                          class_threshold = 0.5,
+                          cloth_resolution = 0.5,
+                          rigidness = 1L,
+                          rebuild_chm = TRUE),
+          error = function(e) { finish_csf(err = e); NULL }
+        )
+        incProgress(0.9, detail = "Done")
+        if (!is.null(res)) finish_csf(res = res)
+      })
     }
-    if (is.finite(s$area_ha)) {
-      bits[[length(bits) + 1L]] <- tags$div(
-        tags$strong("Footprint area: "),
-        if (s$area_ha >= 100) sprintf("%.2f km² (%.0f ha)", s$area_ha / 100, s$area_ha)
-        else sprintf("%.1f ha", s$area_ha))
-    }
-    if (is.finite(s$last_run_seconds) && s$last_run_seconds > 0) {
-      bits[[length(bits) + 1L]] <- tags$div(
-        tags$strong("Last ODM run: "),
-        format_duration(s$last_run_seconds), " (sum of observed stage durations)")
-    }
-    # Warning when orthomosaic exists but extent is degenerate
-    if (!is.null(s$validation)) {
-      ortho_row <- s$validation[s$validation$product == "Orthomosaic", ]
-      if (nrow(ortho_row) && ortho_row$exists && !ortho_row$valid) {
-        bits[[length(bits) + 1L]] <- tags$div(
-          style = "color:#dc2626; margin-top:6px;",
-          "⚠ Orthomosaic looks degenerate: ", ortho_row$notes,
-          ". Re-run ODM — check that camera positions / geo.txt are correct.")
-      }
-    }
-    tags$div(style = "margin-bottom:8px;", bits)
   })
-
-  output$project_status_table <- renderTable({
-    s <- project_status()
-    if (is.null(s) || is.null(s$validation)) return(NULL)
-    v <- s$validation
-    # Show only rows that either exist OR are key products (to surface "missing").
-    keep <- v$exists | v$product %in% c("Orthomosaic", "DSM", "DTM",
-                                         "Point cloud (COPC)", "Textured mesh (OBJ)")
-    v <- v[keep, ]
-    # Friendly display columns
-    v$status <- ifelse(v$exists,
-                       ifelse(v$valid, "✓ ok", "⚠ check"),
-                       "— missing")
-    v[, c("product", "status", "size_mb", "dimensions", "extent_m", "crs", "notes")]
-  }, sanitize.text.function = identity, na = "")
 
   output$product_table <- renderTable({
     products()
