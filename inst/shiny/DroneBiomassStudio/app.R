@@ -118,38 +118,50 @@ raster_header <- function(path, progress_msg = "Reading raster header") {
   header
 }
 
-# "Now loading" banner at the top of the GIS Workspace. R-side helpers
-# push/pop task names via a Shiny custom message; the JS handler (in
-# tags$head) writes the message into a div with a setInterval-driven
-# elapsed-time counter so the timer keeps ticking even while the R
-# session is blocked on a synchronous terra::rast() call. Without the
-# client-side ticker the elapsed display would freeze along with the
-# rest of the UI.
-gis_task_start <- function(session, name) {
+# Floating "Now loading" banner. R-side helpers push/pop task names
+# via a Shiny custom message; the JS handler (in tags$head) creates
+# a position:fixed <div> in document.body and updates it with a
+# setInterval-driven elapsed-time counter, so the timer keeps ticking
+# even while the R session is blocked on a synchronous terra::rast()
+# call. Without the client-side ticker the elapsed display would
+# freeze along with the rest of the UI.
+#
+# CRITICAL: session$sendCustomMessage() queues the message and Shiny
+# only flushes the queue at the END of the current reactive flush
+# cycle. If we just queue the "start" message and immediately enter
+# a 5-minute synchronous terra::rast() call, the message sits in the
+# queue for those 5 minutes - the banner never appears. We yield to
+# the libuv event loop via httpuv::service(0) right after sending,
+# which drains pending WebSocket writes and forces the banner to
+# render BEFORE the heavy work blocks the R session.
+gis_task_send <- function(session, payload) {
   if (is.null(session)) return(invisible(NULL))
-  session$sendCustomMessage("dronebior_gis_task",
-                            list(action = "start", name = name))
+  session$sendCustomMessage("dronebior_gis_task", payload)
+  if (requireNamespace("httpuv", quietly = TRUE)) {
+    # service(0) processes one iteration of the event loop without
+    # blocking - just enough to flush queued WebSocket frames.
+    tryCatch(httpuv::service(0), error = function(e) NULL)
+  }
+}
+gis_task_start <- function(session, name, detail = NULL) {
+  gis_task_send(session, list(action = "start",
+                              name   = name,
+                              detail = detail))
 }
 gis_task_stop <- function(session) {
-  if (is.null(session)) return(invisible(NULL))
-  session$sendCustomMessage("dronebior_gis_task",
-                            list(action = "stop"))
+  gis_task_send(session, list(action = "stop"))
 }
 
-# Wrap an expression with both the top-banner ticker and a Shiny
-# withProgress notification. The banner is the headline indicator
-# ("Now: X · 12s"); the corner notification adds the file basename for
-# context. Both come down on exit. Works fine when session is NULL
-# (the wrapper falls through to plain evaluation outside Shiny).
+# Wrap an expression with the top-banner ticker. The banner is the
+# headline indicator ("Now: X · file.tif · 12s"). We do NOT also wrap
+# in shiny::withProgress because that adds a redundant (and similarly
+# buffered) corner notification - the banner is the better signal.
+# Works fine when session is NULL (the wrapper falls through to plain
+# evaluation outside Shiny).
 with_gis_task <- function(session, name, detail = NULL, expr) {
-  gis_task_start(session, name)
+  gis_task_start(session, name, detail)
   on.exit(gis_task_stop(session), add = TRUE)
-  has_session <- !is.null(session)
-  if (has_session) {
-    shiny::withProgress(message = name, detail = detail, value = 0.5, expr)
-  } else {
-    force(expr)
-  }
+  force(expr)
 }
 
 raster_tile_path <- function(x) {
