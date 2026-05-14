@@ -3187,42 +3187,81 @@ server <- function(input, output, session) {
       dsm <- terra::rast(dsm_path)
       if (terra::nlyr(dsm) > 1) dsm <- dsm[[1]]
 
+      # --- 1) Crop to the orthomosaic footprint when both exist. The
+      # DSM commonly extrapolates a few pixels beyond the ortho, and
+      # those pixels carry extreme Z values (the "no-coverage spike"
+      # that draws infinite white columns in the 3D scene).
+      ortho_r <- NULL
       if (!is.null(orthomosaic_path) && file.exists(orthomosaic_path)) {
         ortho_r <- tryCatch(terra::rast(orthomosaic_path), error = function(e) NULL)
-        if (!is.null(ortho_r) && terra::nlyr(ortho_r) >= 6) {
-          alpha <- ortho_r[[6]]
+      }
+      if (!is.null(ortho_r)) {
+        dsm <- tryCatch(
+          terra::crop(dsm, terra::ext(ortho_r), snap = "near"),
+          error = function(e) dsm
+        )
+      }
+
+      # --- 2) Alpha-band mask. Works for ODM MicaSense (band 6),
+      # ODM RGB with alpha (band 4), and any other layout that puts
+      # alpha as the LAST band. Feathered edges (alpha 1..254) still
+      # produce spikes, so we treat anything below 200 as no-data.
+      if (!is.null(ortho_r)) {
+        nl <- terra::nlyr(ortho_r)
+        alpha_idx <- if (nl == 6L) 6L else if (nl == 4L) 4L else NA_integer_
+        if (!is.na(alpha_idx)) {
+          alpha <- ortho_r[[alpha_idx]]
           if (!terra::compareGeom(dsm, alpha, stopOnError = FALSE)) {
             alpha <- terra::resample(alpha, dsm, method = "near")
           }
-          # ODM's alpha band is feathered at the no-data edge (values
-          # between 1 and 254). A strict alpha == 0 mask leaves the
-          # feather pixels behind and they still spike when draped.
-          # Treat anything below 200 as no-data.
           dsm <- terra::mask(dsm, alpha >= 200, maskvalues = 0, updatevalue = NA)
         }
       }
 
-      # 5x5 median focal pass to despike isolated outliers that the
-      # alpha mask cannot catch (real DSM pixels with extreme values).
-      # Median filter respects NAs and preserves real canopy structure.
+      # --- 3) Outlier clipping by robust percentiles. RGB orthos
+      # without a usable alpha band still spike; here we compute the
+      # 0.5 / 99.5 percentile of the FINITE DSM values and mark
+      # anything outside that range as NA. A 99% canopy + ground
+      # signal sits well inside this window, but the 50 000 m no-data
+      # sentinel does not.
+      dsm_vals <- tryCatch(terra::values(dsm), error = function(e) NULL)
+      if (!is.null(dsm_vals)) {
+        ok <- is.finite(dsm_vals)
+        if (any(ok)) {
+          qs <- stats::quantile(dsm_vals[ok], probs = c(0.005, 0.995),
+                                na.rm = TRUE, names = FALSE)
+          if (is.finite(qs[1L]) && is.finite(qs[2L]) && qs[2L] > qs[1L]) {
+            spread <- qs[2L] - qs[1L]
+            # Allow a small margin below/above the central window so a
+            # tall building / tree slightly above p99.5 is not cut off.
+            lo <- qs[1L] - 0.10 * spread
+            hi <- qs[2L] + 0.10 * spread
+            dsm[dsm < lo | dsm > hi] <- NA
+          }
+        }
+      }
+
+      # --- 4) Final despike: 3x3 median respects NAs and removes
+      # one-off extreme pixels that survived the percentile clip.
       dsm <- tryCatch(
-        terra::focal(dsm, w = 5, fun = "median", na.rm = TRUE, na.policy = "all"),
+        terra::focal(dsm, w = 3, fun = "median", na.rm = TRUE, na.policy = "all"),
         error = function(e) dsm
       )
 
       ds <- terra::spatSample(dsm, size = grid_size * grid_size,
                               method = "regular", as.raster = TRUE, na.rm = FALSE)
       z  <- terra::as.matrix(ds, wide = TRUE)
+
+      # NaN is JSON-illegal; flag every missing/invalid cell as NA and
+      # let the viewer JS skip the corresponding vertex (collapses it
+      # to the scene floor instead of building a spike).
       bad <- !is.finite(z)
-      if (any(bad) && any(!bad)) {
-        # 2nd-percentile, not min, so a single residual outlier-low
-        # pixel does not drag the floor below the actual terrain.
-        floor_z <- as.numeric(stats::quantile(z[!bad], probs = 0.02,
-                                              na.rm = TRUE, names = FALSE))
-        z[bad] <- floor_z
-      } else if (all(bad)) {
-        return(NULL)
-      }
+      if (all(bad)) return(NULL)
+      # Use the 1st percentile of the GOOD pixels as the no-data
+      # floor. This is below visible terrain but never -Inf.
+      floor_z <- as.numeric(stats::quantile(z[!bad], probs = 0.01,
+                                            na.rm = TRUE, names = FALSE))
+      z[bad] <- floor_z
 
       e <- terra::ext(ds)
       list(
