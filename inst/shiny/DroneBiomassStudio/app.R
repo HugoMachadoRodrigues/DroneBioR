@@ -1417,6 +1417,73 @@ ui <- page_navbar(
           console.warn('GLTFExporter failed:', err);
         }, { binary: true });
       });
+
+      // 3D Modeling extended controls. These message handlers reach
+      // into window.__dronebior_viewer (set up inside the viewer
+      // script) and manipulate the live scene without forcing a
+      // re-render. Cheap and instant: layer visibility toggles,
+      // point-size slider, background theme, camera presets, and
+      // tool-cancel (Esc) all go through here.
+      Shiny.addCustomMessageHandler('dronebior_3d_set_layer', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.setLayerVisible || !msg) return;
+        v.setLayerVisible(msg.name, msg.visible);
+      });
+      Shiny.addCustomMessageHandler('dronebior_3d_set_point_size', function(msg) {
+        var v = window.__dronebior_viewer;
+        window.__dronebior_point_size_pct = msg && msg.pct;
+        if (v && v.setPointSize) v.setPointSize(msg && msg.pct);
+      });
+      Shiny.addCustomMessageHandler('dronebior_3d_set_bg', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (v && v.setBackground) v.setBackground(msg && msg.theme);
+      });
+      Shiny.addCustomMessageHandler('dronebior_3d_camera_preset', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (v && v.cameraPreset) v.cameraPreset(msg && msg.name);
+      });
+      Shiny.addCustomMessageHandler('dronebior_3d_cancel', function(_msg) {
+        var v = window.__dronebior_viewer;
+        if (v && v.cancelSelection) v.cancelSelection();
+        // Best-effort polygon abort: the viewer JS keeps `polygonPath`
+        // in its own closure, so we fire a synthetic Escape key on the
+        // canvas which the viewer's keydown handler picks up.
+        var canvas = v && v.renderer && v.renderer.domElement;
+        if (canvas) {
+          canvas.dispatchEvent(new KeyboardEvent('keydown',
+            { key: 'Escape', bubbles: true }));
+        }
+      });
+
+      // Global keyboard shortcuts for the 3D viewer. These fire even
+      // when the canvas does not have keyboard focus (we listen on
+      // window). The viewer presets API gates them by checking that
+      // a viewer is currently mounted.
+      window.addEventListener('keydown', function(e) {
+        var v = window.__dronebior_viewer;
+        if (!v) return;
+        // Do not steal keys when the user is typing into a textInput.
+        var tag = (e.target && e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        if (e.key === 'f' || e.key === 'F') {
+          if (v.cameraPreset) v.cameraPreset('frame');
+          e.preventDefault();
+        } else if (e.key === '1') {
+          if (v.cameraPreset) v.cameraPreset('front'); e.preventDefault();
+        } else if (e.key === '3') {
+          if (v.cameraPreset) v.cameraPreset('side');  e.preventDefault();
+        } else if (e.key === '7') {
+          if (v.cameraPreset) v.cameraPreset('top');   e.preventDefault();
+        } else if (e.key === '5') {
+          if (v.cameraPreset) v.cameraPreset('iso');   e.preventDefault();
+        } else if (e.key === 'Escape') {
+          if (v.cancelSelection) v.cancelSelection();
+          if (window.Shiny) {
+            Shiny.setInputValue('dronebior_3d_esc',
+              Math.random(), { priority: 'event' });
+          }
+        }
+      });
     ")),
     tags$style(HTML("
       :root {
@@ -1965,6 +2032,82 @@ ui <- page_navbar(
         font-size: 0.82rem;
       }
 
+      /* Live layer-toggle row beneath the toolbar. checkboxGroupInput
+         renders one .form-check per layer; we make them sit on the
+         same line as pill-styled chips so the user sees Points, Trees,
+         Mesh, Grid etc. at a glance. Toggling any pill instantly
+         shows/hides the corresponding object in the three.js scene
+         (no point-cloud rebuild). */
+      .modeling-layer-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 10px;
+        margin: 8px 0 12px;
+        padding: 8px 12px;
+        background: #f6f8fb;
+        border: 1px solid var(--db-border);
+        border-radius: 999px;
+        font-size: 0.82rem;
+      }
+      .modeling-layer-row > .toolbar-group-label {
+        margin-right: 4px;
+      }
+      .modeling-layer-row .shiny-options-group {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 14px;
+        margin: 0;
+      }
+      .modeling-layer-row .form-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin: 0;
+        padding: 2px 8px;
+        background: #ffffff;
+        border: 1px solid var(--db-border);
+        border-radius: 999px;
+      }
+      .modeling-layer-row .form-check-label {
+        font-size: 0.80rem;
+        color: #102a43;
+      }
+      .modeling-layer-row .form-check-input { margin: 0 4px 0 0; }
+
+      /* Floating mode badge that lives in the top-left corner of the
+         3D viewer. Reflects the active selection tool name plus the
+         relevant keyboard shortcuts so the user never has to consult
+         a separate help page to know what the mouse buttons do. */
+      .viewer-mode-badge {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(15, 23, 42, 0.85);
+        color: #f8fafc;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 0.78rem;
+        z-index: 4;
+        max-width: 320px;
+        line-height: 1.35;
+      }
+      .viewer-mode-badge .mode-name { font-weight: 700; }
+      .viewer-mode-badge .mode-hints {
+        color: #cbd5e1;
+        font-size: 0.70rem;
+        margin-top: 4px;
+      }
+      .viewer-mode-badge kbd {
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 0.70rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
       /* Viewer chrome polish: subtle inner shadow on the dark canvas
          frame plus a slightly larger, multi-row legend tile. The
          tooltip pill in the top-right shows which point cloud is
@@ -2206,6 +2349,16 @@ ui <- page_navbar(
           choices = c("RGB", "Classification", "Height"),
           selected = "RGB"
         ),
+        sliderInput("point_size_pct", "Point size (%)",
+                    min = 25, max = 300, value = 100, step = 25, ticks = FALSE),
+        selectInput(
+          "viewer_bg_theme",
+          "Viewer background",
+          choices = c("Dark (navy)" = "dark",
+                      "Light (slate)" = "light",
+                      "White" = "white"),
+          selected = "dark"
+        ),
         numericInput("min_point_height", "Point height filter min (m)", value = 0, min = 0, max = 100, step = 0.5),
         numericInput("max_point_height", "Point height filter max (m)", value = 100, min = 0, max = 150, step = 0.5),
 
@@ -2339,10 +2492,18 @@ ui <- page_navbar(
               actionButton("load_3d_scene_main", "Load 3D scene", class = "btn-primary")),
           tags$span(class = "toolbar-divider"),
           div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "View"),
+              actionButton("cam_top",   "Top (7)",    class = "btn-outline-secondary"),
+              actionButton("cam_front", "Front (1)",  class = "btn-outline-secondary"),
+              actionButton("cam_side",  "Side (3)",   class = "btn-outline-secondary"),
+              actionButton("cam_iso",   "Iso (5)",    class = "btn-outline-secondary"),
+              actionButton("cam_frame", "Frame all (F)", class = "btn-outline-secondary")),
+          tags$span(class = "toolbar-divider"),
+          div(class = "toolbar-group",
               tags$span(class = "toolbar-group-label", "Camera"),
-              actionButton("reset_3d_view", "Reset view", class = "btn-outline-secondary"),
-              actionButton("zoom_in_3d",  "Zoom +",     class = "btn-outline-secondary"),
-              actionButton("zoom_out_3d", "Zoom -",     class = "btn-outline-secondary")),
+              actionButton("reset_3d_view", "Reset",   class = "btn-outline-secondary"),
+              actionButton("zoom_in_3d",  "Zoom +",   class = "btn-outline-secondary"),
+              actionButton("zoom_out_3d", "Zoom -",   class = "btn-outline-secondary")),
           tags$span(class = "toolbar-divider"),
           div(class = "toolbar-group",
               tags$span(class = "toolbar-group-label", "Export"),
@@ -2350,10 +2511,35 @@ ui <- page_navbar(
               actionButton("export_3d_gltf",  "Export glTF",    class = "btn-outline-secondary")),
           span(class = "viewer-status", textOutput("point_cloud_status", inline = TRUE))
         ),
+        # Live layer toggles - operate on the existing three.js scene
+        # via custom messages, so flipping these is INSTANT (no point
+        # cloud rebuild). The sidebar checkboxes still control whether
+        # the heavy DSM / textured-mesh data is loaded at all.
+        div(
+          class = "modeling-layer-row",
+          tags$span(class = "toolbar-group-label", "Layers"),
+          checkboxGroupInput(
+            "modeling_layers", label = NULL, inline = TRUE,
+            choices  = c("Points", "Selected", "DSM drape", "Textured mesh",
+                         "Trees", "Grid", "Axes"),
+            selected = c("Points", "Selected", "DSM drape", "Textured mesh",
+                         "Trees", "Grid", "Axes")
+          ),
+          tags$span(class = "toolbar-divider"),
+          actionButton("cancel_3d_selection", "Cancel selection (Esc)",
+                       class = "btn-outline-secondary btn-sm")
+        ),
         # Large 3D viewport with overlays (legend + scale bar + axis hint
         # + top-right scene info chip showing source + height source).
         div(
           class = "viewer-frame",
+          # Top-left mode badge with the active tool name and the
+          # mouse-button / keyboard hints the user needs while
+          # interacting. Updated by an observer that watches
+          # input$selection_tool; the JS keyboard handler also
+          # references it on hover.
+          tags$div(class = "viewer-mode-badge",
+                   uiOutput("viewer_mode_badge_content")),
           uiOutput("point_cloud_viewer"),
           div(
             class = "viewer-overlay legend",
@@ -6575,13 +6761,18 @@ server <- function(input, output, session) {
           const width = container.clientWidth;
           const height = container.clientHeight || 560;
           const scene = new THREE.Scene();
-          scene.background = new THREE.Color(0x0f172a);
-          const badge = document.createElement('div');
-          badge.className = 'tool-badge';
-          badge.textContent = points.length > 0
-            ? mode + ' | visible points: ' + points.length.toLocaleString()
-            : 'Orthomosaic basemap | load the 3D scene to add point cloud';
-          container.appendChild(badge);
+          // Apply the user's selected background theme up front; if the
+          // theme input has not been processed yet, fall back to the
+          // dark navy default. The viewer also exposes setBackground()
+          // so toggling the sidebar select updates the colour live.
+          const initialTheme = window.__dronebior_bg_theme || 'dark';
+          if (initialTheme === 'light') {
+            scene.background = new THREE.Color(0xe9eef5);
+          } else if (initialTheme === 'white') {
+            scene.background = new THREE.Color(0xffffff);
+          } else {
+            scene.background = new THREE.Color(0x0f172a);
+          }
 
           const camera = new THREE.PerspectiveCamera(55, width / height, 0.01, 1000);
           // preserveDrawingBuffer = true keeps the WebGL framebuffer
@@ -6694,6 +6885,7 @@ server <- function(input, output, session) {
               const cxScene = (((basemap.xmin + basemap.xmax) / 2) - cx) / scale * 10;
               const czScene = -((((basemap.ymin + basemap.ymax) / 2) - cy) / scale * 10);
               mesh.position.set(cxScene, 0, czScene);
+              mesh.name = 'dsm_drape';
               scene.add(mesh);
 
               // Soft outdoor lighting: hemisphere (sky -> ground)
@@ -6730,6 +6922,7 @@ server <- function(input, output, session) {
               );
               plane.rotation.x = -Math.PI / 2;
               plane.position.set(planeX, -0.08, planeZ);
+              plane.name = 'basemap_plane';
               scene.add(plane);
             });
           }
@@ -6774,6 +6967,7 @@ server <- function(input, output, session) {
                     child.geometry.computeBoundingSphere();
                   }
                 });
+                obj.name = 'textured_mesh';
                 scene.add(obj);
               }, undefined, function(err) {
                 console.warn('OBJLoader failed:', err);
@@ -6795,6 +6989,7 @@ server <- function(input, output, session) {
                     child.material = new THREE.MeshLambertMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
                   }
                 });
+                obj.name = 'textured_mesh';
                 scene.add(obj);
               });
             });
@@ -6816,22 +7011,33 @@ server <- function(input, output, session) {
           const geometry = new THREE.BufferGeometry();
           geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
           geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-          const material = new THREE.PointsMaterial({ size: 0.035, vertexColors: true });
-          scene.add(new THREE.Points(geometry, material));
+          const initialPointSize = (window.__dronebior_point_size_pct || 100) / 100 * 0.035;
+          const material = new THREE.PointsMaterial({ size: initialPointSize, vertexColors: true });
+          const pointsObject = new THREE.Points(geometry, material);
+          pointsObject.name = 'points';
+          scene.add(pointsObject);
+          let selectedPointsObject = null;
+          let selectedPointMaterial = null;
           if (selectedPositions.length > 0) {
             const selectedGeometry = new THREE.BufferGeometry();
             selectedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(selectedPositions, 3));
             selectedGeometry.setAttribute('color', new THREE.Float32BufferAttribute(selectedColors, 3));
-            scene.add(new THREE.Points(
-              selectedGeometry,
-              new THREE.PointsMaterial({ size: 0.08, vertexColors: true })
-            ));
+            selectedPointMaterial = new THREE.PointsMaterial({ size: initialPointSize * 2.3, vertexColors: true });
+            selectedPointsObject = new THREE.Points(selectedGeometry, selectedPointMaterial);
+            selectedPointsObject.name = 'selected_points';
+            scene.add(selectedPointsObject);
           }
 
           const grid = new THREE.GridHelper(12, 12, 0x94a3b8, 0x334155);
           grid.position.y = -0.03;
+          grid.name = 'grid';
           scene.add(grid);
 
+          // All tree markers go into a single named Group so the
+          // layer toggle can hide them with one .visible flag instead
+          // of walking the scene each time.
+          const treesGroup = new THREE.Group();
+          treesGroup.name = 'trees';
           const treeMeshes = [];
           const markerMaterial = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.35, metalness: 0.05 });
           trees.forEach(t => {
@@ -6840,9 +7046,10 @@ server <- function(input, output, session) {
             const p = pos(t);
             sphere.position.set(p[0], p[1] + radius * 1.2, p[2]);
             sphere.userData = t;
-            scene.add(sphere);
+            treesGroup.add(sphere);
             treeMeshes.push(sphere);
           });
+          scene.add(treesGroup);
 
           const hemi = new THREE.HemisphereLight(0xffffff, 0x1e293b, 1.6);
           scene.add(hemi);
@@ -6874,33 +7081,123 @@ server <- function(input, output, session) {
             } else {
               controls.target.copy(defaultTarget);
             }
-            controls.enabled = mode === 'Inspect trees';
-
-            // Expose handles for the sidebar-driven custom message handlers
-            // (Reset view, Zoom +/-) and for the in-scene overlays (scale
-            // bar). Stored as a window global because the viewer body is
-            // a closure with no public R-side hook.
-            window.__dronebior_viewer = {
-              camera: camera,
-              controls: controls,
-              renderer: renderer,
-              defaultPosition: defaultPosition.clone(),
-              defaultTarget: defaultTarget.clone(),
-              scene: scene
-            };
+            // Pix4D / Blender-style multi-button input: left button is
+            // reserved for the active selection tool (or orbit when no
+            // tool is active), middle pans, right ALWAYS orbits. The
+            // user can therefore reframe at any moment without having
+            // to switch the tool dropdown. controls.enabled stays TRUE;
+            // the per-button mapping below gates left-click behaviour.
+            const selectionToolNames = ['Box selection', 'Lasso selection',
+              'Polygon selection', 'Manual crown edit', 'Measure distance'];
+            const toolIsSelection = selectionToolNames.includes(mode);
+            if (THREE.MOUSE) {
+              controls.mouseButtons = {
+                LEFT:   toolIsSelection ? null : THREE.MOUSE.ROTATE,
+                MIDDLE: THREE.MOUSE.PAN,
+                RIGHT:  THREE.MOUSE.ROTATE
+              };
+            }
+            controls.enabled = true;
+            // Suppress the browser context menu on the canvas so right
+            // click drag is reserved for orbit.
+            renderer.domElement.addEventListener('contextmenu', function(e) {
+              e.preventDefault();
+            });
 
             // Visible XYZ axes inside the scene. Length = ~1/4 of the scene
             // extent so it is always readable but never dominates the view.
+            let axes = null;
             if (THREE.AxesHelper) {
               var axisLen = Math.max(1, Math.min(
                 Math.abs(defaultPosition.x - defaultTarget.x),
                 Math.abs(defaultPosition.y - defaultTarget.y),
                 Math.abs(defaultPosition.z - defaultTarget.z)
               ) * 0.25);
-              var axes = new THREE.AxesHelper(axisLen);
+              axes = new THREE.AxesHelper(axisLen);
               axes.position.copy(defaultTarget);
+              axes.name = 'axes';
               scene.add(axes);
             }
+
+            // Convenience bounds for camera presets - distance to the
+            // scene origin / center used by Top/Front/Side/Iso.
+            const sceneExtent = Math.max(
+              Math.abs(maxX - minX), Math.abs(maxY - minY),
+              Math.abs(maxZ - minZ), 1
+            ) / scale * 10;
+            const sceneRadius = Math.max(sceneExtent * 1.0, 6);
+
+            // Expose handles for the sidebar/toolbar-driven custom
+            // message handlers. Anything that wants to manipulate the
+            // live scene (layer visibility, point size, camera presets,
+            // background colour) does it through this object. Lookup
+            // by .name ensures we hit the intended object even when the
+            // scene has been re-created across renders.
+            window.__dronebior_viewer = {
+              camera: camera,
+              controls: controls,
+              renderer: renderer,
+              scene: scene,
+              defaultPosition: defaultPosition.clone(),
+              defaultTarget: defaultTarget.clone(),
+              pointMaterial: material,
+              selectedPointMaterial: selectedPointMaterial,
+              sceneRadius: sceneRadius,
+              setLayerVisible: function(name, visible) {
+                const obj = scene.getObjectByName(name);
+                if (obj) obj.visible = !!visible;
+              },
+              setPointSize: function(pct) {
+                const factor = (Math.max(10, Math.min(500, pct)) || 100) / 100;
+                if (material) material.size = 0.035 * factor;
+                if (selectedPointMaterial) selectedPointMaterial.size = 0.035 * 2.3 * factor;
+              },
+              setBackground: function(theme) {
+                if (theme === 'light') {
+                  scene.background = new THREE.Color(0xe9eef5);
+                } else if (theme === 'white') {
+                  scene.background = new THREE.Color(0xffffff);
+                } else {
+                  scene.background = new THREE.Color(0x0f172a);
+                }
+              },
+              cameraPreset: function(name) {
+                const r = sceneRadius;
+                let pos, tgt;
+                switch (name) {
+                  case 'top':
+                    pos = new THREE.Vector3(0, r * 1.5, 0.001);
+                    tgt = new THREE.Vector3(0, 0, 0);
+                    break;
+                  case 'front':
+                    pos = new THREE.Vector3(0, r * 0.4, r);
+                    tgt = new THREE.Vector3(0, r * 0.2, 0);
+                    break;
+                  case 'side':
+                    pos = new THREE.Vector3(r, r * 0.4, 0);
+                    tgt = new THREE.Vector3(0, r * 0.2, 0);
+                    break;
+                  case 'iso':
+                    pos = new THREE.Vector3(r * 0.75, r * 0.75, r * 0.75);
+                    tgt = new THREE.Vector3(0, r * 0.15, 0);
+                    break;
+                  case 'frame':
+                    pos = defaultPosition.clone();
+                    tgt = defaultTarget.clone();
+                    break;
+                  default: return;
+                }
+                camera.position.copy(pos);
+                controls.target.copy(tgt);
+                controls.update();
+              },
+              cancelSelection: function() {
+                // Called by Esc key handler / Cancel selection button.
+                // Clears any in-progress overlay drawing so the user
+                // can start a new polygon/lasso without re-loading.
+                if (overlayCtx) overlayCtx.clearRect(0, 0, width, height);
+              }
+            };
 
             // Bottom-right gizmo: a separate mini-scene with coloured XYZ
             // axes + sphere tips. The gizmo camera is reoriented every
@@ -7602,6 +7899,92 @@ server <- function(input, output, session) {
   observeEvent(input$export_3d_gltf, {
     session$sendCustomMessage("dronebior_3d_export_gltf",
                               list(label = input$selection_label %||% "dronebior_3d_scene"))
+  })
+
+  # Camera presets - all go through the same JS handler, which calls
+  # window.__dronebior_viewer.cameraPreset(name).
+  observeEvent(input$cam_top,   { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "top")) })
+  observeEvent(input$cam_front, { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "front")) })
+  observeEvent(input$cam_side,  { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "side")) })
+  observeEvent(input$cam_iso,   { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "iso")) })
+  observeEvent(input$cam_frame, { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "frame")) })
+
+  # Live layer visibility from the checkboxGroupInput. We send ONE
+  # message per layer so the JS handler can flip the .visible flag
+  # of the matching scene.getObjectByName() target. The mapping
+  # UI-label -> three.js object name lives here so the JS does not
+  # need to know about UI strings.
+  observe({
+    selected <- input$modeling_layers %||% character(0)
+    layer_map <- list(
+      "Points"          = c("points"),
+      "Selected"        = c("selected_points"),
+      "DSM drape"       = c("dsm_drape", "basemap_plane"),
+      "Textured mesh"   = c("textured_mesh"),
+      "Trees"           = c("trees"),
+      "Grid"            = c("grid"),
+      "Axes"            = c("axes")
+    )
+    for (label in names(layer_map)) {
+      for (obj_name in layer_map[[label]]) {
+        session$sendCustomMessage(
+          "dronebior_3d_set_layer",
+          list(name = obj_name, visible = label %in% selected)
+        )
+      }
+    }
+  })
+
+  # Live point size + background theme. Both go through messages that
+  # mutate the existing PointsMaterial / scene.background in place -
+  # no point cloud rebuild, no flicker, instant response.
+  observe({
+    pct <- input$point_size_pct %||% 100
+    session$sendCustomMessage("dronebior_3d_set_point_size", list(pct = pct))
+  })
+  observe({
+    theme <- input$viewer_bg_theme %||% "dark"
+    session$sendCustomMessage("dronebior_3d_set_bg", list(theme = theme))
+  })
+
+  # Cancel current selection: clears the overlay drawing in the
+  # viewer (in-progress lasso / polygon) and clears the selected
+  # point IDs on the R side. Triggered by toolbar button OR by the
+  # Esc key (JS keyboard handler bumps input$dronebior_3d_esc).
+  observeEvent(list(input$cancel_3d_selection, input$dronebior_3d_esc), {
+    if ((input$cancel_3d_selection %||% 0L) == 0L &&
+        is.null(input$dronebior_3d_esc)) return()
+    session$sendCustomMessage("dronebior_3d_cancel", list())
+    selected_ids_value(integer())
+  }, ignoreInit = TRUE)
+
+  # The top-left mode badge in the viewer-frame: name of the active
+  # tool plus a small keyboard / mouse hint block. Re-renders on
+  # input$selection_tool change; lightweight because it does not
+  # touch three.js at all.
+  output$viewer_mode_badge_content <- renderUI({
+    tool <- input$selection_tool %||% "Box selection"
+    hints <- switch(tool,
+      "Inspect trees"     = "Click a tree marker for height/crown stats. Left=orbit, Middle=pan, Right=orbit.",
+      "Box selection"     = "Left drag = box. Right drag orbits, Middle drag pans.",
+      "Lasso selection"   = "Left drag = freehand. Right drag orbits, Middle drag pans.",
+      "Polygon selection" = "Left click = add vertex. Double-click = close. Esc cancels. Right=orbit.",
+      "Measure distance"  = "Click two points to measure their 3D distance in metres.",
+      "Manual crown edit" = "Lasso a crown; Save/update crown ROI in the sidebar to persist.",
+      "Left=orbit, Middle=pan, Right=orbit."
+    )
+    tagList(
+      tags$div(class = "mode-name", tool),
+      tags$div(class = "mode-hints",
+               hints,
+               tags$br(),
+               tags$kbd("F"), " frame  ",
+               tags$kbd("7"), " top  ",
+               tags$kbd("1"), " front  ",
+               tags$kbd("3"), " side  ",
+               tags$kbd("5"), " iso  ",
+               tags$kbd("Esc"), " cancel")
+    )
   })
 
   # Dynamic legend driven by the currently selected point symbology.
