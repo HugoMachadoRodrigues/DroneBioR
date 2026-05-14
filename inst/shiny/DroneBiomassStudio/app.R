@@ -6437,7 +6437,8 @@ server <- function(input, output, session) {
       use_alpha = input$use_alpha,
       scale_reflectance = input$scale_reflectance
     )
-  })
+  }) |>
+    bindCache(input$orthomosaic %||% "", input$use_alpha, input$scale_reflectance)
 
   context_orthomosaic <- reactive({
     build_context_orthomosaic_raster(
@@ -6445,7 +6446,43 @@ server <- function(input, output, session) {
       use_alpha = input$use_alpha,
       scale_reflectance = input$scale_reflectance
     )
-  })
+  }) |>
+    bindCache(input$orthomosaic %||% "", input$use_alpha, input$scale_reflectance)
+
+  # Cache the draped-DSM heightfield. Building it is multi-second
+  # work (crop to ortho, alpha-mask, percentile-clip, 3x3 median,
+  # spatSample to a regular grid) and the previous code called it
+  # inline inside output$point_cloud_viewer - so EVERY selection,
+  # tool change, height-filter tweak rebuilt it from scratch. The
+  # user perceived "the 3D plot is processing non-stop." Cached on
+  # (dsm path, ortho path, draped-mode flag); recomputes only when
+  # one of those actually changes.
+  draped_dsm_heightmap <- reactive({
+    if (!isTRUE(input$show_draped_dsm)) return(NULL)
+    dsm_path <- odm_product_paths(project())[["dsm"]]
+    if (is.null(dsm_path) || !nzchar(dsm_path) || !file.exists(dsm_path)) {
+      return(NULL)
+    }
+    build_dsm_heightmap(dsm_path, input$orthomosaic, grid_size = 180)
+  }) |>
+    bindCache(
+      odm_product_paths(project())[["dsm"]] %||% "",
+      input$orthomosaic %||% "",
+      isTRUE(input$show_draped_dsm)
+    )
+
+  # Cheap cached handle on the orthomosaic raster (header-only).
+  # Used by the 2D context map's observers to project x/y point
+  # positions back to WGS84 without re-opening the GeoTIFF on every
+  # selection - terra::rast() is fast on local files but can be
+  # multiple seconds on OneDrive Files-On-Demand, and the
+  # observers fire frequently as the user clicks around.
+  orthomosaic_raster_cached <- reactive({
+    path <- input$orthomosaic %||% ""
+    if (!nzchar(path) || !file.exists(path)) return(NULL)
+    tryCatch(terra::rast(path)[[1]], error = function(e) NULL)
+  }) |>
+    bindCache(input$orthomosaic %||% "")
 
   point_cloud_reference_raster <- reactive({
     products <- odm_product_paths(project())
@@ -6761,18 +6798,10 @@ server <- function(input, output, session) {
     }
     mesh_url_json <- jsonlite::toJSON(mesh_url, auto_unbox = TRUE, null = "null")
 
-    # Draped DSM heightfield: when enabled, build a downsampled height
-    # grid and serialise alongside the basemap bounds. The viewer JS
-    # then builds a PlaneGeometry with that subdivision and displaces
-    # vertex Z by the DSM value, producing a real 3D surface textured
-    # with the orthomosaic (Pix4D / Metashape "3D model" style).
-    draped_dsm <- NULL
-    if (isTRUE(input$show_draped_dsm)) {
-      dsm_p <- odm_product_paths(project())[["dsm"]]
-      # Pass the orthomosaic so build_dsm_heightmap can mask the DSM
-      # by its alpha band; that flattens the white-margin spikes.
-      draped_dsm <- build_dsm_heightmap(dsm_p, input$orthomosaic, grid_size = 180)
-    }
+    # Draped DSM heightfield comes from the cached reactive (see
+    # draped_dsm_heightmap above) so re-renders triggered by
+    # selection / tool / height-filter changes do NOT rebuild it.
+    draped_dsm <- draped_dsm_heightmap()
     draped_dsm_json <- jsonlite::toJSON(draped_dsm %||% list(),
                                         auto_unbox = TRUE, null = "null", na = "null")
 
@@ -8232,7 +8261,14 @@ server <- function(input, output, session) {
         ))
     }
 
-    ortho_for_context <- terra::rast(input$orthomosaic)[[1]]
+    ortho_for_context <- orthomosaic_raster_cached()
+    if (is.null(ortho_for_context)) {
+      return(base |>
+        addLayersControl(
+          baseGroups = c("Satellite", "Light basemap"),
+          options = layersControlOptions(collapsed = FALSE)
+        ))
+    }
     bounds <- raster_bounds_4326(ortho_for_context)
     local_ortho <- context_orthomosaic()
     if (!is.null(local_ortho)) {
@@ -8284,7 +8320,8 @@ server <- function(input, output, session) {
       return()
     }
 
-    ortho_for_context <- terra::rast(input$orthomosaic)[[1]]
+    ortho_for_context <- orthomosaic_raster_cached()
+    if (is.null(ortho_for_context)) return()
     roi_ll <- transform_xy_to_wgs84(data.frame(x_map = roi$x, y_map = roi$y), ortho_for_context)
     roi_ll <- rbind(roi_ll, roi_ll[1, , drop = FALSE])
     leafletProxy("point_cloud_context_map") |>
@@ -8315,7 +8352,8 @@ server <- function(input, output, session) {
       return()
     }
 
-    ortho_for_context <- terra::rast(input$orthomosaic)[[1]]
+    ortho_for_context <- orthomosaic_raster_cached()
+    if (is.null(ortho_for_context)) return()
     mapped <- points_to_map_xy(pts$x, pts$y, point_cloud(), ortho_for_context)
     mapped <- transform_xy_to_wgs84(mapped, ortho_for_context)
     pts$lng <- mapped$lng
@@ -8368,7 +8406,8 @@ server <- function(input, output, session) {
       return()
     }
 
-    ortho_for_context <- terra::rast(input$orthomosaic)[[1]]
+    ortho_for_context <- orthomosaic_raster_cached()
+    if (is.null(ortho_for_context)) return()
     mapped <- points_to_map_xy(trees$x, trees$y, point_cloud(), ortho_for_context)
     mapped <- transform_xy_to_wgs84(mapped, ortho_for_context)
     trees$lng <- mapped$lng
