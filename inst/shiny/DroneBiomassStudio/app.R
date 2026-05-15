@@ -1567,6 +1567,31 @@ ui <- page_navbar(
         });
       });
 
+      // Programmatically click a Shiny actionButton by its inputId.
+      // Used by the GIS map toolbar so the toolbar's Save / Clear
+      // buttons re-fire the existing sidebar handlers without needing
+      // duplicated server-side logic.
+      Shiny.addCustomMessageHandler('dronebior_click_button', function(msg) {
+        if (!msg || !msg.id) return;
+        var btn = document.getElementById(msg.id);
+        if (btn) btn.click();
+      });
+
+      // Highlight the active tool button in the GIS map toolbar.
+      // R sends { id: 'tool_area', all: ['tool_navigate', ...] }; we
+      // remove .active from each id in `all` and add it to the one
+      // in `id`.
+      Shiny.addCustomMessageHandler('dronebior_gis_toolbar_active', function(msg) {
+        if (!msg || !msg.id) return;
+        var ids = (msg.all && msg.all.length) ? msg.all : [msg.id];
+        ids.forEach(function(other) {
+          var b = document.getElementById(other);
+          if (b) b.classList.remove('active');
+        });
+        var btn = document.getElementById(msg.id);
+        if (btn) btn.classList.add('active');
+      });
+
       // Drawing-mode toggle for the GIS Workspace map. Adds a crosshair
       // cursor to the map and pins a yellow drawing-mode badge at the
       // top of the canvas so the user has obvious visual confirmation
@@ -2693,6 +2718,109 @@ ui <- page_navbar(
         opacity: 0.4;
         margin: 0 2px;
       }
+
+      /* ----- GIS Workspace toolbar + CTAs ------------------------------- */
+      .gis-map-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 8px 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+      }
+      .gis-map-toolbar .toolbar-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .gis-map-toolbar .toolbar-group-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #64748b;
+        font-weight: 700;
+        margin-right: 4px;
+      }
+      .gis-map-toolbar .toolbar-divider {
+        width: 1px;
+        height: 22px;
+        background: #e2e8f0;
+        margin: 0 4px;
+      }
+      .gis-tool-btn {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        color: #0f172a;
+        font-size: 0.82rem;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: 600;
+      }
+      .gis-tool-btn:hover { background: #e2e8f0; }
+      .gis-tool-btn.active {
+        background: #1f6f5b;
+        border-color: #195a4a;
+        color: #ffffff;
+      }
+      .gis-tool-btn.primary {
+        background: #1f6f5b;
+        border-color: #195a4a;
+        color: #ffffff;
+      }
+      .gis-cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0 8px;
+        padding: 8px 12px;
+        border-left: 3px solid #1f6f5b;
+        background: linear-gradient(90deg, rgba(31,111,91,0.05) 0%, rgba(31,111,91,0) 100%);
+      }
+      .gis-cta-row .btn { font-weight: 600; }
+
+      /* ----- Layer Manager card ----------------------------------------- */
+      .layer-manager-row {
+        display: grid;
+        grid-template-columns: 24px minmax(140px, 1.4fr) minmax(80px, 0.8fr) minmax(120px, 1fr) 80px;
+        gap: 10px;
+        align-items: center;
+        padding: 6px 4px;
+        border-bottom: 1px dashed #e2e8f0;
+      }
+      .layer-manager-row:last-child { border-bottom: none; }
+      .layer-manager-row .layer-name {
+        font-weight: 600;
+        color: #0f172a;
+        font-size: 0.88rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .layer-manager-row .layer-meta {
+        font-size: 0.75rem;
+        color: #64748b;
+      }
+      .layer-manager-row .layer-actions {
+        font-size: 0.72rem;
+        text-align: right;
+      }
+      .layer-manager-empty {
+        padding: 18px;
+        text-align: center;
+        color: #64748b;
+        font-style: italic;
+      }
+      .layer-manager-empty .empty-cta {
+        margin-top: 8px;
+        font-style: normal;
+        font-weight: 600;
+        color: #1f6f5b;
+      }
     "))
   )),
   nav_panel(
@@ -2791,60 +2919,110 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 380,
-        textInput("project_dir", "Project directory", value = default_project$project_dir),
-        textInput("images_dir", "Raw test image folder", value = default_project$images_dir),
-        textInput("orthomosaic", "Multispectral orthomosaic", value = default_project$odm_orthomosaic),
-        textInput("output_dir", "Analysis output folder", value = default_project$output_dir),
-        actionButton("open_file_browser", "Browse project files", class = "btn-outline-secondary"),
-        checkboxInput("use_alpha", "Use alpha band as valid-data mask", value = TRUE),
-        checkboxInput("scale_reflectance", "Scale bands to reflectance", value = TRUE),
-        div(class = "form-label", "Overlay products"),
-        uiOutput("map_layer_controls"),
-        sliderInput("map_opacity", "Layer opacity", min = 0, max = 1, value = 0.72, step = 0.05),
-        selectInput(
-          "gis_color_stretch",
-          "Color stretch",
-          choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
-          selected = "Percentile 2-98"
+        # Sidebar is now organised as accordions: the two essentials
+        # the user touches every session ("Project paths" + "Map
+        # layers") stay open by default; advanced options (Display,
+        # Annotations, ROI comparison) collapse into accordion panels.
+        # Replaces the previous wall-of-controls layout.
+        accordion(
+          open = c("Project paths", "Map layers"),
+          accordion_panel(
+            "Project paths",
+            textInput("project_dir", "Project directory",
+                      value = default_project$project_dir),
+            textInput("images_dir", "Raw test image folder",
+                      value = default_project$images_dir),
+            textInput("orthomosaic", "Multispectral orthomosaic",
+                      value = default_project$odm_orthomosaic),
+            textInput("output_dir", "Analysis output folder",
+                      value = default_project$output_dir),
+            actionButton("open_file_browser", "Browse project files",
+                         class = "btn-outline-secondary w-100")
+          ),
+          accordion_panel(
+            "Map layers",
+            uiOutput("map_layer_controls"),
+            div(class = "d-flex gap-2 mt-2",
+                actionButton("load_gis", "Load",
+                             class = "btn-primary flex-grow-1"),
+                actionButton("clear_gis", "Clear",
+                             class = "btn-outline-secondary"))
+          ),
+          accordion_panel(
+            "Display options",
+            sliderInput("map_opacity", "Global overlay opacity",
+                        min = 0, max = 1, value = 0.72, step = 0.05),
+            selectInput(
+              "gis_color_stretch",
+              "Color stretch",
+              choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
+              selected = "Percentile 2-98"
+            ),
+            checkboxInput("show_raw_flight",
+                          "Show raw image flight plan", value = TRUE),
+            checkboxInput("use_alpha",
+                          "Use alpha band as valid-data mask",
+                          value = TRUE),
+            checkboxInput("scale_reflectance",
+                          "Scale bands to reflectance", value = TRUE)
+          ),
+          accordion_panel(
+            "Annotations",
+            textInput("annotation_text", NULL,
+                      placeholder = "Annotation text..."),
+            checkboxInput("annotation_mode",
+                          "Annotation mode (click map to pin)",
+                          value = FALSE),
+            div(class = "d-flex gap-2",
+                actionButton("save_annotations", "Save GeoJSON",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("clear_annotations", "Clear",
+                             class = "btn-outline-secondary")),
+            verbatimTextOutput("annotations_save_path"),
+            fileInput("load_annotations", "Load GeoJSON",
+                      accept = c(".geojson", ".json"))
+          ),
+          accordion_panel(
+            "ROI comparison",
+            textInput("roi_name", NULL,
+                      placeholder = "ROI name (e.g. plot_3)",
+                      value = "roi_1"),
+            div(class = "d-flex gap-2",
+                actionButton("start_drawing_roi", "Draw new ROI",
+                             class = "btn-primary flex-grow-1"),
+                actionButton("save_roi", "Save",
+                             class = "btn-outline-secondary")),
+            selectInput("selected_roi_name", "Saved ROIs",
+                        choices = character(0)),
+            div(class = "d-flex gap-2",
+                actionButton("redraw_selected_roi", "Redraw",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("delete_selected_roi", "Delete",
+                             class = "btn-outline-danger")),
+            div(class = "d-flex gap-2 mt-1",
+                actionButton("compute_roi_comparison", "Compute",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("clear_rois", "Clear all",
+                             class = "btn-outline-danger")),
+            verbatimTextOutput("rois_save_path")
+          )
         ),
-        checkboxInput("show_raw_flight", "Show raw image flight plan", value = TRUE),
-        selectInput(
-          "gis_measure_tool",
-          "Map measurement tool",
-          choices = c("Navigate", "Measure distance", "Measure area", "Measure volume (CHM)")
-        ),
-        actionButton("clear_gis_measure", "Clear map measurement", class = "btn-outline-secondary"),
-        actionButton("recenter_gis_map", "Center map", class = "btn-outline-secondary"),
-        div(class = "form-label", "Map annotations"),
-        div(class = "sidebar-note",
-            "How to pin an annotation: (1) type the note text in the field below; (2) check 'Annotation mode'; (3) click a coordinate on the map - a pink marker drops with your text as the popup. Use 'Save annotations' to persist the layer to GeoJSON; 'Load annotations' brings it back later."),
-        textInput("annotation_text", NULL, placeholder = "Annotation text..."),
-        checkboxInput("annotation_mode", "Annotation mode (click map to pin)", value = FALSE),
-        actionButton("save_annotations", "Save annotations (GeoJSON)", class = "btn-outline-secondary"),
-        verbatimTextOutput("annotations_save_path"),
-        fileInput("load_annotations", "Load annotations (GeoJSON)", accept = c(".geojson", ".json")),
-        actionButton("clear_annotations", "Clear annotations", class = "btn-outline-secondary"),
-        div(class = "form-label", "ROI comparison"),
-        div(class = "sidebar-note",
-            "How to draw an ROI: (1) click 'Draw new ROI' to switch into polygon mode; (2) click vertices on the map to outline the region; (3) click 'Save ROI' to add it to the comparison table. To delete a single ROI, pick its name in the dropdown and click 'Delete selected ROI'. Vertex-by-vertex editing is not supported yet; use 'Redraw selected ROI' to replace one in place."),
-        textInput("roi_name", NULL, placeholder = "ROI name (e.g. plot_3)", value = "roi_1"),
-        actionButton("start_drawing_roi", "Draw new ROI", class = "btn-primary"),
-        actionButton("save_roi", "Save ROI", class = "btn-outline-secondary"),
-        selectInput("selected_roi_name", "Saved ROIs", choices = character(0)),
-        actionButton("redraw_selected_roi", "Redraw selected ROI", class = "btn-outline-secondary"),
-        actionButton("delete_selected_roi", "Delete selected ROI", class = "btn-outline-danger"),
-        actionButton("compute_roi_comparison", "Compute ROI comparison", class = "btn-outline-secondary"),
-        actionButton("clear_rois", "Clear all ROIs", class = "btn-outline-danger"),
-        verbatimTextOutput("rois_save_path"),
-        actionButton("load_gis", "Load selected overlays", class = "btn-primary"),
-        actionButton("clear_gis", "Clear overlays", class = "btn-outline-secondary"),
-        div(class = "sidebar-note", "The basemap is visible immediately. Selected products are added as transparent overlays when they finish loading.")
+        # Hidden input: the map toolbar buttons (above the leaflet
+        # canvas) drive the selected measurement tool through this
+        # selectInput so the existing observers (gis_map_click,
+        # render measurement, render volume ROI) keep working unchanged.
+        div(style = "display:none;",
+            selectInput("gis_measure_tool", NULL,
+                        choices = c("Navigate", "Measure distance",
+                                    "Measure area",
+                                    "Measure volume (CHM)"),
+                        selected = "Navigate"))
       ),
       div(
         class = "main-scroll",
         panel_intro_card(
           "GIS Workspace",
-          "Choose product overlays in the sidebar and click 'Load' to render them on the basemap. Use the measurement tool to draw distances or areas on the map; results land in the 'Map measurement' card below. New here? Try 'run_drone_biomass_studio(sample = TRUE)' to open a clickable demo project.",
+          "Pick the layers you want, click 'Load', then use the map toolbar to measure distances, draw ROIs or pin annotations. The ROIs you save here can be pulled into the 3D Modeling tab and the Spectral Analytics tab from the cross-tab actions below the map.",
           vignette = "dronebior-overview"
         ),
         div(
@@ -2859,9 +3037,67 @@ ui <- page_navbar(
         # the user migrate big binary outputs to a fast local cache
         # so the app never re-triggers cloud downloads on Load.
         uiOutput("cloud_sync_banner"),
+        # Map toolbar: horizontal CAD-style button strip above the map
+        # canvas. The active tool gets the .active class via a small
+        # CSS rule + an R observer. Replaces the previous "Map
+        # measurement tool" dropdown buried in the sidebar.
+        div(
+          class = "gis-map-toolbar",
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Tool"),
+              actionButton("tool_navigate", "Navigate",
+                           class = "gis-tool-btn"),
+              actionButton("tool_distance", "Distance",
+                           class = "gis-tool-btn"),
+              actionButton("tool_area",     "Area / ROI",
+                           class = "gis-tool-btn"),
+              actionButton("tool_volume",   "Volume (CHM)",
+                           class = "gis-tool-btn"),
+              actionButton("tool_annotate", "Annotation",
+                           class = "gis-tool-btn")),
+          tags$span(class = "toolbar-divider"),
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Action"),
+              actionButton("tool_save_roi",  "Save ROI",
+                           class = "gis-tool-btn primary"),
+              actionButton("tool_clear",     "Clear",
+                           class = "gis-tool-btn"),
+              actionButton("recenter_gis_map", "Center map",
+                           class = "gis-tool-btn")),
+          span(class = "viewer-status",
+               textOutput("gis_toolbar_status", inline = TRUE))
+        ),
+        # Layer Manager: live list of what is currently rendered on
+        # the map. Mirrors the sidebar overlay checkboxes but in a
+        # more legible format (one card with type / CRS / opacity
+        # per layer). Shows an empty state when nothing has been
+        # loaded yet so the user knows what to do next.
+        card(
+          card_header(div(class = "map-card-header",
+                          tags$span("Layer Manager"),
+                          tags$span(class = "viewer-status",
+                                    textOutput("layer_manager_summary",
+                                               inline = TRUE)))),
+          uiOutput("layer_manager_panel")
+        ),
         card(card_header("Project status"),
              uiOutput("project_status_quick")),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
+        # Cross-tab handoff: once the user has drawn an ROI, picked
+        # layers, or just opened a project, these buttons jump
+        # straight to the next stage with the right context. Each
+        # one calls updateNavbarPage(main_nav, ...) via an observer.
+        div(
+          class = "gis-cta-row",
+          actionButton("gis_cta_3d", "Open in 3D Modeling -->",
+                       class = "btn-outline-primary"),
+          actionButton("gis_cta_spectral", "Run Spectral QA -->",
+                       class = "btn-outline-primary"),
+          actionButton("gis_cta_field", "Open Field Models -->",
+                       class = "btn-outline-secondary"),
+          actionButton("gis_cta_ts", "Add to Time Series -->",
+                       class = "btn-outline-secondary")
+        ),
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
         card(card_header("Available processing products"), tableOutput("product_table"))
@@ -3709,6 +3945,157 @@ server <- function(input, output, session) {
   # turn that into a navbarPage update.
   observeEvent(input$dronebio_stepper_goto, {
     updateNavbarPage(session, "main_nav", selected = input$dronebio_stepper_goto)
+  })
+
+  # ---- GIS Workspace: map toolbar wiring -------------------------------
+  # The map toolbar above the leaflet exposes the measurement / drawing
+  # tools as CAD-style buttons. Each tool button just routes through
+  # updateSelectInput on the hidden gis_measure_tool selectInput, so
+  # every downstream observer (gis_map_click handler, rendering of the
+  # in-progress polyline, summary table, etc.) keeps working unchanged.
+  observeEvent(input$tool_navigate, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Navigate")
+    updateCheckboxInput(session, "annotation_mode", value = FALSE)
+  })
+  observeEvent(input$tool_distance, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Measure distance")
+    updateCheckboxInput(session, "annotation_mode", value = FALSE)
+  })
+  observeEvent(input$tool_area, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Measure area")
+    updateCheckboxInput(session, "annotation_mode", value = FALSE)
+  })
+  observeEvent(input$tool_volume, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Measure volume (CHM)")
+    updateCheckboxInput(session, "annotation_mode", value = FALSE)
+  })
+  observeEvent(input$tool_annotate, {
+    updateSelectInput(session, "gis_measure_tool", selected = "Navigate")
+    updateCheckboxInput(session, "annotation_mode", value = TRUE)
+  })
+  # Save / Clear buttons in the toolbar map to the matching sidebar
+  # buttons (the Save action runs the existing save_roi observer when
+  # the user is in Measure-area mode; otherwise it is a no-op with a
+  # gentle hint).
+  observeEvent(input$tool_save_roi, {
+    # Trigger the regular save_roi handler by bumping its input value
+    # through Shiny's event mechanism; that handler already knows how
+    # to validate (>=3 vertices) and persist.
+    session$sendCustomMessage("dronebior_click_button", list(id = "save_roi"))
+  })
+  observeEvent(input$tool_clear, {
+    # Clear both the measurement points AND any in-progress annotation
+    # text so a single button covers the toolbar's intuition.
+    session$sendCustomMessage("dronebior_click_button", list(id = "clear_gis_measure"))
+  })
+
+  # Reflect the active tool back in the toolbar's button highlighting.
+  # Adds / removes a .active CSS class on each button via custom
+  # message; the JS keeps it in lock-step with input$gis_measure_tool
+  # so toolbar feedback survives sidebar selectInput changes.
+  observe({
+    tool <- input$gis_measure_tool %||% "Navigate"
+    anno <- isTRUE(input$annotation_mode)
+    active_id <- if (anno) "tool_annotate"
+                 else switch(tool,
+                   "Measure distance"     = "tool_distance",
+                   "Measure area"         = "tool_area",
+                   "Measure volume (CHM)" = "tool_volume",
+                   "tool_navigate")
+    session$sendCustomMessage("dronebior_gis_toolbar_active",
+                              list(id = active_id,
+                                   all = c("tool_navigate", "tool_distance",
+                                           "tool_area", "tool_volume",
+                                           "tool_annotate")))
+  })
+
+  # Live status text shown at the right end of the toolbar.
+  output$gis_toolbar_status <- renderText({
+    tool <- input$gis_measure_tool %||% "Navigate"
+    anno <- isTRUE(input$annotation_mode)
+    n_meas <- nrow(gis_measure_points())
+    if (anno) {
+      "Annotation mode - click on map to pin a marker"
+    } else if (identical(tool, "Navigate")) {
+      "Navigate - drag to pan, scroll to zoom"
+    } else {
+      sprintf("%s - %d vertex%s placed",
+              tool, n_meas, if (n_meas == 1L) "" else "es")
+    }
+  })
+
+  # ---- GIS Workspace: Layer Manager card -------------------------------
+  # Live list of which overlay layers are currently checked in the
+  # sidebar, with their data type, expected CRS and per-layer
+  # opacity. When nothing has been selected, shows an empty state
+  # that tells the user what to do next.
+  output$layer_manager_summary <- renderText({
+    selected <- selected_overlay_layers()
+    if (length(selected) == 0) "no layers selected"
+    else sprintf("%d layer%s selected",
+                 length(selected),
+                 if (length(selected) == 1L) "" else "s")
+  })
+  output$layer_manager_panel <- renderUI({
+    selected <- selected_overlay_layers()
+    if (length(selected) == 0) {
+      return(div(class = "layer-manager-empty",
+                 "No overlay layers selected yet.",
+                 div(class = "empty-cta",
+                     "Tick layers in the sidebar's 'Map layers' panel and click Load.")))
+    }
+    products <- cached_products()
+    rows <- lapply(selected, function(layer_name) {
+      meta <- product_metadata[[layer_name]]
+      label <- if (!is.null(meta) && nzchar(meta$label %||% "")) meta$label else layer_name
+      # Type / source resolution. For raster products we have a file
+      # on disk; for derived indices the source is the orthomosaic.
+      product_key_map <- list(
+        `RGB Orthomosaic` = "orthomosaic", DSM = "dsm", DTM = "dtm",
+        CHM = "chm", Hillshade = "dsm"
+      )
+      type <- if (layer_name %in% names(product_key_map)) "Raster product"
+              else if (grepl("^Biomass_", layer_name))      "Biomass proxy"
+              else                                          "Spectral index"
+      bands <- meta$bands %||% "-"
+      # File availability badge so the user knows whether Load will
+      # produce something or not.
+      key <- product_key_map[[layer_name]]
+      avail <- if (!is.null(key) && key %in% names(products)) {
+                 file.exists(unname(products[[key]]))
+               } else TRUE   # derived indices: depend on the ortho
+      avail_badge <- tags$span(
+        class = paste0("dronebio-pcc-pill ",
+                       if (isTRUE(avail)) "ok" else "miss"),
+        tags$span(class = "dot"),
+        if (isTRUE(avail)) "Ready" else "Missing"
+      )
+      div(class = "layer-manager-row",
+          tags$span(class = "dot",
+                    style = "width:10px; height:10px; border-radius:50%; background:#1f6f5b;"),
+          tags$span(class = "layer-name", label),
+          tags$span(class = "layer-meta", type),
+          tags$span(class = "layer-meta", paste0("Bands: ", bands)),
+          tags$span(class = "layer-actions", avail_badge))
+    })
+    tagList(rows)
+  })
+
+  # ---- GIS Workspace: cross-tab CTAs ---------------------------------
+  # Each button jumps to the relevant downstream tab. The handoff is
+  # one-click - the user does not have to re-select the orthomosaic /
+  # ROI / point-cloud once they have already configured it here.
+  observeEvent(input$gis_cta_3d, {
+    updateNavbarPage(session, "main_nav", selected = "3D Modeling")
+  })
+  observeEvent(input$gis_cta_spectral, {
+    updateNavbarPage(session, "main_nav", selected = "Spectral Analytics")
+  })
+  observeEvent(input$gis_cta_field, {
+    updateNavbarPage(session, "main_nav", selected = "Field Models")
+  })
+  observeEvent(input$gis_cta_ts, {
+    updateNavbarPage(session, "main_nav", selected = "Time Series")
   })
 
   overlay_choices <- c(
