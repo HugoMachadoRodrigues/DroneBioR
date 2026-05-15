@@ -8588,6 +8588,10 @@ server <- function(input, output, session) {
     }
 
     spectral_export_paths(paths)
+    # Release any large intermediate rasters terra materialised during
+    # the full-resolution writes. Without this the export observer
+    # leaves a ~9 GB watermark behind on a 5 cm/px MicaSense ortho.
+    gc(verbose = FALSE)
     showNotification("Spectral products exported.", type = "message", duration = 5)
   })
 
@@ -9025,16 +9029,24 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
 
+    # Cap the spatial-filtered read so a single oversized ROI does not
+    # OOM a laptop. 10 M points is enough for most plot-level metrics
+    # at 5 cm/px and lands at ~320 MB of XYZ + classification in RAM.
+    # Users with bigger ROIs and headroom can raise this via R option:
+    #   options(dronebior.max_full_roi_points = 50e6)
+    max_pts <- as.numeric(getOption("dronebior.max_full_roi_points", 10e6))
+
     with_gis_task(session,
                   name   = "Reading full-resolution point cloud",
                   detail = basename(full_path),
                   tryCatch({
-      pts <- read_full_point_cloud(full_path, roi_polygon = roi, max_points = Inf)
+      pts <- read_full_point_cloud(full_path, roi_polygon = roi, max_points = max_pts)
       if (nrow(pts) == 0) {
         full_roi_status_value("The ROI polygon did not intersect any full-resolution points; using the viewer preview sample.")
         full_roi_cache(list(key = key, points = pts_preview[0, , drop = FALSE]))
         return(invisible(NULL))
       }
+      capped <- isTRUE(nrow(pts) >= max_pts)
       chm <- chm_raster()
       if (!is.null(chm)) {
         pts <- add_chm_heights(pts, chm)
@@ -9048,9 +9060,15 @@ server <- function(input, output, session) {
         format(nrow(pts), big.mark = ","),
         " points from ",
         basename(attr(pts, "point_cloud_source")),
-        if (!is.null(chm)) " with DSM-DTM CHM heights." else " with local low-Z height fallback."
+        if (!is.null(chm)) " with DSM-DTM CHM heights." else " with local low-Z height fallback.",
+        if (capped) paste0(" Capped at ", format(max_pts, big.mark = ","),
+                            " points; raise options(dronebior.max_full_roi_points = ...)",
+                            " for a larger ROI sample.") else ""
       ))
       full_roi_cache(list(key = key, points = pts))
+      # Encourage R to release the temporary buffers terra / rlas
+      # allocated while parsing the point cloud.
+      gc(verbose = FALSE)
     }, error = function(e) {
       full_roi_status_value(paste("Full-resolution recalculation failed; using viewer preview sample. Reason:", conditionMessage(e)))
       full_roi_cache(list(key = NA_character_, points = NULL))
