@@ -1,5 +1,136 @@
 # DroneBioR (development version)
 
+Focused stabilization pass on top of 0.4.0 - the GIS Workspace and 3D
+Modeling tabs now stay snappy on cloud-synced (OneDrive / iCloud /
+Dropbox) project folders, render correctly when the point cloud and
+the orthomosaic live in different coordinate frames, and finally
+show ROI vertices while the user is drawing them on the map.
+
+## New features
+
+* **Expanded vegetation-index catalogue.** `compute_spectral_indices()`
+  now produces up to 22 layers from a full multispectral input (was 9)
+  and 6 from RGB-only inputs (was just VARI). Multispectral additions:
+  OSAVI (Rondeaux 1996), GCI (Gitelson 2003), RVI / SR (Jordan 1969),
+  DVI (Tucker 1979), WDRVI (Gitelson 2004), TVI (Broge 2001), MCARI
+  (Daughtry 2000) and PSRI (Merzlyak 1999). RGB-only additions: ExG
+  (Woebbecke 1995), GLI (Louhaichi 2001), TGI (Hunt 2013), MGRVI and
+  RGBVI (Bendig 2015). The canonical-order vector and the GIS overlay
+  registry, band-requirement table, semantic-domain helper and fixed
+  index limits in the Shiny app were extended to cover every new
+  index. RGB-only path tested explicitly.
+
+* **Biomass-proxy stack via greenness x CHM.** New exported
+  `compute_biomass_proxies(indices, chm)` returning a SpatRaster with
+  the canonical spectral proxy plus eight greenness x CHM variants
+  (NDVI / NDRE / SAVI / GNDVI / VARI / ExG / MGRVI / RGBVI multiplied
+  by the canopy height model). The greenness x height product tracks
+  per-pixel above-ground biomass for herbaceous and shrub canopies
+  (Bendig et al. 2015; Lussem et al. 2019). The legacy single-layer
+  `compute_biomass_proxy()` is preserved for back-compat. Wired into
+  the GIS gis_stack reactive: when the project has a DSM + DTM the
+  biomass proxies are automatically appended to the index stack and
+  available in the overlay picker.
+
+* **Detailed help modal for every map layer.** The "?" button next to
+  each overlay / index in the GIS Workspace sidebar now shows the
+  formula, the spectral bands required, the typical numeric range,
+  the unit, the peer-reviewed reference (with author / year /
+  journal) and a one-line interpretation. Every entry in
+  `product_metadata` was rewritten - 30+ layers now carry citations
+  (Rouse 1974, Huete 1988 / 2002, Rondeaux 1996, Qi 1994, Gitelson
+  1994 / 1996 / 2002 / 2003 / 2004, Daughtry 2000, Merzlyak 1999,
+  Bendig 2015, Hunt 2013, Woebbecke 1995, Louhaichi 2001, ...).
+
+## Performance and robustness
+
+* **Cache-aware path resolution in the 3D Modeling tab.** New internal
+  `cache_aware_path()` helper resolves any project path to its local
+  cache copy (`~/.dronebior/cache/<slug>/<basename>`) when one exists.
+  The 3D tab routes the DSM, DTM, orthomosaic, point cloud and
+  textured-mesh reads through this helper via a new `cached_products()`
+  reactive, so OneDrive / iCloud Files-On-Demand stops being triggered
+  on every reactive invocation once the user has run "Copy outputs to
+  local cache".
+
+* **PLY preview ~30-100x faster.** Rewrote `read_ply_point_cloud()` so
+  it builds a single rawConnection over the entire selected vertex
+  block and decodes XYZ + RGBV in bulk, instead of opening one
+  rawConnection per point (which on the typical 35k-point ODM
+  filterpoints PLY meant 35k file-handle round-trips).
+
+* **Selection updates no longer rebuild the 3D scene.** Added a new
+  Shiny custom message handler `dronebior_3d_set_selection` that
+  rebuilds only the highlight BufferGeometry inside the existing
+  three.js scene. The renderUI was isolated from `selected_point_ids()`,
+  so clicking a point or pulling a GIS ROI into the 3D selection no
+  longer re-encodes the full point cloud as JSON.
+
+* **3D viewer survives tab switches.** Added
+  `outputOptions(point_cloud_viewer, suspendWhenHidden = FALSE)` so
+  Shiny does not unmount the renderUI when the user navigates away
+  to another main tab - the "every minute the view redraws from a
+  different plane" symptom is gone.
+
+* **Decimal display rounded to 2 places everywhere.** Every
+  user-facing numeric (renderTable digits, formatC calls, legend
+  endpoints, hover labels for DTM / DSM / CHM / VARI / NDVI / NDRE /
+  biomass proxies, etc.) now renders with 2 decimals. Bulk-applied
+  across the 20 renderTable closures plus the format helpers.
+
+## Bug fixes
+
+* **ROI vertices now show while drawing on the GIS Workspace map.**
+  The CircleMarker / polyline / polygon for in-progress ROI drawing
+  was being added to the "Measurement" overlay group, which itself
+  was listed in `addLayersControl(overlayGroups = ...)`. Because the
+  group had no members on the map at the time the layers control
+  was created, leaflet's L.Control.Layers started the group's
+  checkbox UNCHECKED, and every marker we added later via
+  leafletProxy landed in a hidden group. Fixed by removing
+  "Measurement" (and "ROIs" / "Annotations") from overlayGroups so
+  they have no togglable checkbox and are simply always visible.
+  Vertices now appear instantly as the user clicks; the in-progress
+  polyline forms after the second click and the closed polygon
+  after the third. Numbered yellow vertex markers, dashed
+  in-progress line and a "Drawing mode" badge make the canvas state
+  unambiguous.
+
+* **3D Modeling alignment when the point cloud and orthomosaic live
+  in different coordinate frames.** Detect AABB-overlap mismatch on
+  the JS side: when the basemap's XY bounding box does not intersect
+  the point cloud's, snap the basemap plane to the points' bounding
+  box. Separately check the Z range of the DSM drape against the
+  point Z range and suppress the drape when the two are disjoint
+  (typical for PLY previews in OpenSfM-local metres vs DSM in
+  projected elevations). A one-shot warning toast tells the user
+  the basemap was snapped and recommends switching to the LAS / LAZ
+  / COPC source for an exact-georeferenced view.
+
+* **GIS Workspace map no longer renders multiple worlds.** The
+  satellite (Esri) and CartoDB tile layers now pass
+  `noWrap = TRUE` plus an explicit `bounds = list(c(-85, -180),
+  c(85, 180))`. Esri returns a real placeholder tile (grey image
+  reading "Map data not yet available") with HTTP 200 when asked
+  for out-of-range coordinates, which is why `errorTileUrl` could
+  not fix the symptom on its own - leaflet has to be told not to
+  request those tiles in the first place. The remaining canvas
+  past +/-180 is painted a deep-ocean blue via a
+  `.leaflet-container { background-color: ...; }` CSS rule so the
+  margin reads as ocean on the Satellite basemap.
+
+* **GIS ROI to 3D selection bridge uses the orthomosaic CRS.** The
+  ROI polygon drawn on the GIS Workspace map is reprojected through
+  `terra::crs(input$orthomosaic)` (was the DSM's CRS), so the
+  selected 3D points land where the user drew the ROI on the map,
+  even when the orthomosaic and DSM happen to be in different CRSs.
+
+* **Periodic full rebuild of the 3D viewer.** A latch reactiveVal
+  was added so the basemap-frame-mismatch warning toast does not
+  repeat on every renderUI invocation. Combined with the tab-switch
+  suspension fix above, the viewer now feels stable instead of
+  redrawing under the user.
+
 # DroneBioR 0.4.0
 
 A second pass of feature work on top of 0.3.0, focused on the 3D Modeling
