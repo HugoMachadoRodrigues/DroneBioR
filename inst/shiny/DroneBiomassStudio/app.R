@@ -2684,17 +2684,26 @@ ui <- page_navbar(
          full width so the stepper has room to lay out next to the
          logo, with the brand block fixed on the left and the
          stepper filling the remaining space. */
-      .navbar { padding-top: 0 !important; padding-bottom: 0 !important; }
+      .navbar {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        min-height: 0 !important;
+      }
+      .navbar > .container-fluid,
+      .navbar > .container { padding-top: 0 !important; padding-bottom: 0 !important; }
       .navbar-brand {
         width: 100% !important;
         margin: 0 !important;
-        /* Tight 1px top/bottom padding so the green stripe is just a
-           thin frame around the logo + stepper - the navbar height
-           is driven by the logo height alone, with virtually no
-           extra green margin above or below. */
-        padding: 1px 8px !important;
+        /* Zero vertical padding: the green band hugs the logo
+           exactly, no extra green above or below it. Horizontal
+           padding stays at 8px so the logo and the stepper do not
+           touch the navbar edges. */
+        padding: 0 8px !important;
         max-width: none !important;
+        line-height: 1 !important;
       }
+      .dronebio-navbar-content { line-height: 1; }
+      .dronebio-navbar-brand img { display: block; }
       .dronebio-navbar-content {
         display: flex;
         align-items: center;
