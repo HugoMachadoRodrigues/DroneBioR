@@ -2585,6 +2585,28 @@ ui <- page_navbar(
       .btn { border-radius: 6px; }
       table { font-size: 0.88rem; }
 
+      /* Hide bslib::page_navbar's default tab strip - the Workflow
+         Stepper below the navbar is now the only navigation, so
+         displaying the same tab list twice is redundant. The logo +
+         title in .navbar-brand stay visible. */
+      .navbar .navbar-nav { display: none !important; }
+      .navbar .navbar-toggler { display: none !important; }
+
+      /* Make the stepper feel more substantial, since it is the
+         primary navigation now: bigger chips, more vertical padding,
+         a soft hover lift. */
+      .dronebio-stepper { padding: 8px 10px; }
+      .dronebio-step {
+        padding: 8px 14px;
+        font-size: 0.86rem;
+        transition: background 0.18s ease, color 0.18s ease,
+                    transform 0.12s ease;
+      }
+      .dronebio-step:hover:not(.active) {
+        background: #e2e8f0;
+        transform: translateY(-1px);
+      }
+
       /* ----- Project Control Center + Workflow Stepper ------------------- */
       .dronebio-pcc-wrapper, .dronebio-stepper-wrapper {
         max-width: 1480px;
@@ -3080,7 +3102,13 @@ ui <- page_navbar(
                                                inline = TRUE)))),
           uiOutput("layer_manager_panel")
         ),
-        card(card_header("Project status"),
+        # Project actions card. Used to repeat all the project
+        # metadata (path, image count, product checkmarks) that now
+        # lives in the Project Control Center at the top of the page;
+        # now it only carries actions: Build CHM and Refine DTM +
+        # CHM via CSF (lidR). Renders an empty-state line when
+        # neither action is available.
+        card(card_header("Project actions"),
              uiOutput("project_status_quick")),
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
         # Cross-tab handoff: once the user has drawn an ROI, picked
@@ -4858,25 +4886,64 @@ server <- function(input, output, session) {
   }
 
   output$map_layer_controls <- renderUI({
-    # Hide overlays the loaded orthomosaic cannot support (e.g. NDVI/NDRE
-    # on a 3-band RGB ortho). Default-on layer adapts: NDVI when present,
-    # else VARI (the RGB equivalent).
+    # Show EVERY overlay in product_metadata. Overlays whose required
+    # bands the current orthomosaic does not carry are rendered with a
+    # disabled checkbox + a "needs X" hint, so the user can SEE that
+    # the layer exists (e.g. NDVI) and understand why it is greyed out
+    # rather than wonder where it went. The "?" help button is always
+    # active so the formula and reference are reachable regardless of
+    # availability.
     avail <- available_overlays()
-    default_on <- if ("NDVI" %in% avail) "NDVI" else if ("VARI" %in% avail) "VARI" else NA_character_
-    rows <- lapply(avail, function(layer_name) {
+    default_on <- if ("NDVI" %in% avail) "NDVI"
+                  else if ("VARI" %in% avail) "VARI"
+                  else NA_character_
+    rows <- lapply(overlay_choices, function(layer_name) {
       meta <- product_metadata[[layer_name]]
-      tags$div(
-        class = "d-flex align-items-center justify-content-between gap-2 mb-1",
+      is_avail <- layer_name %in% avail
+      req_bands <- overlay_band_requirements[[layer_name]] %||% character()
+      missing_msg <- if (!is_avail) {
+        needed <- intersect(c("NIR", "RedEdge"), req_bands)
+        if (length(needed)) {
+          sprintf("needs %s band(s) - this orthomosaic is RGB-only",
+                  paste(needed, collapse = " + "))
+        } else "product not on disk yet"
+      } else NULL
+
+      # Build the disabled-checkbox markup by hand so we can apply the
+      # `disabled` attribute (shiny::checkboxInput does not expose it).
+      checkbox_html <- if (isTRUE(is_avail)) {
         checkboxInput(
           inputId = layer_input_id(layer_name),
-          label = meta$label,
-          value = identical(layer_name, default_on)
-        ),
+          label   = meta$label,
+          value   = identical(layer_name, default_on)
+        )
+      } else {
+        tags$div(
+          class = "form-check",
+          style = "opacity: 0.55; cursor: not-allowed;",
+          tags$input(
+            type = "checkbox",
+            class = "form-check-input",
+            id = layer_input_id(layer_name),
+            disabled = NA
+          ),
+          tags$label(
+            class = "form-check-label",
+            `for` = layer_input_id(layer_name),
+            title = missing_msg,
+            paste0(meta$label, " (", missing_msg, ")")
+          )
+        )
+      }
+
+      tags$div(
+        class = "d-flex align-items-center justify-content-between gap-2 mb-1",
+        checkbox_html,
         actionButton(
           inputId = help_input_id(layer_name),
-          label = "?",
-          class = "btn btn-outline-secondary layer-help-btn",
-          title = paste("Show", meta$label, "formula")
+          label   = "?",
+          class   = "btn btn-outline-secondary layer-help-btn",
+          title   = paste("Show", meta$label, "formula")
         )
       )
     })
@@ -5200,78 +5267,25 @@ server <- function(input, output, session) {
                      type = "message", duration = 6)
   })
 
-  # Lightweight always-on summary: file existence + size only. Cheap.
-  # Shows up the moment the user lands on the GIS Workspace tab.
-  # Reads outputs_refresh_token() so the card re-renders automatically
-  # after a background job (CSF refinement, etc.) finishes rewriting
-  # products on disk - file mtimes do not invalidate reactives, so we
-  # explicitly bump the token from the job's onFulfilled callback.
+  # Project-actions panel. Used to mix project metadata + product
+  # status, but the Project Control Center at the top of the page now
+  # covers both, so this output only emits the actionable items
+  # (Build CHM, CSF refinement, Cancel CSF). Renders nothing visible
+  # when no actions apply, so the wrapping card collapses to a thin
+  # line.
   output$project_status_quick <- renderUI({
     outputs_refresh_token()  # invalidates this render when CSF finishes
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) {
-      return(tags$div(class = "text-muted", "Project not configured."))
+      return(tags$div(class = "text-muted small",
+                      "Project not configured."))
     }
     qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
-    n_imgs <- tryCatch({
-      length(list.files(p$images_dir, pattern = "\\.(jpe?g|tif?f)$",
-                        ignore.case = TRUE, recursive = FALSE))
-    }, error = function(e) NA_integer_)
-
-    # Detect RGB vs Multispectral ortho without forcing a pixel read.
-    ortho_label <- "Orthomosaic"
-    paths_for_ortho <- odm_product_paths(p)
-    cache_dir       <- DroneBioR:::local_cache_dir(p)
-    ortho_path_canonical <- unname(paths_for_ortho[["orthomosaic"]])
-    ortho_path_cached    <- file.path(cache_dir, basename(ortho_path_canonical))
-    ortho_path_resolved  <- if (file.exists(ortho_path_cached)) ortho_path_cached
-                            else ortho_path_canonical
-    if (file.exists(ortho_path_resolved)) {
-      # Goes through the cached raster_header() so re-renders of this
-      # output (e.g. when the user types in project_dir/output_dir)
-      # do not re-open the same orthomosaic file. The "Now loading"
-      # banner appears on the FIRST open while terra reads the header.
-      hdr <- raster_header(ortho_path_resolved,
-                           progress_msg = "Detecting orthomosaic type")
-      if (!is.null(hdr) && !is.na(hdr$nlyr)) {
-        ortho_label <- if (hdr$nlyr >= 5L) "Multispectral Orthomosaic"
-                       else "RGB Orthomosaic"
-      }
-    }
-
-    # Canonical product list (the five rows the boss asked for).
-    product_status <- function(label, ok, hint = NULL) {
-      tags$div(
-        style = "padding:2px 0;",
-        tags$span(style = "display:inline-block; width:18px;",
-                  if (isTRUE(ok)) "✓" else "—"),
-        tags$strong(label),
-        if (!isTRUE(ok) && !is.null(hint))
-          tags$span(style = "color:#6b7280; margin-left:8px; font-size:0.85em;", hint))
-    }
 
     chm_existing <- isTRUE(qc[["chm"]])
     chm_buildable <- isTRUE(qc[["dsm"]]) && isTRUE(qc[["dtm"]]) && !chm_existing
 
-    rows <- list(
-      tags$div(tags$strong("Images: "), if (is.na(n_imgs)) "—" else n_imgs),
-      tags$div(tags$strong("Project root: "), tags$code(p$project_dir),
-               tags$br(),
-               tags$strong("Layout: "),
-               tags$code(basename(dirname(p$odm_project_dir)), " / ",
-                         basename(p$odm_project_dir))),
-      tags$hr(style = "margin:6px 0;"),
-      tags$div(tags$strong("Products"),
-               style = "margin-bottom:4px;"),
-      product_status(ortho_label,
-                     isTRUE(qc[["orthomosaic"]]),
-                     hint = "missing — needs an ODM run"),
-      product_status("DSM", isTRUE(qc[["dsm"]]), "missing"),
-      product_status("DTM", isTRUE(qc[["dtm"]]), "missing"),
-      product_status("CHM", chm_existing,
-                     if (chm_buildable) "buildable from DSM - DTM"
-                     else "needs DSM + DTM")
-    )
+    rows <- list()
     if (chm_buildable) {
       rows[[length(rows) + 1L]] <- tags$div(
         style = "margin-top:6px;",
@@ -5316,6 +5330,14 @@ server <- function(input, output, session) {
                           "writes a new DTM and rebuilds the CHM. Runs in a ",
                           "background worker so the rest of the app stays ",
                           "responsive while it takes a few minutes.")))
+    }
+    if (length(rows) == 0L) {
+      # No project-level actions apply right now. Render an
+      # explicit empty state instead of a phantom whitespace
+      # block, so the wrapping card collapses visually.
+      return(tags$div(class = "text-muted small",
+                      "No project actions available right now. Run ODM, ",
+                      "or load DSM + DTM to unlock Build CHM / CSF refinement."))
     }
     tags$div(style = "margin-bottom:8px;", rows)
   })
