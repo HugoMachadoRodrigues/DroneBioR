@@ -1569,7 +1569,7 @@ ui <- page_navbar(
     class = "dronebio-navbar-content",
     tags$div(
       class = "dronebio-navbar-brand",
-      tags$img(src = "logo.png", height = "80px",
+      tags$img(src = "logo.png", height = "120px",
                alt = "DroneBioR logo"),
       tags$span(class = "dronebio-navbar-title",
                 "Drone Biomass Studio")
@@ -2408,10 +2408,10 @@ ui <- page_navbar(
         display: none;
         position: fixed;
         /* Sits BELOW the navbar so it never overlaps the Workflow
-           Stepper. The navbar is now 80px (logo fits inside the
-           green band cleanly, no overflow); the banner clears it
-           with a small breathing margin. */
-        top: 92px;
+           Stepper. The navbar is now 120px (logo + chips scaled
+           proportionally); the banner clears it with a small
+           breathing margin. */
+        top: 132px;
         left: 50%;
         transform: translateX(-50%);
         z-index: 10000;
@@ -2703,17 +2703,16 @@ ui <- page_navbar(
         /* navbar-brand is the flex parent for logo + title + stepper.
            Height matches the logo height exactly so the logo fits
            entirely INSIDE the green band - no overflow, no overlap
-           into the page content below. A green band of 80px is the
-           smallest size that still leaves the 80px logo readable
-           (the 160px / 48px / overflow-below combination clipped
-           the logo against the left sidebar of every panel). */
+           into the page content below. Title font + stepper chip
+           sizes below are scaled proportionally to this height so
+           the bar reads as one harmonised header. */
         display: flex !important;
         align-items: center !important;
         width: 100% !important;
         margin: 0 !important;
-        padding: 0 12px !important;
+        padding: 0 16px !important;
         max-width: none !important;
-        height: 80px !important;
+        height: 120px !important;
         line-height: 1 !important;
         overflow: visible !important;
       }
@@ -2739,13 +2738,13 @@ ui <- page_navbar(
          (readable, no clipping, no overlap with the page below). */
       .dronebio-navbar-brand img {
         display: block;
-        height: 80px;
+        height: 120px;
         flex-shrink: 0;
       }
       .dronebio-navbar-title {
         white-space: nowrap;
         color: #ffffff;
-        font-size: 1.05rem;
+        font-size: 1.55rem;
         font-weight: 600;
       }
       .dronebio-navbar-stepper {
@@ -2771,13 +2770,13 @@ ui <- page_navbar(
       .dronebio-navbar-stepper .dronebio-stepper {
         background: rgba(255, 255, 255, 0.08);
         border-color: rgba(255, 255, 255, 0.15);
-        padding: 4px 6px;
-        gap: 2px;
+        padding: 6px 8px;
+        gap: 4px;
       }
       .dronebio-navbar-stepper .dronebio-step {
         color: #e2e8f0;
-        padding: 5px 10px;
-        font-size: 0.80rem;
+        padding: 9px 16px;
+        font-size: 1.0rem;
         border: 1px solid transparent;
       }
       .dronebio-navbar-stepper .dronebio-step:hover:not(.active) {
@@ -2797,9 +2796,9 @@ ui <- page_navbar(
         color: #065f46;
       }
       .dronebio-navbar-stepper .dronebio-step .step-num {
-        width: 18px;
-        height: 18px;
-        font-size: 0.66rem;
+        width: 26px;
+        height: 26px;
+        font-size: 0.85rem;
         background: rgba(255, 255, 255, 0.20);
         color: #ffffff;
       }
