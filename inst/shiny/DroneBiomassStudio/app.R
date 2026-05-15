@@ -2688,96 +2688,69 @@ ui <- page_navbar(
          full width so the stepper has room to lay out next to the
          logo, with the brand block fixed on the left and the
          stepper filling the remaining space. */
+      /* ----- Navbar layout (flexbox, no absolute positioning) ---------- */
       .navbar {
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
+        padding: 0 !important;
         min-height: 0 !important;
-        /* allow the oversized logo to spill out of the green band
-           below the navbar - the band height should be driven by
-           the title + stepper, NOT by the logo. */
         overflow: visible !important;
       }
       .navbar > .container-fluid,
       .navbar > .container {
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
+        padding: 0 !important;
         overflow: visible !important;
       }
       .navbar-brand {
+        /* navbar-brand becomes the flex parent for logo + title +
+           stepper. Fixed height = green band thickness. The logo
+           below is a flex CHILD with a larger explicit height,
+           which makes it overflow visibly above and below this
+           container without affecting the navbar's height. */
+        display: flex !important;
+        align-items: center !important;
         width: 100% !important;
         margin: 0 !important;
-        /* Zero vertical padding: the green band hugs the chips
-           and the title, with the oversized logo overlaying the
-           area below the navbar (see absolute positioning below). */
-        padding: 0 8px 0 180px !important;
+        padding: 0 12px !important;
         max-width: none !important;
+        height: 48px !important;
         line-height: 1 !important;
-        position: relative;
         overflow: visible !important;
       }
       .dronebio-navbar-content {
-        line-height: 1;
         display: flex;
         align-items: center;
-        min-height: 44px;  /* the green band thickness */
-        position: relative;
-      }
-      /* The logo is taken OUT of the flex flow and absolutely
-         positioned so it can be bigger than the green band. It
-         spills below into the page content area, which is fine -
-         the area immediately below the navbar is the Project
-         Control Center's neutral background. */
-      .dronebio-navbar-brand {
-        position: absolute !important;
-        left: 8px;
-        top: 0;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        z-index: 10;
-      }
-      .dronebio-navbar-brand img {
-        display: block;
-        height: 160px;
-        /* re-position the logo so its vertical center matches the
-           green band's vertical center - that way the overflow
-           is split roughly evenly above and below the navbar
-           (anything that ends up above the navbar will sit on a
-           transparent strip; below sits over the page). */
-        margin-top: 0;
-        position: relative;
-        top: 8px;  /* tiny push down so the logo's bottom hangs
-                       cleanly below the green band */
-      }
-      .dronebio-navbar-title {
-        white-space: nowrap;
-        color: #ffffff;
-        font-size: 1.05rem;
-        font-weight: 600;
-      }
-      .dronebio-navbar-content {
-        display: flex;
-        align-items: center;
-        width: 100%;
         gap: 16px;
-        flex-wrap: nowrap;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
       }
       .dronebio-navbar-brand {
         display: flex;
         align-items: center;
         gap: 12px;
         flex-shrink: 0;
+        height: 100%;
+        overflow: visible;
+      }
+      /* The actual overflow trick: the image is a flex item with an
+         explicit height bigger than its parent's. align-items:
+         center keeps it vertically centered on the parent, and
+         overflow:visible on the parent (set above) lets it spill
+         above and below the navbar without expanding the navbar. */
+      .dronebio-navbar-brand img {
+        display: block;
+        height: 160px;
+        flex-shrink: 0;
       }
       .dronebio-navbar-title {
-        font-size: 1.05rem;
-        font-weight: 600;
         white-space: nowrap;
         color: #ffffff;
+        font-size: 1.05rem;
+        font-weight: 600;
       }
       .dronebio-navbar-stepper {
         flex: 1 1 auto;
         min-width: 0;
+        height: 100%;
         display: flex;
         align-items: center;
       }
@@ -2787,6 +2760,10 @@ ui <- page_navbar(
         padding: 0;
         width: 100%;
       }
+      /* (NB: the duplicate .dronebio-navbar-content / -brand /
+         -stepper rules that used to live here have been folded into
+         the single block above; only the stepper-INSIDE-the-navbar
+         styling remains below.) */
       /* The stepper INSIDE the navbar uses a darker, more compact
          style than the original below-navbar variant so it reads
          against the green navbar background. */
