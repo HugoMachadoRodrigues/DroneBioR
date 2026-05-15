@@ -1316,22 +1316,53 @@ project_control_center <- function() {
 }
 
 # -- Workflow Stepper -------------------------------------------------------
-# Seven-step horizontal stepper that mirrors the navbar tabs and shows
-# (a) the user's current tab, (b) which steps have produced artefacts
-# (so a completed orthomosaic ticks the Process step, a saved field
-# model ticks Field Models, etc.). Driven server-side via
-# `output$workflow_stepper` so the completion state is reactive.
+# Seven-step horizontal stepper that mirrors the navbar tabs.
+#
+# Rendered as STATIC HTML at UI-definition time. The previous
+# server-driven renderUI version waited on Shiny's R thread to be
+# free; on OneDrive-mounted projects the initial filesystem scan
+# inside `available_odm_projects()` could block the thread for
+# several seconds, so the navbar painted with an empty stepper area
+# until the scan finished. Putting the chip structure straight in
+# the UI breaks that dependency - the stepper appears the moment
+# the page paints. Completion state still arrives later through
+# the dronebior_stepper_done custom message (see server observer).
 #
 # Step order mirrors the navbar:
 #   1. Process     2. GIS        3. Spectral
 #   4. 3D Modeling 5. Field      6. Export    7. Time Series
 #
-# The user can click a step to jump to that tab - this is wired with
-# Shiny.setInputValue('main_nav', ...) from a small JS handler so the
-# stepper acts as a redundant, more visual navigation.
+# Clicking a chip sets dronebio_stepper_goto -> the server observer
+# calls updateNavbarPage("main_nav", ...).
 workflow_stepper <- function() {
+  steps <- list(
+    list(n = 1L, label = "Process",     tab = "Processing Engine"),
+    list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
+    list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
+    list(n = 4L, label = "3D Modeling", tab = "3D Modeling"),
+    list(n = 5L, label = "Field model", tab = "Field Models"),
+    list(n = 6L, label = "Export",      tab = "Exports"),
+    list(n = 7L, label = "Time Series", tab = "Time Series")
+  )
+  # The first tab ("Processing Engine") is .active at page load. A
+  # JS listener for shown.bs.tab updates the active class as the
+  # user navigates - see dronebior_stepper_track_active in the
+  # global script block.
+  chips <- lapply(steps, function(st) {
+    cls <- c("dronebio-step",
+             if (identical(st$tab, "Processing Engine")) "active")
+    tags$div(
+      class           = paste(cls, collapse = " "),
+      `data-step-tab` = st$tab,
+      onclick         = sprintf(
+        "Shiny.setInputValue('dronebio_stepper_goto', '%s', { priority: 'event' });",
+        st$tab),
+      tags$span(class = "step-num", as.character(st$n)),
+      tags$span(st$label)
+    )
+  })
   div(class = "dronebio-stepper-wrapper",
-      uiOutput("workflow_stepper"))
+      div(class = "dronebio-stepper", chips))
 }
 
 haversine_m <- function(lon1, lat1, lon2, lat2) {
@@ -1545,7 +1576,7 @@ ui <- page_navbar(
     ),
     tags$div(
       class = "dronebio-navbar-stepper",
-      uiOutput("workflow_stepper")
+      workflow_stepper()
     )
   ),
   theme = theme,
@@ -1575,6 +1606,18 @@ ui <- page_navbar(
       Shiny.addCustomMessageHandler('dronebior_clear_imagequery', function(_msg) {
         document.querySelectorAll('.leaflet-control.imagequery').forEach(function(el) {
           el.remove();
+        });
+      });
+
+      // Mark the active chip in the static Workflow Stepper. R sends
+      // { tab: '<navbar tab title>' } whenever input$main_nav
+      // changes - we toggle the .active class on each chip so the
+      // current step always lights up green inside the navbar.
+      Shiny.addCustomMessageHandler('dronebior_stepper_active', function(msg) {
+        if (!msg) return;
+        document.querySelectorAll('.dronebio-step').forEach(function(el) {
+          var t = el.getAttribute('data-step-tab');
+          el.classList.toggle('active', t === msg.tab);
         });
       });
 
@@ -4344,42 +4387,20 @@ server <- function(input, output, session) {
     updateNavbarPage(session, "main_nav", selected = next_step$tab)
   })
 
-  # Workflow Stepper renderer. The chip STRUCTURE is rendered up
-  # front from input$main_nav alone - it does NOT depend on
-  # workflow_completion(), which transitively depends on the
-  # filesystem-scan reactives (project_snapshot -> project ->
-  # available_odm_projects -> detect_odm_projects). That scan can
-  # take 1-3 seconds on OneDrive-synced folders and used to make
-  # the navbar render with an empty placeholder until it finished.
-  # Now the chips appear instantly. Completion checkmarks arrive
-  # later through dronebior_stepper_done (see observer below),
-  # which mutates the chips' classes / step number in place.
-  output$workflow_stepper <- renderUI({
-    current <- input$main_nav %||% "Processing Engine"
-    steps <- list(
-      list(n = 1L, label = "Process",     tab = "Processing Engine"),
-      list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
-      list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
-      list(n = 4L, label = "3D Modeling", tab = "3D Modeling"),
-      list(n = 5L, label = "Field model", tab = "Field Models"),
-      list(n = 6L, label = "Export",      tab = "Exports"),
-      list(n = 7L, label = "Time Series", tab = "Time Series")
-    )
-    chips <- lapply(steps, function(st) {
-      cls <- c("dronebio-step",
-               if (identical(st$tab, current)) "active")
-      tags$div(
-        class             = paste(cls, collapse = " "),
-        `data-step-tab`   = st$tab,
-        onclick           = sprintf(
-          "Shiny.setInputValue('dronebio_stepper_goto', '%s', { priority: 'event' });",
-          st$tab),
-        tags$span(class = "step-num", as.character(st$n)),
-        tags$span(st$label)
-      )
-    })
-    div(class = "dronebio-stepper", chips)
-  })
+  # NB: the Workflow Stepper structure is now STATIC HTML rendered
+  # at UI-definition time inside workflow_stepper() (see helper).
+  # We no longer need a renderUI here - the only server-side job
+  # is to push the .active class on tab change (handled in
+  # observeEvent(input$main_nav, ...) below) and to push
+  # completion ticks via the dronebior_stepper_done message.
+
+  # Keep the .active chip in sync with input$main_nav. Fires on
+  # every navbar tab change (including the click-through from
+  # dronebio_stepper_goto so the loop closes consistently).
+  observeEvent(input$main_nav, {
+    session$sendCustomMessage("dronebior_stepper_active",
+                              list(tab = input$main_nav))
+  }, ignoreInit = FALSE)
 
   # Push completion state to the live stepper via custom message.
   # Runs whenever workflow_completion() invalidates (which itself
