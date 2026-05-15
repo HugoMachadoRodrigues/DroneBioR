@@ -4799,10 +4799,18 @@ server <- function(input, output, session) {
 
     m <- add_project_footprint(m, input$orthomosaic)
 
+    # NB: we INTENTIONALLY do NOT include "Measurement", "ROIs" or
+    # "Annotations" in overlayGroups. When leaflet's LayersControl is
+    # built with a named overlay group that has no members on the map
+    # at the time the control is added, the corresponding checkbox
+    # starts UNCHECKED - and subsequent CircleMarkers / polygons we
+    # add to that empty group via leafletProxy stay invisible until
+    # the user manually ticks it. That was the root cause of the
+    # "I draw an ROI and no vertex appears" bug. Groups not listed
+    # in overlayGroups have no toggle and are simply always visible.
     overlay_groups <- c(
       "Orthomosaic footprint",
-      if (isTRUE(input$show_raw_flight)) flight_overlay_groups else character(),
-      "Measurement"
+      if (isTRUE(input$show_raw_flight)) flight_overlay_groups else character()
     )
     m |>
       addLayersControl(
@@ -5122,11 +5130,14 @@ server <- function(input, output, session) {
     proxy |>
       addLayersControl(
         baseGroups = c("Satellite", "Light basemap"),
+        # Drop "Measurement" / "ROIs" / "Annotations" from overlayGroups
+        # so they have no togglable checkbox - keeps them always
+        # visible (see comment in the original renderLeaflet output
+        # for the empty-group-starts-unchecked rationale).
         overlayGroups = c(
           selected_layers,
           "Orthomosaic footprint",
-          if (isTRUE(input$show_raw_flight)) flight_overlay_groups else character(),
-          "Measurement"
+          if (isTRUE(input$show_raw_flight)) flight_overlay_groups else character()
         ),
         options = layersControlOptions(collapsed = FALSE)
       )
@@ -5579,12 +5590,13 @@ server <- function(input, output, session) {
     accent <- if (identical(input$gis_measure_tool, "Measure volume (CHM)"))
                 "#f97316"                       # orange (volume)
               else "#38bdf8"                    # sky blue (distance / area / ROI)
-    # Big, high-contrast markers - the previous radius=5 dark-on-dark
-    # circles were nearly invisible on Esri's deep-blue ocean and on
-    # dense canopy tiles, which is why the user reported "no vertices
-    # appear on the map when I draw an ROI." Yellow inner core + dark
-    # navy halo reads against any basemap.
-    pts$vertex <- seq_len(nrow(pts))
+    # Use plain addCircleMarkers with NO custom labelOptions / pane -
+    # we mirror exactly what the saved-ROI observer does (which the
+    # user has confirmed renders correctly). The previous attempt
+    # used labelOptions(permanent = TRUE, ...) and pathOptions(pane =
+    # "dbMeasurementPane"); one of those caused leaflet to silently
+    # drop the circles. Keep big yellow-on-navy dots so they read on
+    # any basemap.
     proxy <- proxy |>
       addCircleMarkers(
         data = pts,
@@ -5596,30 +5608,12 @@ server <- function(input, output, session) {
         fillColor = "#facc15",
         fillOpacity = 1,
         opacity = 1,
-        label = ~as.character(vertex),
-        labelOptions = labelOptions(
-          permanent  = TRUE,
-          direction  = "right",
-          offset     = c(10, 0),
-          textOnly   = FALSE,
-          style      = list(
-            "background"  = "rgba(15, 23, 42, 0.85)",
-            "color"       = "#facc15",
-            "font-weight" = "700",
-            "padding"     = "2px 6px",
-            "border"      = "1px solid #facc15",
-            "border-radius" = "4px",
-            "box-shadow"  = "0 1px 3px rgba(0,0,0,0.4)"
-          )
-        ),
-        options = pathOptions(pane = "dbMeasurementPane"),
         group = "Measurement"
       )
-    # In-progress polyline: as soon as there are >= 2 vertices, draw the
-    # line segments connecting them. For "Measure area" / volume this
-    # shows the polygon forming BEFORE the third vertex closes it; for
-    # "Measure distance" this is the actual measurement line. Closing
-    # the polygon only happens at >= 3 vertices.
+    # In-progress polyline: as soon as there are >= 2 vertices, draw
+    # the line segments connecting them. For Measure area / volume
+    # this shows the polygon forming BEFORE the third vertex closes
+    # it; for Measure distance this is the actual measurement line.
     if (nrow(pts) >= 2) {
       proxy <- proxy |>
         addPolylines(
@@ -5630,7 +5624,6 @@ server <- function(input, output, session) {
           weight = 3,
           opacity = 0.95,
           dashArray = if (identical(input$gis_measure_tool, "Measure distance")) NULL else "6,4",
-          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     }
@@ -5645,7 +5638,6 @@ server <- function(input, output, session) {
           weight = 3,
           fillColor = accent,
           fillOpacity = 0.20,
-          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     } else if (identical(input$gis_measure_tool, "Measure volume (CHM)") && nrow(pts) >= 3) {
@@ -5659,7 +5651,6 @@ server <- function(input, output, session) {
           weight = 3,
           fillColor = accent,
           fillOpacity = 0.22,
-          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     }
