@@ -1569,7 +1569,7 @@ ui <- page_navbar(
     class = "dronebio-navbar-content",
     tags$div(
       class = "dronebio-navbar-brand",
-      tags$img(src = "logo.png", height = "112px",
+      tags$img(src = "logo.png", height = "160px",
                alt = "DroneBioR logo"),
       tags$span(class = "dronebio-navbar-title",
                 "Drone Biomass Studio")
@@ -2688,7 +2688,11 @@ ui <- page_navbar(
       .navbar-brand {
         width: 100% !important;
         margin: 0 !important;
-        padding: 6px 8px !important;
+        /* Tight 1px top/bottom padding so the green stripe is just a
+           thin frame around the logo + stepper - the navbar height
+           is driven by the logo height alone, with virtually no
+           extra green margin above or below. */
+        padding: 1px 8px !important;
         max-width: none !important;
       }
       .dronebio-navbar-content {
