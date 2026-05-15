@@ -39,6 +39,7 @@ run_dronebio_workflow <- function(project = dronebio_project(),
     output_dir <- project$output_dir
   }
 
+  t0 <- Sys.time()
   ortho <- read_multispectral_orthomosaic(
     orthomosaic = orthomosaic,
     band_map = band_map,
@@ -55,6 +56,29 @@ run_dronebio_workflow <- function(project = dronebio_project(),
   utils::write.csv(reflectance_summary, file.path(output_dir, "reflectance_summary.csv"), row.names = FALSE)
   utils::write.csv(index_summary, file.path(output_dir, "spectral_index_summary.csv"), row.names = FALSE)
   paths <- write_dronebio_rasters(output_dir, reflectance, indices, biomass_proxy, ortho$alpha)
+
+  # Provenance: append a row to <project_dir>/dronebio_runs.csv so the
+  # user (and the Project Control Center in the Shiny app) can trace
+  # which products on disk came from which workflow invocation, with
+  # what parameters, on what date. record_dronebio_run() is no-op
+  # when project has no project_dir, so this is safe under
+  # dronebio_project() with no arguments.
+  bands_str <- tryCatch(paste(names(ortho$bands), collapse = "+"),
+                        error = function(e) NA_character_)
+  crs_str <- tryCatch(terra::crs(ortho$bands, describe = TRUE)$name,
+                      error = function(e) NA_character_)
+  tryCatch(
+    record_dronebio_run(project, list(
+      engine          = "run_dronebio_workflow",
+      orthomosaic     = orthomosaic,
+      bands           = bands_str,
+      crs             = if (length(crs_str)) crs_str else NA_character_,
+      runtime_seconds = as.numeric(difftime(Sys.time(), t0, units = "secs")),
+      output_dir      = output_dir,
+      use_alpha       = isTRUE(use_alpha)
+    )),
+    error = function(e) NULL
+  )
 
   list(
     project = project,

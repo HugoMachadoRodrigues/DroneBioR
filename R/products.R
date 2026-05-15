@@ -122,6 +122,100 @@ local_cache_dir <- function(project, cache_root = file.path(Sys.getenv("HOME"), 
   file.path(cache_root, slug)
 }
 
+#' Path to the run-history manifest for a project.
+#'
+#' Returns `<project_dir>/dronebio_runs.csv`, the per-project audit
+#' log of every Processing Engine / workflow execution. Each row
+#' captures who/what produced the products currently on disk:
+#' timestamp, engine, preset, resolution, image count, bands
+#' detected, CRS, written products, run parameters. The path is
+#' returned even when the file does not exist yet so callers can
+#' append cleanly.
+#'
+#' @param project A `dronebio_project` object (or anything with a
+#'   `project_dir` field).
+#' @return Absolute path to the runs manifest. `NA_character_` when
+#'   the project has no `project_dir`.
+#' @noRd
+dronebio_runs_path <- function(project) {
+  pd <- tryCatch(project$project_dir, error = function(e) NULL)
+  if (is.null(pd) || !nzchar(pd)) return(NA_character_)
+  file.path(pd, "dronebio_runs.csv")
+}
+
+#' Append a row to the project's run-history manifest.
+#'
+#' Idempotent helper: creates the CSV on the first call, appends
+#' subsequent rows. Designed so any pipeline step that produces
+#' user-visible artefacts can call it without worrying about file
+#' existence or header consistency. Fields outside the canonical
+#' schema (`timestamp`, `engine`, `preset`, `resolution_cm`,
+#' `image_count`, `bands`, `crs`, `orthomosaic`, `dsm`, `dtm`,
+#' `chm`, `point_cloud`, `textured_mesh`, `runtime_seconds`,
+#' `notes`, `extras`) are JSON-encoded into the `extras` column so
+#' the schema stays stable across versions.
+#'
+#' @param project A `dronebio_project` object.
+#' @param record Named list of fields to record.
+#' @return Invisibly, the path written to.
+#' @noRd
+record_dronebio_run <- function(project, record = list()) {
+  path <- dronebio_runs_path(project)
+  if (is.na(path)) return(invisible(NULL))
+  canonical <- c("timestamp", "engine", "preset", "resolution_cm",
+                 "image_count", "bands", "crs",
+                 "orthomosaic", "dsm", "dtm", "chm",
+                 "point_cloud", "textured_mesh",
+                 "runtime_seconds", "notes")
+  row <- as.list(stats::setNames(rep(NA_character_, length(canonical)), canonical))
+  if (is.null(record$timestamp))
+    record$timestamp <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+  for (k in intersect(names(record), canonical)) {
+    v <- record[[k]]
+    row[[k]] <- if (is.null(v)) NA_character_ else as.character(v)
+  }
+  extras <- record[setdiff(names(record), canonical)]
+  row[["extras"]] <- if (length(extras) &&
+                         requireNamespace("jsonlite", quietly = TRUE))
+    tryCatch(jsonlite::toJSON(extras, auto_unbox = TRUE),
+             error = function(e) NA_character_) else NA_character_
+  df <- as.data.frame(row, stringsAsFactors = FALSE)
+  tryCatch({
+    if (file.exists(path)) {
+      utils::write.table(df, path, append = TRUE, sep = ",", row.names = FALSE,
+                         col.names = FALSE, quote = TRUE)
+    } else {
+      utils::write.csv(df, path, row.names = FALSE)
+    }
+  }, error = function(e) NULL)
+  invisible(path)
+}
+
+#' Read the project's run-history manifest as a data.frame.
+#'
+#' @param project A `dronebio_project` object.
+#' @return Data frame with one row per recorded run, sorted newest
+#'   first. Empty data frame when the manifest does not exist.
+#' @noRd
+read_dronebio_runs <- function(project) {
+  path <- dronebio_runs_path(project)
+  if (is.na(path) || !file.exists(path)) {
+    return(data.frame())
+  }
+  df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE),
+                 error = function(e) data.frame())
+  if (nrow(df) == 0) return(df)
+  if ("timestamp" %in% names(df)) {
+    df$timestamp_parsed <- tryCatch(as.POSIXct(df$timestamp,
+                                               format = "%Y-%m-%dT%H:%M:%S",
+                                               tz = "UTC"),
+                                    error = function(e) NULL)
+    df <- df[order(df$timestamp_parsed, decreasing = TRUE), , drop = FALSE]
+    df$timestamp_parsed <- NULL
+  }
+  df
+}
+
 #' Resolve a project file path to its local-cache copy when available.
 #'
 #' Reads against the cloud-synced project folder (OneDrive / iCloud /

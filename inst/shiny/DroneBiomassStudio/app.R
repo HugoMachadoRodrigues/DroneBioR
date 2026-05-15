@@ -1300,6 +1300,40 @@ scene_source_tile <- function(label, output_id) {
       uiOutput(output_id))
 }
 
+# -- Project Control Center -------------------------------------------------
+# Sticky top card that summarises the project state across every panel
+# (current project, image folder, engine, product status pills, last
+# run timestamp, recommended next action). Reduces the "every tab has
+# its own copy of the project path inputs" feel - the user sees the
+# same canonical state at the top of every panel.
+#
+# UI side: just a uiOutput target. The server renders the real content
+# through `output$project_control_center` in the server function, which
+# reads project(), engine, scene_sources_state, run history, etc.
+project_control_center <- function() {
+  div(class = "dronebio-pcc-wrapper",
+      uiOutput("project_control_center"))
+}
+
+# -- Workflow Stepper -------------------------------------------------------
+# Seven-step horizontal stepper that mirrors the navbar tabs and shows
+# (a) the user's current tab, (b) which steps have produced artefacts
+# (so a completed orthomosaic ticks the Process step, a saved field
+# model ticks Field Models, etc.). Driven server-side via
+# `output$workflow_stepper` so the completion state is reactive.
+#
+# Step order mirrors the navbar:
+#   1. Process     2. GIS        3. Spectral
+#   4. 3D Modeling 5. Field      6. Export    7. Time Series
+#
+# The user can click a step to jump to that tab - this is wired with
+# Shiny.setInputValue('main_nav', ...) from a small JS handler so the
+# stepper acts as a redundant, more visual navigation.
+workflow_stepper <- function() {
+  div(class = "dronebio-stepper-wrapper",
+      uiOutput("workflow_stepper"))
+}
+
 haversine_m <- function(lon1, lat1, lon2, lat2) {
   r <- 6371008.8
   to_rad <- pi / 180
@@ -1489,6 +1523,11 @@ theme <- bs_theme(
 )
 
 ui <- page_navbar(
+  # id = "main_nav" exposes the active panel via input$main_nav so the
+  # Workflow Stepper can highlight the current step and so cross-tab
+  # CTAs ("Open in GIS", "Load in 3D", ...) can switch panels with
+  # updateNavbarPage(session, "main_nav", selected = "GIS Workspace").
+  id = "main_nav",
   title = tags$span(
     style = "display: inline-flex; align-items: center; gap: 14px;",
     tags$img(src = "logo.png", height = "120px",
@@ -1498,7 +1537,15 @@ ui <- page_navbar(
               "Drone Biomass Studio")
   ),
   theme = theme,
-  header = tags$head(
+  # tagList lets us mix the actual <head> content (scripts, css) with
+  # body-level UI that bslib::page_navbar renders BETWEEN the navbar
+  # strip and the active panel content. The Project Control Center and
+  # the Workflow Stepper land in that band, persistent across every
+  # tab.
+  header = tagList(
+    project_control_center(),
+    workflow_stepper(),
+    tags$head(
     tags$script(src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"),
@@ -2512,8 +2559,142 @@ ui <- page_navbar(
       pre { white-space: pre-wrap; }
       .btn { border-radius: 6px; }
       table { font-size: 0.88rem; }
+
+      /* ----- Project Control Center + Workflow Stepper ------------------- */
+      .dronebio-pcc-wrapper, .dronebio-stepper-wrapper {
+        max-width: 1480px;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+      .dronebio-pcc-wrapper { margin-top: 8px; }
+      .dronebio-stepper-wrapper { margin: 10px auto 4px; }
+      .dronebio-pcc-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+        display: grid;
+        grid-template-columns: minmax(220px, 1.4fr) minmax(220px, 1fr) minmax(260px, 1.6fr) minmax(180px, 1.1fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+      @media (max-width: 1100px) {
+        .dronebio-pcc-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 700px) {
+        .dronebio-pcc-card { grid-template-columns: minmax(0, 1fr); }
+      }
+      .dronebio-pcc-block { display: flex; flex-direction: column; gap: 4px; }
+      .dronebio-pcc-label {
+        font-size: 0.70rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #64748b;
+        font-weight: 600;
+      }
+      .dronebio-pcc-value {
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: #0f172a;
+        word-break: break-word;
+      }
+      .dronebio-pcc-sub {
+        font-size: 0.78rem;
+        color: #475569;
+      }
+      .dronebio-pcc-pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 4px;
+      }
+      .dronebio-pcc-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        border: 1px solid;
+        line-height: 1.4;
+      }
+      .dronebio-pcc-pill.ok    { background: #ecfdf5; color: #065f46; border-color: #34d399; }
+      .dronebio-pcc-pill.miss  { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+      .dronebio-pcc-pill .dot  {
+        width: 7px; height: 7px; border-radius: 50%;
+      }
+      .dronebio-pcc-pill.ok   .dot { background: #10b981; }
+      .dronebio-pcc-pill.miss .dot { background: #f97316; }
+      .dronebio-pcc-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 12px;
+        background: #1f6f5b;
+        color: #ffffff !important;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        margin-top: 6px;
+        border: none;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .dronebio-pcc-action:hover { background: #195a4a; }
+      .dronebio-stepper {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 6px 8px;
+        overflow-x: auto;
+      }
+      .dronebio-step {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+        border-radius: 6px;
+        white-space: nowrap;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #475569;
+        flex-shrink: 0;
+        border: 1px solid transparent;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .dronebio-step:hover { background: #f1f5f9; }
+      .dronebio-step.active {
+        background: #1f6f5b;
+        color: #ffffff;
+        border-color: #195a4a;
+      }
+      .dronebio-step.done { color: #0f766e; }
+      .dronebio-step .step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #e2e8f0;
+        color: #0f172a;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+      .dronebio-step.active .step-num { background: #ffffff; color: #1f6f5b; }
+      .dronebio-step.done   .step-num { background: #34d399; color: #064e3b; }
+      .dronebio-step .step-sep {
+        opacity: 0.4;
+        margin: 0 2px;
+      }
     "))
-  ),
+  )),
   nav_panel(
     "Processing Engine",
     layout_sidebar(
@@ -3309,6 +3490,225 @@ server <- function(input, output, session) {
       paths[[k]] <- DroneBioR:::cache_aware_path(unname(paths[[k]]), p)
     }
     paths
+  })
+
+  # ---- Project Control Center + Workflow Stepper ------------------------
+  # These two reactive UIs render the persistent top-of-page chrome
+  # (defined in the UI section via the project_control_center() and
+  # workflow_stepper() helpers). They depend on the project, the
+  # outputs_refresh_token (so they re-render after a CSF run or any
+  # downstream job that writes new products), and the active main_nav
+  # input so the stepper highlights the current step.
+
+  # Light-weight project snapshot used by both renderUIs below. Reads
+  # project() once and pulls together the easy state (image count,
+  # engine label, product availability). Avoids reading raster headers
+  # so it stays cheap to recompute on every navigation.
+  project_snapshot <- reactive({
+    outputs_refresh_token()
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      return(list(ok = FALSE))
+    }
+    n_imgs <- tryCatch({
+      length(list.files(p$images_dir,
+                        pattern = "\\.(jpe?g|tif?f)$",
+                        ignore.case = TRUE,
+                        recursive = FALSE))
+    }, error = function(e) NA_integer_)
+    qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
+    engine <- input$processing_engine %||% "odm_docker"
+    engine_label <- switch(engine,
+      odm_docker = "ODM Docker (local)",
+      webodm     = "WebODM REST (remote)",
+      engine
+    )
+    # Last-run timestamp: look at the mtime of whichever ODM output is
+    # the freshest. If the user has a project but no products yet,
+    # last_run stays NA.
+    products <- odm_product_paths(p)
+    candidate_paths <- unname(products[c("orthomosaic", "dsm", "dtm",
+                                         "point_cloud_laz",
+                                         "point_cloud_copc")])
+    candidate_paths <- candidate_paths[file.exists(candidate_paths)]
+    last_run <- if (length(candidate_paths) > 0) {
+      max(file.info(candidate_paths)$mtime, na.rm = TRUE)
+    } else NA
+    runs_path <- DroneBioR:::dronebio_runs_path(p)
+    list(
+      ok          = TRUE,
+      project     = p,
+      name        = basename(p$project_dir %||% ""),
+      project_dir = p$project_dir,
+      images_dir  = p$images_dir,
+      n_imgs      = n_imgs,
+      engine      = engine,
+      engine_label = engine_label,
+      qc          = qc,
+      last_run    = last_run,
+      runs_path   = runs_path
+    )
+  })
+
+  # The list of [done] product availability for stepper completion.
+  workflow_completion <- reactive({
+    s <- project_snapshot()
+    if (!isTRUE(s$ok)) {
+      return(list(
+        process = FALSE, gis = FALSE, spectral = FALSE,
+        modeling = FALSE, field = FALSE, export = FALSE, ts = FALSE
+      ))
+    }
+    qc <- s$qc
+    products <- odm_product_paths(s$project)
+    process_done  <- isTRUE(qc[["outputs_complete"]])
+    gis_done      <- file.exists(input$orthomosaic %||% "") ||
+                       isTRUE(qc[["orthomosaic"]])
+    spectral_done <- gis_done  # any ortho means we can compute indices
+    modeling_done <- isTRUE(qc[["point_cloud"]])
+    # field_done: did the user fit a biomass model? We look for the
+    # canonical output file the field-models tab writes.
+    field_path    <- file.path(s$project_dir, "outputs",
+                               "biomass_model_summary.txt")
+    field_done    <- file.exists(field_path)
+    # export_done: any exports under output_dir
+    export_dir    <- s$project$output_dir %||% ""
+    export_done   <- nzchar(export_dir) && dir.exists(export_dir) &&
+                       length(list.files(export_dir,
+                                         pattern = "\\.(tif|csv|gpkg|html|pdf)$",
+                                         ignore.case = TRUE)) > 0
+    ts_done       <- file.exists(file.path(s$project_dir,
+                                           "dronebio_flights.csv"))
+    list(
+      process  = process_done,
+      gis      = gis_done,
+      spectral = spectral_done,
+      modeling = modeling_done,
+      field    = field_done,
+      export   = export_done,
+      ts       = ts_done
+    )
+  })
+
+  # The recommended next step: first step that is reachable but not done.
+  workflow_next_step <- reactive({
+    c_ <- workflow_completion()
+    if (!isTRUE(c_$process)) return(list(label = "Run Processing Engine",
+                                          tab = "Processing Engine"))
+    if (!isTRUE(c_$gis))      return(list(label = "Open in GIS Workspace",
+                                          tab = "GIS Workspace"))
+    if (!isTRUE(c_$spectral)) return(list(label = "Compute spectral indices",
+                                          tab = "Spectral Analytics"))
+    if (!isTRUE(c_$modeling)) return(list(label = "Inspect 3D point cloud",
+                                          tab = "3D Modeling"))
+    if (!isTRUE(c_$field))    return(list(label = "Fit field biomass model",
+                                          tab = "Field Models"))
+    if (!isTRUE(c_$export))   return(list(label = "Export deliverables",
+                                          tab = "Exports"))
+    list(label = "Log this flight to Time Series", tab = "Time Series")
+  })
+
+  output$project_control_center <- renderUI({
+    s <- project_snapshot()
+    if (!isTRUE(s$ok)) {
+      return(div(class = "dronebio-pcc-card",
+                 div(class = "dronebio-pcc-block",
+                     span(class = "dronebio-pcc-label", "Project"),
+                     span(class = "dronebio-pcc-value", "Not configured"))))
+    }
+    qc <- s$qc
+    pill <- function(label, ok) {
+      tags$span(class = paste0("dronebio-pcc-pill ", if (isTRUE(ok)) "ok" else "miss"),
+                tags$span(class = "dot"),
+                label)
+    }
+    products_pills <- div(
+      class = "dronebio-pcc-pill-row",
+      pill("Ortho",       qc[["orthomosaic"]]),
+      pill("DSM",         qc[["dsm"]]),
+      pill("DTM",         qc[["dtm"]]),
+      pill("CHM",         qc[["chm"]]),
+      pill("Point cloud", qc[["point_cloud"]])
+    )
+    next_step <- workflow_next_step()
+    div(
+      class = "dronebio-pcc-card",
+      div(class = "dronebio-pcc-block",
+          span(class = "dronebio-pcc-label", "Project"),
+          span(class = "dronebio-pcc-value",
+               if (nzchar(s$name)) s$name else "(unnamed)"),
+          span(class = "dronebio-pcc-sub",
+               if (nzchar(s$project_dir)) s$project_dir else "no path set")),
+      div(class = "dronebio-pcc-block",
+          span(class = "dronebio-pcc-label", "Images & engine"),
+          span(class = "dronebio-pcc-value",
+               if (!is.na(s$n_imgs) && is.finite(s$n_imgs))
+                 sprintf("%s images", format(s$n_imgs, big.mark = ","))
+               else "no images detected"),
+          span(class = "dronebio-pcc-sub", s$engine_label)),
+      div(class = "dronebio-pcc-block",
+          span(class = "dronebio-pcc-label", "Products"),
+          products_pills,
+          span(class = "dronebio-pcc-sub",
+               if (!is.na(s$last_run))
+                 paste0("Last update: ", format(s$last_run, "%Y-%m-%d %H:%M"))
+               else "no products on disk yet")),
+      div(class = "dronebio-pcc-block",
+          span(class = "dronebio-pcc-label", "Next action"),
+          span(class = "dronebio-pcc-value", next_step$label),
+          actionLink("workflow_goto_next",
+                     label = "Go there >",
+                     class = "dronebio-pcc-action"))
+    )
+  })
+
+  # Jump to the recommended next tab when the user clicks the Next Action
+  # button in the Project Control Center.
+  observeEvent(input$workflow_goto_next, {
+    next_step <- workflow_next_step()
+    updateNavbarPage(session, "main_nav", selected = next_step$tab)
+  })
+
+  # Workflow Stepper renderer.
+  output$workflow_stepper <- renderUI({
+    c_ <- workflow_completion()
+    current <- input$main_nav %||% "Processing Engine"
+    steps <- list(
+      list(n = 1L, label = "Process",     tab = "Processing Engine",
+           done = c_$process),
+      list(n = 2L, label = "GIS",         tab = "GIS Workspace",
+           done = c_$gis),
+      list(n = 3L, label = "Spectral",    tab = "Spectral Analytics",
+           done = c_$spectral),
+      list(n = 4L, label = "3D Modeling", tab = "3D Modeling",
+           done = c_$modeling),
+      list(n = 5L, label = "Field model", tab = "Field Models",
+           done = c_$field),
+      list(n = 6L, label = "Export",      tab = "Exports",
+           done = c_$export),
+      list(n = 7L, label = "Time Series", tab = "Time Series",
+           done = c_$ts)
+    )
+    chips <- lapply(steps, function(st) {
+      cls <- c("dronebio-step",
+               if (identical(st$tab, current)) "active",
+               if (isTRUE(st$done)) "done")
+      tags$div(
+        class    = paste(cls, collapse = " "),
+        onclick  = sprintf("Shiny.setInputValue('dronebio_stepper_goto', '%s', { priority: 'event' });",
+                           st$tab),
+        tags$span(class = "step-num",
+                  if (isTRUE(st$done)) HTML("&#10003;") else as.character(st$n)),
+        tags$span(st$label)
+      )
+    })
+    div(class = "dronebio-stepper", chips)
+  })
+
+  # JS click handler on the stepper sets dronebio_stepper_goto; here we
+  # turn that into a navbarPage update.
+  observeEvent(input$dronebio_stepper_goto, {
+    updateNavbarPage(session, "main_nav", selected = input$dronebio_stepper_goto)
   })
 
   overlay_choices <- c(
@@ -6537,6 +6937,32 @@ server <- function(input, output, session) {
           log_path    = log_path,
           project_dir = p$project_dir,
           image_count = image_count
+        )
+
+        # Provenance: capture the launch event in dronebio_runs.csv.
+        # Final products will be backfilled by the autoload observer
+        # once ODM finishes (we record orthomosaic/dsm/dtm/etc. paths
+        # by reading odm_product_paths() and checking file.exists()).
+        preset_bits <- c(
+          if (isTRUE(input$fast_orthophoto)) "fast_orthophoto",
+          if (isTRUE(input$build_dsm))       "dsm",
+          if (isTRUE(input$build_dtm))       "dtm",
+          if (isTRUE(input$pc_las))          "pc_las",
+          if (isTRUE(input$pc_copc))         "pc_copc",
+          if (isTRUE(input$three_d_tiles))   "3d_tiles",
+          if (isTRUE(input$gltf))            "gltf"
+        )
+        tryCatch(
+          DroneBioR:::record_dronebio_run(p, list(
+            engine        = "odm_docker",
+            preset        = paste(preset_bits, collapse = "+"),
+            resolution_cm = input$resolution,
+            image_count   = image_count,
+            notes         = paste0("Launched at ",
+                                    format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+                                    " - log: ", log_path)
+          )),
+          error = function(e) NULL
         )
 
         showNotification(
