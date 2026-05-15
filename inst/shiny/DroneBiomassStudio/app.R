@@ -3688,18 +3688,41 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 340,
+        # CSV mapping wizard: the user uploads any CSV, the server
+        # auto-detects column types, and the user maps each role
+        # (sample_id, biomass, coordinates, CRS) via dropdowns. Lots
+        # better than the previous "make sure your CSV has columns
+        # called sample_id and biomass_kgha" hard requirement.
         fileInput("field_file", "Field biomass CSV", accept = ".csv"),
-        actionButton("extract_field", "Extract spectral values", class = "btn-primary"),
-        actionButton("fit_model", "Fit baseline model", class = "btn-outline-secondary"),
-        div(class = "sidebar-note", "Expected columns: sample_id, biomass_kgha, and either x/y or longitude/latitude.")
+        uiOutput("field_csv_mapping"),
+        div(class = "d-flex gap-2",
+            actionButton("extract_field", "Extract",
+                         class = "btn-primary flex-grow-1"),
+            actionButton("fit_model", "Fit model",
+                         class = "btn-outline-secondary"))
       ),
-      panel_intro_card(
-        "Field Models",
-        "Upload your field biomass CSV, extract spectral values at each sample point, and fit a baseline linear model. The default model picks whichever of NDVI, NDRE, EVI, SAVI, NDWI, NIR and RedEdge are available - constrain the predictor set in R via fit_biomass_lm(predictors = ...) if you need a specific specification.",
-        vignette = "dronebior-overview"
-      ),
-      card(card_header("Extracted samples"), tableOutput("field_preview")),
-      card(card_header("Baseline model"), verbatimTextOutput("model_summary"))
+      div(
+        class = "main-scroll",
+        panel_intro_card(
+          "Field Models",
+          "Upload a field biomass CSV, map its columns (sample_id, biomass, coordinates, CRS, units) in the sidebar, then extract spectral values at each sample point and fit a baseline linear model.",
+          vignette = "dronebior-overview"
+        ),
+        card(card_header("CSV preview"), tableOutput("field_csv_preview")),
+        card(card_header("Detected columns"),
+             uiOutput("field_csv_diagnostics")),
+        card(card_header("Extracted samples"), tableOutput("field_preview")),
+        card(card_header("Baseline model"), verbatimTextOutput("model_summary")),
+        div(
+          class = "gis-cta-row",
+          actionButton("field_cta_spectral", "<-- Spectral Analytics",
+                       class = "btn-outline-secondary"),
+          actionButton("field_cta_export",   "Open Exports -->",
+                       class = "btn-outline-primary"),
+          actionButton("field_cta_ts",       "Add to Time Series -->",
+                       class = "btn-outline-secondary")
+        )
+      )
     )
   ),
   nav_panel(
@@ -3707,46 +3730,150 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 320,
-        actionButton("run_workflow", "Run R analysis workflow", class = "btn-primary"),
-        actionButton("render_report", "Render HTML report", class = "btn-outline-secondary"),
-        fileInput("report_field_csv", "Field CSV for report (optional)", accept = ".csv")
+        # Export Center sidebar: keeps the two main actions plus the
+        # optional report-CSV input. Detailed export choices (which
+        # rasters, which destination, format / resolution) live in
+        # the Export Center card in the main area.
+        actionButton("run_workflow", "Run analysis workflow",
+                     class = "btn-primary w-100"),
+        actionButton("render_report", "Render HTML report",
+                     class = "btn-outline-secondary w-100"),
+        fileInput("report_field_csv",
+                  "Field CSV for report (optional)", accept = ".csv"),
+        actionButton("open_output_folder", "Open output folder",
+                     class = "btn-outline-secondary w-100"),
+        actionButton("open_manifest", "Open run manifest",
+                     class = "btn-outline-secondary w-100")
       ),
-      panel_intro_card(
-        "Exports",
-        "Re-runs the full pipeline through run_dronebio_workflow() and writes the reflectance bands, spectral indices, biomass proxy and (when present) the valid-data mask to your project's output folder. Render HTML report produces a self-contained DroneBioR_report.html with the ODM inventory, index histograms, the CHM and an optional field-based biomass model.",
-        vignette = "dronebior-overview"
-      ),
-      card(card_header("Workflow status"), verbatimTextOutput("workflow_status")),
-      card(card_header("Output files"), verbatimTextOutput("workflow_outputs")),
-      card(card_header("Report"), verbatimTextOutput("report_status"))
+      div(
+        class = "main-scroll",
+        panel_intro_card(
+          "Export Center",
+          "Pick the deliverables you want, the destination folder and the formats, then click Run. Every export is recorded in dronebio_runs.csv alongside the engine, preset, resolution and image count - making it possible to retrace which products on disk came from which run.",
+          vignette = "dronebior-overview"
+        ),
+        card(
+          card_header("Deliverables"),
+          div(class = "p-2",
+            div(class = "small text-muted mb-2",
+                "Tick what you want to write. Each item maps to one or more files in the output folder."),
+            checkboxGroupInput(
+              "export_deliverables", NULL,
+              choices  = c(
+                "Reflectance bands (GeoTIFF)" = "reflectance",
+                "Vegetation indices (GeoTIFF, all 22)" = "indices",
+                "Biomass proxies (GeoTIFF)" = "biomass",
+                "Index summary CSV" = "index_csv",
+                "Reflectance summary CSV" = "refl_csv",
+                "Application map (GeoTIFF + GPKG + CSV)" = "appmap",
+                "Tree / ROI metrics CSV" = "tree_csv",
+                "HTML report (self-contained)" = "html_report"
+              ),
+              selected = c("reflectance", "indices", "biomass",
+                           "index_csv", "refl_csv")
+            )
+          )
+        ),
+        card(
+          card_header("Destination + format"),
+          div(class = "p-2",
+            textInput("export_destination",
+                      "Output folder",
+                      value = default_project$output_dir),
+            selectInput("export_raster_format",
+                        "Raster format",
+                        choices = c("Cloud-optimized GeoTIFF (COG)" = "COG",
+                                    "GeoTIFF (deflate)" = "GTiff",
+                                    "GeoTIFF (LZW)" = "GTiff_LZW"),
+                        selected = "COG"),
+            numericInput("export_resolution_cm",
+                         "Target resolution (cm/px, 0 = native)",
+                         value = 0, min = 0, max = 100, step = 1),
+            checkboxInput("export_record_run",
+                          "Record this export in dronebio_runs.csv",
+                          value = TRUE)
+          )
+        ),
+        card(card_header("Workflow status"),
+             verbatimTextOutput("workflow_status")),
+        card(card_header("Output files"),
+             verbatimTextOutput("workflow_outputs")),
+        card(card_header("Report"),
+             verbatimTextOutput("report_status")),
+        card(card_header("Run manifest"),
+             div(class = "small text-muted mb-2",
+                 paste0("Every Processing Engine launch and every ",
+                        "workflow execution appends a row here. ",
+                        "Open with the button in the sidebar.")),
+             tableOutput("runs_manifest_table")),
+        div(
+          class = "gis-cta-row",
+          actionButton("export_cta_gis",    "<-- GIS Workspace",
+                       class = "btn-outline-secondary"),
+          actionButton("export_cta_ts",     "Add to Time Series -->",
+                       class = "btn-outline-primary")
+        )
+      )
     )
   ),
   nav_panel(
     "Time Series",
     layout_sidebar(
       sidebar = sidebar(
-        width = 320,
-        textInput("ts_registry_path", "Registry path", value = default_flight_registry()),
-        dateInput("ts_flight_date", "Flight date", value = Sys.Date()),
-        textInput("ts_flight_project_dir", "Flight project dir",
-                  placeholder = "/path/to/Drone_Biomass/2026-05-01"),
-        textInput("ts_flight_notes", "Notes (optional)"),
-        actionButton("ts_register", "Register flight", class = "btn-outline-secondary"),
+        width = 340,
+        # Flight Manager: registry path + "Add current project as
+        # flight" button. Validates that the chosen project has the
+        # products the selected metric needs before logging a row.
+        textInput("ts_registry_path", "Registry path",
+                  value = default_flight_registry()),
+        actionButton("ts_add_current",
+                     "Add current project as flight",
+                     class = "btn-primary w-100"),
+        accordion(
+          open = c(),
+          accordion_panel(
+            "Custom flight entry",
+            dateInput("ts_flight_date", "Flight date",
+                      value = Sys.Date()),
+            textInput("ts_flight_project_dir", "Project directory",
+                      placeholder = "/path/to/2026-05-01_flight"),
+            textInput("ts_flight_notes", "Notes (optional)"),
+            actionButton("ts_register", "Register flight",
+                         class = "btn-outline-secondary w-100")
+          )
+        ),
         selectInput("ts_metric", "Metric",
                     choices = c("NDVI mean"            = "ndvi",
                                 "Biomass proxy mean"   = "biomass",
                                 "CHM mean (m)"         = "chm")),
-        actionButton("ts_refresh", "Refresh plot", class = "btn-primary"),
-        actionButton("ts_clear_registry", "Clear registry", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "Each registered flight is one row in the CSV at the registry path. Register a flight by entering its date and project directory, then refresh.")
+        div(class = "d-flex gap-2",
+            actionButton("ts_refresh", "Refresh plot",
+                         class = "btn-primary flex-grow-1"),
+            actionButton("ts_clear_registry", "Clear",
+                         class = "btn-outline-danger"))
       ),
-      panel_intro_card(
-        "Time Series",
-        "Track NDVI, biomass proxy or canopy height across multiple flights of the same site. Register one row per flight (date + project directory), then pick a metric to plot it across time. The registry is a plain CSV under ~/.dronebior/flights.csv by default, so you can edit or version it manually.",
-        vignette = "dronebior-overview"
-      ),
-      card(card_header("Registered flights"), tableOutput("ts_flights_table")),
-      card(card_header("Time series plot"), plotOutput("ts_plot", height = "320px"))
+      div(
+        class = "main-scroll",
+        panel_intro_card(
+          "Time Series",
+          "Compare metrics (NDVI / biomass proxy / CHM mean) across multiple flights of the same site. Add the currently-loaded project as a flight in one click; the registry is a plain CSV you can hand-edit or version-control.",
+          vignette = "dronebior-overview"
+        ),
+        card(card_header("Flight manager"),
+             div(class = "p-2",
+                 div(class = "small text-muted mb-2",
+                     "One row per flight. Removing a row only affects the registry; the underlying project folder stays intact."),
+                 uiOutput("ts_flight_manager"))),
+        card(card_header("Time series plot"),
+             plotOutput("ts_plot", height = "340px")),
+        div(
+          class = "gis-cta-row",
+          actionButton("ts_cta_gis",   "<-- GIS Workspace",
+                       class = "btn-outline-secondary"),
+          actionButton("ts_cta_export", "Open Exports -->",
+                       class = "btn-outline-primary")
+        )
+      )
     )
   )
 )
@@ -10381,10 +10508,120 @@ server <- function(input, output, session) {
     format_tree_table(x[x$tree_id == id, , drop = FALSE])
   }, digits = 2)
 
+  # ---- Field Models CSV mapping wizard ----------------------------
+  # Reads the uploaded CSV and auto-detects column roles. The user
+  # confirms / re-maps via dropdowns in the sidebar. The chosen
+  # mapping is captured in input$field_col_id / biomass / x / y /
+  # crs / units and used by the extract step below (when the user
+  # left the defaults alone, the existing read_field_data() heuristics
+  # still apply).
+  field_csv_raw <- reactive({
+    req(input$field_file)
+    tryCatch(utils::read.csv(input$field_file$datapath,
+                             stringsAsFactors = FALSE),
+             error = function(e) NULL)
+  })
+  output$field_csv_preview <- renderTable({
+    df <- field_csv_raw()
+    validate(need(!is.null(df) && nrow(df) > 0,
+                  "Upload a CSV in the sidebar to see a preview."))
+    utils::head(df, 10)
+  }, digits = 2)
+  output$field_csv_diagnostics <- renderUI({
+    df <- field_csv_raw()
+    if (is.null(df) || nrow(df) == 0) {
+      return(div(class = "small text-muted",
+                 "No CSV loaded yet."))
+    }
+    classes <- vapply(df, function(v) class(v)[[1]], character(1))
+    n_missing <- vapply(df, function(v) sum(is.na(v)), integer(1))
+    rows <- vapply(names(df), function(col) {
+      sprintf("<tr><td><b>%s</b></td><td><code>%s</code></td><td>%d missing</td></tr>",
+              col, classes[[col]], n_missing[[col]])
+    }, character(1))
+    HTML(paste0(
+      "<table class='table table-sm small'><thead><tr>",
+      "<th>Column</th><th>Type</th><th>NA</th></tr></thead><tbody>",
+      paste(rows, collapse = ""),
+      "</tbody></table>"
+    ))
+  })
+  output$field_csv_mapping <- renderUI({
+    df <- field_csv_raw()
+    if (is.null(df) || nrow(df) == 0) {
+      return(div(class = "small text-muted",
+                 "Upload a CSV first to map columns."))
+    }
+    cols <- names(df)
+    guess <- function(patterns) {
+      hit <- cols[grepl(paste(patterns, collapse = "|"),
+                        cols, ignore.case = TRUE)]
+      if (length(hit)) hit[1L] else NULL
+    }
+    sel <- list(
+      id      = guess(c("sample_id", "^id$", "plot_id", "name")),
+      biomass = guess(c("biomass", "yield", "kgha", "kg_ha", "agb")),
+      x       = guess(c("^x$", "^lon$", "longitude", "easting")),
+      y       = guess(c("^y$", "^lat$", "latitude", "northing"))
+    )
+    tagList(
+      div(class = "small text-muted mb-1",
+          paste0("Map the columns of your CSV (", length(cols),
+                 " columns detected, ", nrow(df), " rows).")),
+      selectInput("field_col_id",      "Sample ID column",
+                  choices = c("(none)", cols), selected = sel$id %||% "(none)"),
+      selectInput("field_col_biomass", "Biomass column",
+                  choices = c("(none)", cols),
+                  selected = sel$biomass %||% "(none)"),
+      selectInput("field_col_x",       "X / Longitude",
+                  choices = c("(none)", cols), selected = sel$x %||% "(none)"),
+      selectInput("field_col_y",       "Y / Latitude",
+                  choices = c("(none)", cols), selected = sel$y %||% "(none)"),
+      selectInput("field_units", "Biomass units",
+                  choices = c("kg/ha", "Mg/ha", "g/m^2", "unknown"),
+                  selected = "kg/ha"),
+      numericInput("field_crs_epsg",
+                   "Coordinate CRS (EPSG)",
+                   value = 4326, min = 1000, max = 100000, step = 1)
+    )
+  })
+
   extracted_field <- eventReactive(input$extract_field, {
     with_error_toast("Extract field samples", {
       req(input$field_file, reflectance(), indices())
-      field <- read_field_data(input$field_file$datapath)
+      df <- field_csv_raw()
+      validate(need(!is.null(df) && nrow(df) > 0,
+                    "Could not read the uploaded CSV."))
+
+      # Honour the wizard mapping when the user filled it in;
+      # otherwise fall back to read_field_data() defaults.
+      use_wizard <- isTRUE(nzchar(input$field_col_id %||% "") &&
+                            input$field_col_id != "(none)")
+      if (isTRUE(use_wizard)) {
+        rename_if <- function(df, from, to) {
+          if (is.null(from) || !nzchar(from) ||
+              identical(from, "(none)") || !from %in% names(df)) {
+            return(df)
+          }
+          names(df)[names(df) == from] <- to
+          df
+        }
+        df <- rename_if(df, input$field_col_id,      "sample_id")
+        df <- rename_if(df, input$field_col_biomass, "biomass_kgha")
+        df <- rename_if(df, input$field_col_x,       "x")
+        df <- rename_if(df, input$field_col_y,       "y")
+        # Convert biomass to kg/ha when the user said something else.
+        if (identical(input$field_units, "Mg/ha")) {
+          df$biomass_kgha <- df$biomass_kgha * 1000
+        } else if (identical(input$field_units, "g/m^2")) {
+          df$biomass_kgha <- df$biomass_kgha * 10
+        }
+        tmp <- tempfile(fileext = ".csv")
+        utils::write.csv(df, tmp, row.names = FALSE)
+        field <- read_field_data(tmp)
+      } else {
+        field <- read_field_data(input$field_file$datapath)
+      }
       predictors <- c(reflectance(), indices())
       extract_field_spectral_data(field, predictors)
     })
@@ -10394,6 +10631,162 @@ server <- function(input, output, session) {
     req(extracted_field())
     utils::head(extracted_field(), 20)
   }, digits = 2)
+
+  # ---- Field Models cross-tab CTAs ---------------------------------
+  observeEvent(input$field_cta_spectral, {
+    updateNavbarPage(session, "main_nav", selected = "Spectral Analytics")
+  })
+  observeEvent(input$field_cta_export, {
+    updateNavbarPage(session, "main_nav", selected = "Exports")
+  })
+  observeEvent(input$field_cta_ts, {
+    updateNavbarPage(session, "main_nav", selected = "Time Series")
+  })
+
+  # ---- Export Center extras ----------------------------------------
+  # Renders the dronebio_runs.csv manifest in a card. Refreshed by
+  # outputs_refresh_token so a successful export immediately shows
+  # up in the table.
+  output$runs_manifest_table <- renderTable({
+    outputs_refresh_token()
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      return(data.frame(
+        info = "No project loaded.",
+        stringsAsFactors = FALSE
+      ))
+    }
+    df <- tryCatch(DroneBioR:::read_dronebio_runs(p),
+                   error = function(e) data.frame())
+    if (nrow(df) == 0) {
+      return(data.frame(
+        info = "No runs recorded yet. Launch the Processing Engine or click Run analysis workflow to add the first entry.",
+        stringsAsFactors = FALSE,
+        check.names = FALSE
+      ))
+    }
+    # Keep the most informative columns + truncate to the last 20 runs
+    keep <- intersect(c("timestamp", "engine", "preset", "resolution_cm",
+                        "image_count", "runtime_seconds", "notes"),
+                      names(df))
+    utils::head(df[, keep, drop = FALSE], 20)
+  }, digits = 2)
+  observeEvent(input$open_output_folder, {
+    od <- input$output_dir %||% ""
+    if (nzchar(od) && dir.exists(od)) {
+      system2("open", args = shQuote(od), wait = FALSE)
+    } else {
+      showNotification("Output folder does not exist yet.",
+                       type = "warning", duration = 4)
+    }
+  })
+  observeEvent(input$open_manifest, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    pth <- DroneBioR:::dronebio_runs_path(p)
+    if (!is.na(pth) && file.exists(pth)) {
+      system2("open", args = shQuote(pth), wait = FALSE)
+    } else {
+      showNotification("No runs recorded yet - manifest will be written on the next workflow execution.",
+                       type = "message", duration = 5)
+    }
+  })
+  observeEvent(input$export_cta_gis, {
+    updateNavbarPage(session, "main_nav", selected = "GIS Workspace")
+  })
+  observeEvent(input$export_cta_ts, {
+    updateNavbarPage(session, "main_nav", selected = "Time Series")
+  })
+
+  # ---- Time Series Flight Manager ---------------------------------
+  # Renders the registered-flights table with a Remove button per row.
+  output$ts_flight_manager <- renderUI({
+    path <- input$ts_registry_path %||% ""
+    if (!nzchar(path) || !file.exists(path)) {
+      return(div(class = "small text-muted",
+                 "No registry yet at this path - register a flight to create it."))
+    }
+    df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE),
+                   error = function(e) NULL)
+    if (is.null(df) || nrow(df) == 0) {
+      return(div(class = "small text-muted",
+                 "Registry exists but contains no flights yet."))
+    }
+    rows <- lapply(seq_len(nrow(df)), function(i) {
+      r <- df[i, , drop = FALSE]
+      div(class = "d-flex justify-content-between align-items-center py-1",
+          style = "border-bottom: 1px dashed #e2e8f0;",
+          div(div(style = "font-weight: 600;",
+                  paste0(r$flight_date, " - ",
+                         basename(r$project_dir %||% ""))),
+              div(class = "small text-muted",
+                  r$notes %||% "")),
+          actionButton(paste0("ts_remove_", i), "Remove",
+                       class = "btn-outline-danger btn-sm"))
+    })
+    tagList(rows)
+  })
+
+  observeEvent(input$ts_add_current, {
+    path <- input$ts_registry_path %||% default_flight_registry()
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      showNotification("No project loaded.", type = "warning", duration = 4)
+      return()
+    }
+    # Validate that the project actually has products before logging.
+    qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
+    if (is.null(qc) || !isTRUE(qc[["outputs_complete"]])) {
+      showNotification(paste0("Project has no orthomosaic or DSM yet; ",
+                              "register anyway if you plan to compute ",
+                              "the metric externally."),
+                       type = "warning", duration = 6)
+    }
+    tryCatch({
+      register_flight(
+        flight_date = format(Sys.Date(), "%Y-%m-%d"),
+        project_dir = p$project_dir,
+        registry_path = path,
+        notes = sprintf("Added from Drone Biomass Studio (%s)",
+                        format(Sys.time(), "%Y-%m-%dT%H:%M"))
+      )
+      showNotification("Current project logged as a new flight.",
+                       type = "message", duration = 4)
+    }, error = function(e) {
+      showNotification(paste("Failed to register:", conditionMessage(e)),
+                       type = "error", duration = 6)
+    })
+  })
+
+  # Watch any remove button via lapply on the rendered rows.
+  observe({
+    path <- input$ts_registry_path %||% ""
+    if (!nzchar(path) || !file.exists(path)) return()
+    df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE),
+                   error = function(e) NULL)
+    if (is.null(df) || nrow(df) == 0) return()
+    for (i in seq_len(nrow(df))) {
+      local({
+        idx <- i
+        observeEvent(input[[paste0("ts_remove_", idx)]], {
+          rows <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE),
+                           error = function(e) NULL)
+          if (is.null(rows) || idx > nrow(rows)) return()
+          rows <- rows[-idx, , drop = FALSE]
+          utils::write.csv(rows, path, row.names = FALSE)
+          showNotification("Flight removed from registry.",
+                           type = "message", duration = 3)
+        }, ignoreInit = TRUE, once = TRUE)
+      })
+    }
+  })
+
+  observeEvent(input$ts_cta_gis, {
+    updateNavbarPage(session, "main_nav", selected = "GIS Workspace")
+  })
+  observeEvent(input$ts_cta_export, {
+    updateNavbarPage(session, "main_nav", selected = "Exports")
+  })
 
   model <- eventReactive(input$fit_model, {
     with_error_toast("Fit biomass model", {
