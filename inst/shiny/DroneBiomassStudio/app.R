@@ -1528,23 +1528,34 @@ ui <- page_navbar(
   # CTAs ("Open in GIS", "Load in 3D", ...) can switch panels with
   # updateNavbarPage(session, "main_nav", selected = "GIS Workspace").
   id = "main_nav",
-  title = tags$span(
-    style = "display: inline-flex; align-items: center; gap: 14px;",
-    tags$img(src = "logo.png", height = "120px",
-             style = "vertical-align: middle;",
-             alt = "DroneBioR logo"),
-    tags$span(style = "font-size: 1.35rem; font-weight: 600;",
-              "Drone Biomass Studio")
+  # The title now carries the logo + brand text AND the Workflow
+  # Stepper, all inline on the navbar bar so we stop wasting an
+  # entire stripe on an almost-empty header (the user's feedback:
+  # "harmonize and integrate the header buttons with the logo into
+  # one bar only"). CSS forces the navbar-brand to take 100% width
+  # and lays the three blocks out in a flex row.
+  title = tags$div(
+    class = "dronebio-navbar-content",
+    tags$div(
+      class = "dronebio-navbar-brand",
+      tags$img(src = "logo.png", height = "56px",
+               alt = "DroneBioR logo"),
+      tags$span(class = "dronebio-navbar-title",
+                "Drone Biomass Studio")
+    ),
+    tags$div(
+      class = "dronebio-navbar-stepper",
+      uiOutput("workflow_stepper")
+    )
   ),
   theme = theme,
   # tagList lets us mix the actual <head> content (scripts, css) with
   # body-level UI that bslib::page_navbar renders BETWEEN the navbar
-  # strip and the active panel content. The Project Control Center and
-  # the Workflow Stepper land in that band, persistent across every
-  # tab.
+  # strip and the active panel content. The Workflow Stepper now
+  # lives INSIDE the navbar title (see above) - only the Project
+  # Control Center renders here, in the band right below the navbar.
   header = tagList(
     project_control_center(),
-    workflow_stepper(),
     tags$head(
     tags$script(src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"),
@@ -1564,6 +1575,39 @@ ui <- page_navbar(
       Shiny.addCustomMessageHandler('dronebior_clear_imagequery', function(_msg) {
         document.querySelectorAll('.leaflet-control.imagequery').forEach(function(el) {
           el.remove();
+        });
+      });
+
+      // Apply completion state to the Workflow Stepper chips without
+      // re-rendering them. R sends { tabs: ['Processing Engine',
+      // 'GIS Workspace', ...] } - we toggle the .done class on each
+      // chip whose data-step-tab is in the list, swap the step
+      // number for a check glyph when done, and revert otherwise.
+      // Decouples the stepper structure (rendered up front) from
+      // the completion state (which depends on the slow project
+      // snapshot reactive).
+      Shiny.addCustomMessageHandler('dronebior_stepper_done', function(msg) {
+        var doneSet = {};
+        if (msg && msg.tabs) {
+          for (var i = 0; i < msg.tabs.length; i++) {
+            doneSet[msg.tabs[i]] = true;
+          }
+        }
+        document.querySelectorAll('.dronebio-step').forEach(function(el) {
+          var t = el.getAttribute('data-step-tab');
+          var isDone = doneSet[t] === true;
+          el.classList.toggle('done', isDone);
+          var num = el.querySelector('.step-num');
+          if (!num) return;
+          if (isDone) {
+            if (!num.dataset.originalText) {
+              num.dataset.originalText = num.textContent;
+            }
+            num.innerHTML = '✓';
+          } else if (num.dataset.originalText) {
+            num.textContent = num.dataset.originalText;
+            delete num.dataset.originalText;
+          }
         });
       });
 
@@ -2586,25 +2630,100 @@ ui <- page_navbar(
       table { font-size: 0.88rem; }
 
       /* Hide bslib::page_navbar's default tab strip - the Workflow
-         Stepper below the navbar is now the only navigation, so
-         displaying the same tab list twice is redundant. The logo +
-         title in .navbar-brand stay visible. */
+         Stepper inside the navbar is now the only navigation, so the
+         tab list at the right of the navbar is hidden. */
       .navbar .navbar-nav { display: none !important; }
       .navbar .navbar-toggler { display: none !important; }
 
-      /* Make the stepper feel more substantial, since it is the
-         primary navigation now: bigger chips, more vertical padding,
-         a soft hover lift. */
-      .dronebio-stepper { padding: 8px 10px; }
-      .dronebio-step {
-        padding: 8px 14px;
-        font-size: 0.86rem;
-        transition: background 0.18s ease, color 0.18s ease,
-                    transform 0.12s ease;
+      /* Integrate logo + title + Workflow Stepper INTO the navbar
+         on a single horizontal bar. The navbar-brand normally sits
+         small on the left of the navbar; we force it to span the
+         full width so the stepper has room to lay out next to the
+         logo, with the brand block fixed on the left and the
+         stepper filling the remaining space. */
+      .navbar { padding-top: 0 !important; padding-bottom: 0 !important; }
+      .navbar-brand {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 6px 8px !important;
+        max-width: none !important;
       }
-      .dronebio-step:hover:not(.active) {
-        background: #e2e8f0;
-        transform: translateY(-1px);
+      .dronebio-navbar-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 16px;
+        flex-wrap: nowrap;
+      }
+      .dronebio-navbar-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .dronebio-navbar-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        white-space: nowrap;
+        color: #ffffff;
+      }
+      .dronebio-navbar-stepper {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+      }
+      .dronebio-navbar-stepper .dronebio-stepper-wrapper {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+      }
+      /* The stepper INSIDE the navbar uses a darker, more compact
+         style than the original below-navbar variant so it reads
+         against the green navbar background. */
+      .dronebio-navbar-stepper .dronebio-stepper {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.15);
+        padding: 4px 6px;
+        gap: 2px;
+      }
+      .dronebio-navbar-stepper .dronebio-step {
+        color: #e2e8f0;
+        padding: 5px 10px;
+        font-size: 0.80rem;
+        border: 1px solid transparent;
+      }
+      .dronebio-navbar-stepper .dronebio-step:hover:not(.active) {
+        background: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+        transform: none;
+      }
+      .dronebio-navbar-stepper .dronebio-step.active {
+        background: #ffffff;
+        color: #1f6f5b;
+        border-color: rgba(255, 255, 255, 0.45);
+      }
+      .dronebio-navbar-stepper .dronebio-step.done {
+        color: #d1fae5;
+      }
+      .dronebio-navbar-stepper .dronebio-step.active.done {
+        color: #065f46;
+      }
+      .dronebio-navbar-stepper .dronebio-step .step-num {
+        width: 18px;
+        height: 18px;
+        font-size: 0.66rem;
+        background: rgba(255, 255, 255, 0.20);
+        color: #ffffff;
+      }
+      .dronebio-navbar-stepper .dronebio-step.active .step-num {
+        background: #1f6f5b;
+        color: #ffffff;
+      }
+      .dronebio-navbar-stepper .dronebio-step.done .step-num {
+        background: #34d399;
+        color: #064e3b;
       }
 
       /* ----- Project Control Center + Workflow Stepper ------------------- */
@@ -4225,40 +4344,63 @@ server <- function(input, output, session) {
     updateNavbarPage(session, "main_nav", selected = next_step$tab)
   })
 
-  # Workflow Stepper renderer.
+  # Workflow Stepper renderer. The chip STRUCTURE is rendered up
+  # front from input$main_nav alone - it does NOT depend on
+  # workflow_completion(), which transitively depends on the
+  # filesystem-scan reactives (project_snapshot -> project ->
+  # available_odm_projects -> detect_odm_projects). That scan can
+  # take 1-3 seconds on OneDrive-synced folders and used to make
+  # the navbar render with an empty placeholder until it finished.
+  # Now the chips appear instantly. Completion checkmarks arrive
+  # later through dronebior_stepper_done (see observer below),
+  # which mutates the chips' classes / step number in place.
   output$workflow_stepper <- renderUI({
-    c_ <- workflow_completion()
     current <- input$main_nav %||% "Processing Engine"
     steps <- list(
-      list(n = 1L, label = "Process",     tab = "Processing Engine",
-           done = c_$process),
-      list(n = 2L, label = "GIS",         tab = "GIS Workspace",
-           done = c_$gis),
-      list(n = 3L, label = "Spectral",    tab = "Spectral Analytics",
-           done = c_$spectral),
-      list(n = 4L, label = "3D Modeling", tab = "3D Modeling",
-           done = c_$modeling),
-      list(n = 5L, label = "Field model", tab = "Field Models",
-           done = c_$field),
-      list(n = 6L, label = "Export",      tab = "Exports",
-           done = c_$export),
-      list(n = 7L, label = "Time Series", tab = "Time Series",
-           done = c_$ts)
+      list(n = 1L, label = "Process",     tab = "Processing Engine"),
+      list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
+      list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
+      list(n = 4L, label = "3D Modeling", tab = "3D Modeling"),
+      list(n = 5L, label = "Field model", tab = "Field Models"),
+      list(n = 6L, label = "Export",      tab = "Exports"),
+      list(n = 7L, label = "Time Series", tab = "Time Series")
     )
     chips <- lapply(steps, function(st) {
       cls <- c("dronebio-step",
-               if (identical(st$tab, current)) "active",
-               if (isTRUE(st$done)) "done")
+               if (identical(st$tab, current)) "active")
       tags$div(
-        class    = paste(cls, collapse = " "),
-        onclick  = sprintf("Shiny.setInputValue('dronebio_stepper_goto', '%s', { priority: 'event' });",
-                           st$tab),
-        tags$span(class = "step-num",
-                  if (isTRUE(st$done)) HTML("&#10003;") else as.character(st$n)),
+        class             = paste(cls, collapse = " "),
+        `data-step-tab`   = st$tab,
+        onclick           = sprintf(
+          "Shiny.setInputValue('dronebio_stepper_goto', '%s', { priority: 'event' });",
+          st$tab),
+        tags$span(class = "step-num", as.character(st$n)),
         tags$span(st$label)
       )
     })
     div(class = "dronebio-stepper", chips)
+  })
+
+  # Push completion state to the live stepper via custom message.
+  # Runs whenever workflow_completion() invalidates (which itself
+  # waits on project_snapshot and the filesystem scan). The JS
+  # handler toggles .done + swaps the step number for a checkmark
+  # on each chip without re-rendering the stepper, so chip layout
+  # never flashes.
+  observe({
+    c_ <- tryCatch(workflow_completion(), error = function(e) NULL)
+    if (is.null(c_)) return()
+    done_tabs <- c(
+      if (isTRUE(c_$process))  "Processing Engine",
+      if (isTRUE(c_$gis))      "GIS Workspace",
+      if (isTRUE(c_$spectral)) "Spectral Analytics",
+      if (isTRUE(c_$modeling)) "3D Modeling",
+      if (isTRUE(c_$field))    "Field Models",
+      if (isTRUE(c_$export))   "Exports",
+      if (isTRUE(c_$ts))       "Time Series"
+    )
+    session$sendCustomMessage("dronebior_stepper_done",
+                              list(tabs = as.list(done_tabs)))
   })
 
   # JS click handler on the stepper sets dronebio_stepper_goto; here we
