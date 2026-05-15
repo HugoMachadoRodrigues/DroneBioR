@@ -5026,7 +5026,16 @@ server <- function(input, output, session) {
         if (!is.na(alpha_idx)) {
           alpha <- ortho_r[[alpha_idx]]
           if (!terra::compareGeom(dsm, alpha, stopOnError = FALSE)) {
-            alpha <- terra::resample(alpha, dsm, method = "near")
+            # terra::resample() only handles regrid (extent / resolution),
+            # NOT CRS reprojection. ODM sometimes writes DSM and ortho
+            # with the same projected CRS but a slightly different WKT
+            # string ("EPSG:32617" vs "WGS 84 / UTM zone 17N"), which
+            # makes compareGeom() return FALSE; resample then leaves the
+            # mismatched CRS in place, and the subsequent terra::mask()
+            # call prints "[mask] CRS do not match". Use terra::project()
+            # which DOES reproject + regrid in one go, then we know the
+            # mask is geometry-aligned and CRS-aligned.
+            alpha <- terra::project(alpha, dsm, method = "near")
           }
           dsm <- terra::mask(dsm, alpha >= 200, maskvalues = 0, updatevalue = NA)
         }
