@@ -3515,53 +3515,126 @@ ui <- page_navbar(
       layout_sidebar(
         sidebar = sidebar(
           width = 360,
-          actionButton("load_mosaic", "Load orthomosaic", class = "btn-primary"),
-          checkboxInput("spectral_use_alpha", "Use alpha / valid-data mask", value = TRUE),
-          selectInput(
-            "radiometric_scale_mode",
-            "Radiometric scale",
-            choices = c("Auto detect", "Already reflectance 0-1", "Divide by 10000", "Divide by 65535", "Raw DN / no scaling"),
-            selected = "Auto detect"
+          # Spectral sidebar restructured into accordion panels mirroring
+          # the calibration pipeline: Load -> Radiometric scale -> Panel
+          # ROI calibration -> Preprocess -> Index preview -> Custom
+          # index -> Application map -> Export. Only the "Load mosaic"
+          # action and the index-preview picker stay open by default;
+          # the rest collapse so the user is not faced with 25 controls
+          # at once.
+          div(class = "d-flex gap-2 mb-2",
+              actionButton("load_mosaic", "Load mosaic",
+                           class = "btn-primary flex-grow-1"),
+              actionButton("export_products", "Export",
+                           class = "btn-outline-secondary")),
+          accordion(
+            open = c("Index preview"),
+            accordion_panel(
+              "Radiometric scale",
+              checkboxInput("spectral_use_alpha",
+                            "Use alpha / valid-data mask", value = TRUE),
+              selectInput("radiometric_scale_mode", "Radiometric scale",
+                          choices = c("Auto detect",
+                                      "Already reflectance 0-1",
+                                      "Divide by 10000",
+                                      "Divide by 65535",
+                                      "Raw DN / no scaling"),
+                          selected = "Auto detect")
+            ),
+            accordion_panel(
+              "Panel ROI calibration",
+              div(class = "small text-muted mb-1",
+                  "Per-band panel reflectance (0-1):"),
+              numericInput("panel_blue", "Blue", value = 0.50,
+                           min = 0, max = 1, step = 0.001),
+              numericInput("panel_green", "Green", value = 0.50,
+                           min = 0, max = 1, step = 0.001),
+              numericInput("panel_red", "Red", value = 0.50,
+                           min = 0, max = 1, step = 0.001),
+              numericInput("panel_rededge", "RedEdge", value = 0.50,
+                           min = 0, max = 1, step = 0.001),
+              numericInput("panel_nir", "NIR", value = 0.50,
+                           min = 0, max = 1, step = 0.001),
+              div(class = "d-flex gap-2 mt-1",
+                  actionButton("apply_panel_calibration", "Apply",
+                               class = "btn-outline-secondary flex-grow-1"),
+                  actionButton("reset_panel_calibration", "Reset",
+                               class = "btn-outline-secondary"))
+            ),
+            accordion_panel(
+              "Preprocessing",
+              checkboxInput("remove_physical_invalid",
+                            "Mask reflectance outside 0-1", value = TRUE),
+              selectInput("median_filter_size", "Median filter",
+                          choices = c("None" = 0, "3 x 3" = 3, "5 x 5" = 5),
+                          selected = 0),
+              checkboxInput("clean_valid_mask",
+                            "Morphological valid-mask cleanup",
+                            value = FALSE),
+              selectInput("downsample_method",
+                          "Scientific downsampling",
+                          choices = c("None", "Average", "Median",
+                                      "Gaussian average", "75% quantile"),
+                          selected = "None"),
+              numericInput("downsample_factor", "Downsampling factor",
+                           value = 1, min = 1, max = 10, step = 1)
+            ),
+            accordion_panel(
+              "Index preview",
+              selectInput("display_stretch", "Display stretch",
+                          choices = c("Percentile 2-98",
+                                      "Histogram equalization", "None"),
+                          selected = "Percentile 2-98"),
+              checkboxInput("fixed_index_limits",
+                            "Use fixed scientific index limits",
+                            value = TRUE),
+              selectInput("preview_mode", "Reflectance preview",
+                          choices = c("RGB", "NIR", "RedEdge",
+                                      "Blue", "Green", "Red")),
+              uiOutput("index_layer_ui")
+            ),
+            accordion_panel(
+              "Custom index",
+              textInput("custom_index_name", "Name",
+                        value = "Custom_Index"),
+              textAreaInput("custom_index_formula", "Formula",
+                            value = "(NIR - Red) / (NIR + Red)",
+                            rows = 3),
+              actionButton("compute_custom_index", "Compute",
+                           class = "btn-outline-secondary w-100")
+            ),
+            accordion_panel(
+              "Application map thresholds",
+              uiOutput("application_index_ui"),
+              numericInput("class_water_max", "Water/shadow max",
+                           value = 0.05, min = -1, max = 1, step = 0.01),
+              numericInput("class_bare_max", "Bare soil max",
+                           value = 0.20, min = -1, max = 1, step = 0.01),
+              numericInput("class_stress_max", "Stress max",
+                           value = 0.40, min = -1, max = 1, step = 0.01),
+              numericInput("class_moderate_max", "Moderate vigor max",
+                           value = 0.65, min = -1, max = 1, step = 0.01),
+              actionButton("compute_tree_spectral_metrics",
+                           "Compute tree / ROI metrics",
+                           class = "btn-outline-secondary w-100")
+            )
           ),
-          div(class = "form-label", "Panel calibration reflectance"),
-          numericInput("panel_blue", "Blue panel reflectance", value = 0.50, min = 0, max = 1, step = 0.001),
-          numericInput("panel_green", "Green panel reflectance", value = 0.50, min = 0, max = 1, step = 0.001),
-          numericInput("panel_red", "Red panel reflectance", value = 0.50, min = 0, max = 1, step = 0.001),
-          numericInput("panel_rededge", "RedEdge panel reflectance", value = 0.50, min = 0, max = 1, step = 0.001),
-          numericInput("panel_nir", "NIR panel reflectance", value = 0.50, min = 0, max = 1, step = 0.001),
-          actionButton("apply_panel_calibration", "Apply panel ROI calibration", class = "btn-outline-secondary"),
-          actionButton("reset_panel_calibration", "Reset panel calibration", class = "btn-outline-secondary"),
-          checkboxInput("remove_physical_invalid", "Mask reflectance outside 0-1", value = TRUE),
-          selectInput("median_filter_size", "Median filter", choices = c("None" = 0, "3 x 3" = 3, "5 x 5" = 5), selected = 0),
-          checkboxInput("clean_valid_mask", "Morphological valid-mask cleanup", value = FALSE),
-          selectInput("downsample_method", "Scientific downsampling", choices = c("None", "Average", "Median", "Gaussian average", "75% quantile"), selected = "None"),
-          numericInput("downsample_factor", "Downsampling factor", value = 1, min = 1, max = 10, step = 1),
-          selectInput("display_stretch", "Display stretch", choices = c("Percentile 2-98", "Histogram equalization", "None"), selected = "Percentile 2-98"),
-          checkboxInput("fixed_index_limits", "Use fixed scientific index limits", value = TRUE),
-          selectInput("preview_mode", "Reflectance preview", choices = c("RGB", "NIR", "RedEdge", "Blue", "Green", "Red")),
-          uiOutput("index_layer_ui"),
-          textInput("custom_index_name", "Custom index name", value = "Custom_Index"),
-          textAreaInput("custom_index_formula", "Custom index formula", value = "(NIR - Red) / (NIR + Red)", rows = 3),
-          actionButton("compute_custom_index", "Compute custom index", class = "btn-outline-secondary"),
-          uiOutput("application_index_ui"),
-          numericInput("class_water_max", "Water/shadow max", value = 0.05, min = -1, max = 1, step = 0.01),
-          numericInput("class_bare_max", "Bare soil max", value = 0.20, min = -1, max = 1, step = 0.01),
-          numericInput("class_stress_max", "Stress max", value = 0.40, min = -1, max = 1, step = 0.01),
-          numericInput("class_moderate_max", "Moderate vigor max", value = 0.65, min = -1, max = 1, step = 0.01),
-          actionButton("compute_tree_spectral_metrics", "Compute tree / ROI spectral metrics", class = "btn-outline-secondary"),
-          actionButton("export_products", "Export rasters", class = "btn-outline-secondary"),
           div(
-            class = "spectral-sidebar-fill",
-            "Scientific outputs use calibrated/preprocessed reflectance. Display stretch is used only for visualization and does not overwrite analysis rasters."
+            class = "spectral-sidebar-fill small text-muted",
+            "Scientific outputs use calibrated reflectance. Display stretch is for visualization only and does not overwrite analysis rasters."
           )
         ),
         div(
           class = "spectral-workspace spectral-stack",
           panel_intro_card(
             "Spectral Analytics",
-            "Loads the multispectral orthomosaic, applies your chosen radiometric scaling (auto-detect / divide by 32768 / etc.) and optional panel-ROI calibration, then computes the nine indices (NDVI, NDRE, EVI, SAVI, NDWI, GNDVI, CIrededge, MSAVI2, VARI) plus a biomass proxy. Use this panel to inspect band histograms and pick a meaningful threshold before exporting application maps.",
+            "Pipeline: Load mosaic -> set Radiometric scale -> calibrate via Panel ROI (optional) -> Preprocess -> Index preview / Application map -> Export. The pipeline stepper above the cards highlights the current stage and ticks completed steps.",
             vignette = "spectral-indices"
           ),
+          # Spectral pipeline mini-stepper: tracks the stage based on
+          # which products are already in memory (mosaic / reflectance
+          # / indices / application map / exports).
+          uiOutput("spectral_pipeline_stepper"),
           layout_columns(
             col_widths = c(4, 8),
             card(card_header("Orthomosaic metadata"), tableOutput("mosaic_meta")),
@@ -3593,7 +3666,19 @@ ui <- page_navbar(
             card(card_header("Index calculator preview"), plotOutput("index_plot", height = "430px"))
           ),
           card(card_header("Index summary"), tableOutput("index_summary")),
-          card(card_header("Exported files"), verbatimTextOutput("export_paths"))
+          card(card_header("Exported files"), verbatimTextOutput("export_paths")),
+          # Spectral cross-tab CTA row.
+          div(
+            class = "gis-cta-row",
+            actionButton("spectral_cta_gis",   "<-- GIS Workspace",
+                         class = "btn-outline-secondary"),
+            actionButton("spectral_cta_3d",    "Open in 3D Modeling -->",
+                         class = "btn-outline-primary"),
+            actionButton("spectral_cta_field", "Fit field model -->",
+                         class = "btn-outline-primary"),
+            actionButton("spectral_cta_export", "Export center -->",
+                         class = "btn-outline-secondary")
+          )
         )
       )
     )
@@ -5440,6 +5525,58 @@ server <- function(input, output, session) {
         sep = "\n"
       ))
     )
+  })
+
+  # ---- Spectral pipeline stepper ----------------------------------
+  # Mini horizontal stepper just above the spectral workspace cards.
+  # Tracks pipeline progression based on whether mosaic / reflectance
+  # / indices / application_map / exported files are available. Same
+  # visual language as the top-level workflow stepper.
+  output$spectral_pipeline_stepper <- renderUI({
+    mos_ok   <- !is.null(tryCatch(mosaic(),       error = function(e) NULL))
+    refl_ok  <- !is.null(tryCatch(reflectance(),  error = function(e) NULL))
+    ix_ok    <- !is.null(tryCatch(all_indices(),  error = function(e) NULL))
+    app_ok   <- !is.null(tryCatch(application_map(), error = function(e) NULL))
+    exp_ok   <- isTRUE(length(input$export_products) > 0L) ||
+                  file.exists(file.path(input$output_dir %||% "",
+                                        "reflectance_summary.csv"))
+    steps <- list(
+      list(n = 1L, label = "Mosaic",      done = mos_ok),
+      list(n = 2L, label = "Reflectance", done = refl_ok),
+      list(n = 3L, label = "Indices",     done = ix_ok),
+      list(n = 4L, label = "App map",     done = app_ok),
+      list(n = 5L, label = "Export",      done = exp_ok)
+    )
+    # Highlight the deepest done step as the "active" / "current
+    # stage", except when nothing is done yet (then Mosaic is active).
+    last_done <- which(vapply(steps, function(s) isTRUE(s$done), logical(1)))
+    active_n  <- if (!length(last_done)) 1L else max(last_done) + 1L
+    if (active_n > length(steps)) active_n <- length(steps)
+    chips <- lapply(steps, function(st) {
+      cls <- c("dronebio-step",
+               if (identical(st$n, active_n)) "active",
+               if (isTRUE(st$done)) "done")
+      tags$div(
+        class = paste(cls, collapse = " "),
+        tags$span(class = "step-num",
+                  if (isTRUE(st$done)) HTML("&#10003;") else as.character(st$n)),
+        tags$span(st$label)
+      )
+    })
+    div(class = "dronebio-stepper", chips)
+  })
+
+  observeEvent(input$spectral_cta_gis, {
+    updateNavbarPage(session, "main_nav", selected = "GIS Workspace")
+  })
+  observeEvent(input$spectral_cta_3d, {
+    updateNavbarPage(session, "main_nav", selected = "3D Modeling")
+  })
+  observeEvent(input$spectral_cta_field, {
+    updateNavbarPage(session, "main_nav", selected = "Field Models")
+  })
+  observeEvent(input$spectral_cta_export, {
+    updateNavbarPage(session, "main_nav", selected = "Exports")
   })
 
   mosaic <- reactive({
