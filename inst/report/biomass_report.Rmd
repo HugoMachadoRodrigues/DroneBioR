@@ -13,6 +13,8 @@ params:
   output_dir: !r tempfile("dronebior-report-")
   roi_geojson: !r NULL
   snapshot_path: !r NULL
+  rerun_workflow: false
+  existing_output_dir: !r NULL
 ---
 
 ```{r setup, include = FALSE}
@@ -43,24 +45,89 @@ knitr::kable(products, caption = "Engine products discovered in the project dire
 ## Scientific workflow
 
 ```{r run-workflow}
-result <- tryCatch(
-  DroneBioR::run_dronebio_workflow(
-    project    = project,
-    use_alpha  = params$use_alpha,
-    output_dir = params$output_dir
-  ),
-  error = function(e) {
-    message("run_dronebio_workflow() failed: ", conditionMessage(e))
-    NULL
-  }
-)
+# Default behaviour: reuse the workflow outputs already on disk
+# (`reflectance_summary.csv`, `spectral_index_summary.csv`, GeoTIFFs
+# under `existing_output_dir`). The previous version of this template
+# re-ran the entire workflow on every render, which on a 5 cm/px
+# MicaSense ortho is minutes of raster math the user has usually
+# already paid for in the GUI. Pass `rerun_workflow = TRUE` to
+# `render_dronebio_report()` to force a fresh run.
+existing_dir <- params$existing_output_dir
+load_existing_workflow <- function(dir) {
+  if (is.null(dir) || !nzchar(dir) || !dir.exists(dir)) return(NULL)
+  refl_csv <- file.path(dir, "reflectance_summary.csv")
+  idx_csv  <- file.path(dir, "spectral_index_summary.csv")
+  if (!file.exists(refl_csv) || !file.exists(idx_csv)) return(NULL)
+  refl_summary <- tryCatch(utils::read.csv(refl_csv), error = function(e) NULL)
+  idx_summary  <- tryCatch(utils::read.csv(idx_csv),  error = function(e) NULL)
+  if (is.null(refl_summary) || is.null(idx_summary)) return(NULL)
+  index_files <- list.files(dir, pattern = "\\.tif$", full.names = TRUE)
+  # Filter to vegetation-index rasters (anything that is not a band /
+  # biomass proxy / classified map).
+  ix_names <- c("NDVI", "NDRE", "EVI", "SAVI", "OSAVI", "MSAVI2",
+                "NDWI", "GNDVI", "CIrededge", "GCI", "RVI", "DVI",
+                "WDRVI", "TVI", "MCARI", "PSRI", "VARI", "ExG", "GLI",
+                "TGI", "MGRVI", "RGBVI")
+  ix_files <- index_files[tools::file_path_sans_ext(basename(index_files)) %in% ix_names]
+  indices <- if (length(ix_files)) {
+    tryCatch({
+      base <- terra::rast(ix_files[1L])
+      names(base) <- tools::file_path_sans_ext(basename(ix_files[1L]))
+      stk <- base
+      for (f in ix_files[-1L]) {
+        r <- terra::rast(f); names(r) <- tools::file_path_sans_ext(basename(f))
+        stk <- c(stk, r)
+      }
+      stk
+    }, error = function(e) NULL)
+  } else NULL
+  proxy_path <- file.path(dir, "Biomass_Index_Proxy.tif")
+  proxy <- if (file.exists(proxy_path)) tryCatch(terra::rast(proxy_path), error = function(e) NULL) else NULL
+  list(
+    reflectance_summary = refl_summary,
+    index_summary       = idx_summary,
+    indices             = indices,
+    biomass_proxy       = proxy,
+    output_paths        = setNames(index_files, basename(index_files)),
+    reused              = TRUE
+  )
+}
+
+result <- NULL
+if (!isTRUE(params$rerun_workflow)) {
+  result <- load_existing_workflow(existing_dir)
+}
+if (is.null(result)) {
+  result <- tryCatch(
+    DroneBioR::run_dronebio_workflow(
+      project    = project,
+      use_alpha  = params$use_alpha,
+      output_dir = params$output_dir
+    ),
+    error = function(e) {
+      message("run_dronebio_workflow() failed: ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (!is.null(result)) result$reused <- FALSE
+}
 ```
 
 ```{r workflow-status, results = "asis"}
 if (is.null(result)) {
-  cat("> The scientific workflow could not be executed. Spectral analysis sections are skipped.\n")
+  cat("> The scientific workflow could not be executed and no prior outputs were found. Spectral analysis sections are skipped.\n")
+} else if (isTRUE(result$reused)) {
+  cat("Existing workflow outputs reused from: `", existing_dir, "` (no recomputation). ",
+      "Pass `rerun_workflow = TRUE` to `render_dronebio_report()` to force a fresh run.\n",
+      sep = "")
 } else {
-  cat("Workflow executed. Outputs written under: `", result$output_paths[["indices"]] |> dirname(), "`\n", sep = "")
+  out_path <- tryCatch(dirname(result$output_paths[["indices"]]),
+                       error = function(e) NA_character_)
+  if (!is.na(out_path)) {
+    cat("Workflow executed. Outputs written under: `", out_path, "`\n", sep = "")
+  } else {
+    cat("Workflow executed.\n")
+  }
 }
 ```
 
@@ -91,13 +158,21 @@ if (!is.null(result)) {
 ### Index histograms
 
 ```{r index-hist, fig.width = 9, fig.height = 7}
-if (!is.null(result)) {
+if (!is.null(result) && !is.null(result$indices)) {
   layers <- names(result$indices)
   n <- length(layers)
   rows <- ceiling(n / 3)
   par(mfrow = c(rows, 3), mar = c(3, 3, 2, 1))
   for (lyr in layers) {
-    vals <- terra::values(result$indices[[lyr]], mat = FALSE)
+    # Sample instead of pulling every cell: keeps the report cheap
+    # to render even when the indices on disk are 5 cm/px.
+    vals <- tryCatch(
+      terra::spatSample(result$indices[[lyr]], size = 80000,
+                        method = "regular", na.rm = TRUE,
+                        values = TRUE)[, 1],
+      error = function(e) NULL
+    )
+    if (is.null(vals)) vals <- terra::values(result$indices[[lyr]], mat = FALSE)
     vals <- vals[is.finite(vals)]
     if (length(vals) > 1) {
       hist(vals, main = lyr, xlab = "", col = "#9bdbcf", border = "white", breaks = 30)

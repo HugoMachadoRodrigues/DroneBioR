@@ -1609,6 +1609,36 @@ ui <- page_navbar(
         });
       });
 
+      // Pure-CSS opacity slider for the GIS Workspace overlays. The
+      // R-side observer pushes the new value here instead of re-
+      // rendering the rasters - addRasterImage / addGeotiff write
+      // their pixels into <img> tags inside the leaflet overlay
+      // pane, so a single CSS opacity change is enough. Applies to
+      // both standard leaflet panes (overlayPane, tilePane) and the
+      // raster <canvas> elements leafem uses, but explicitly skips
+      // the basemap pane so the satellite tiles stay opaque.
+      Shiny.addCustomMessageHandler('dronebior_set_layer_opacity', function(msg) {
+        if (!msg || typeof msg.opacity !== 'number') return;
+        var opacity = String(Math.max(0, Math.min(1, msg.opacity)));
+        var mapEl = document.getElementById('gis_map');
+        if (!mapEl) return;
+        // Apply to raster overlay images / canvases inside the
+        // overlayPane (where leaflet addRasterImage drops them) and
+        // the markerPane (some leaflet variants put image overlays
+        // there). The tilePane belongs to the basemap and is left
+        // alone so opacity = 0 does not make the whole map vanish.
+        var selectors = [
+          '.leaflet-overlay-pane img',
+          '.leaflet-overlay-pane canvas',
+          '.leaflet-image-layer'
+        ];
+        selectors.forEach(function(sel) {
+          mapEl.querySelectorAll(sel).forEach(function(el) {
+            el.style.opacity = opacity;
+          });
+        });
+      });
+
       // Mark the active chip in the static Workflow Stepper. R sends
       // { tab: '<navbar tab title>' } whenever input$main_nav
       // changes - we toggle the .active class on each chip so the
@@ -3432,8 +3462,17 @@ ui <- page_navbar(
                          "Minimum points per candidate",
                          value = 5, min = 1, max = 100, step = 1),
             checkboxInput("use_full_roi_metrics",
-                          "Recalculate selected ROI with full cloud + CHM",
-                          value = TRUE)
+                          "Auto-recompute ROI with full cloud + CHM",
+                          value = FALSE),
+            actionButton("compute_full_roi_metrics",
+                         "Compute full-resolution ROI metrics",
+                         class = "btn-outline-primary w-100"),
+            div(class = "small text-muted mt-1",
+                "Reading the full LAS/LAZ/COPC over OneDrive can take ",
+                "minutes for big plots, so this is opt-in: click the ",
+                "button to refresh once for the current ROI, or tick ",
+                "the box if you want it to refresh automatically on ",
+                "every selection.")
           ),
           accordion_panel(
             "Volume & profile",
@@ -3870,7 +3909,18 @@ ui <- page_navbar(
           layout_columns(
             col_widths = c(4, 8),
             card(card_header("Orthomosaic metadata"), tableOutput("mosaic_meta")),
-            card(card_header("Radiometric QA"), tableOutput("radiometric_qa"))
+            card(
+              card_header("Radiometric QA"),
+              div(class = "p-2",
+                  div(class = "small text-muted mb-2",
+                      "QA reads every band end-to-end (terra::global per band ",
+                      "+ alpha-mask scans) so it is opt-in. Click Run QA after ",
+                      "you change the scale mode or panel calibration."),
+                  actionButton("run_radiometric_qa",
+                               "Run QA",
+                               class = "btn-outline-primary mb-2"),
+                  tableOutput("radiometric_qa"))
+            )
           ),
           layout_columns(
             col_widths = c(6, 6),
@@ -3970,6 +4020,16 @@ ui <- page_navbar(
                      class = "btn-primary w-100"),
         actionButton("render_report", "Render HTML report",
                      class = "btn-outline-secondary w-100"),
+        checkboxInput("report_rerun_workflow",
+                      "Re-run workflow before rendering report",
+                      value = FALSE),
+        div(class = "small text-muted",
+            style = "margin-top:-4px; margin-bottom:6px;",
+            "Off (default) reuses the products already on disk under ",
+            "the output folder; the report opens in seconds. Tick ",
+            "this only when you want the report to recompute the ",
+            "workflow from the orthomosaic again (minutes on 5 cm/px ",
+            "data)."),
         fileInput("report_field_csv",
                   "Field CSV for report (optional)", accept = ".csv"),
         actionButton("open_output_folder", "Open output folder",
@@ -4169,18 +4229,27 @@ server <- function(input, output, session) {
   # Discover existing ODM project layouts on disk so the user can
   # switch between e.g. odm_aerial_dataset/aerial_geoscan and
   # odm_micasense_dataset/micasense without manually editing paths.
+  #
+  # detect_odm_projects walks outputs/*/*/ to find existing ODM
+  # project layouts. On OneDrive Files-On-Demand each list.dirs()
+  # may round-trip metadata over the network, which freezes the UI
+  # for seconds per keystroke in project_dir. Two protections:
+  #   * `project_dir_debounced()` waits ~700 ms of typing-quiet so
+  #     the scan does NOT fire once per keystroke;
+  #   * `bindCache(project_dir_debounced())` memoises by path so
+  #     re-entering the same project root in the same session
+  #     (e.g. after switching tabs) returns instantly.
+  # The floating banner ("Scanning project...") still appears on
+  # the first scan of any given path so the user knows work is
+  # happening.
   available_odm_projects <- reactive({
-    # detect_odm_projects walks outputs/*/*/ to find existing ODM
-    # project layouts. On OneDrive Files-On-Demand each list.dirs()
-    # may round-trip metadata over the network, which freezes the UI
-    # for seconds per keystroke in project_dir. Wrap in with_gis_task
-    # so the floating banner tells the user what is running.
-    pd <- input$project_dir %||% ""
+    pd <- project_dir_debounced() %||% ""
     with_gis_task(session,
                   name   = "Scanning project for ODM outputs",
                   detail = basename(pd),
                   detect_odm_projects(pd))
-  })
+  }) |>
+    bindCache(project_dir_debounced() %||% "")
 
   output$odm_project_picker_ui <- renderUI({
     df <- available_odm_projects()
@@ -5994,6 +6063,65 @@ server <- function(input, output, session) {
     }
   })
 
+  # ---- Display-cache layer for the Spectral tab --------------------- #
+  # Previously every reactive plot in this tab (index_plot,
+  # application_map, application_summary, the histogram, the index
+  # summary table, etc.) consumed `all_indices()` directly, which on a
+  # 5 cm/px MicaSense ortho is a stack of ~20k x 20k SpatRasters - so
+  # every slider tweak forced a full-resolution `terra::plot()` or
+  # `terra::values()` over the entire scene.
+  #
+  # `reflectance_preview()` downsamples reflectance to ~160k cells
+  # (the same target mosaic_plot uses). Indices computed on it inherit
+  # the small grid, so every downstream plot/table is sub-second.
+  # Full-resolution `reflectance()` / `all_indices()` are reserved for
+  # the explicit Export / Run-QA / Compute-tree-metrics buttons.
+  #
+  # Cached on the same keys as mosaic() plus the panel-calibration and
+  # preprocessing knobs, so toggling any of those refreshes the
+  # preview exactly once.
+  reflectance_preview <- reactive({
+    req(reflectance())
+    downsample_raster(reflectance(), size = 160000)
+  }) |>
+    bindCache(
+      input$orthomosaic %||% "",
+      isTRUE(input$spectral_use_alpha),
+      input$radiometric_scale_mode %||% "Auto detect",
+      paste(panel_coefficients()$gain, collapse = ","),
+      isTRUE(input$remove_physical_invalid),
+      as.integer(input$median_filter_size %||% 0),
+      isTRUE(input$clean_valid_mask),
+      as.integer(input$downsample_factor %||% 1),
+      input$downsample_method %||% "None"
+    )
+
+  indices_preview <- reactive({
+    req(reflectance_preview())
+    compute_spectral_indices(reflectance_preview())
+  })
+
+  # Preview-grade combined index stack (indices + user's custom index,
+  # the latter resampled onto the preview grid so the two align).
+  all_indices_preview <- reactive({
+    req(indices_preview())
+    custom <- custom_index_raster()
+    if (is.null(custom)) {
+      indices_preview()
+    } else {
+      base <- indices_preview()
+      custom_small <- tryCatch(
+        terra::resample(custom, base[[1L]], method = "near"),
+        error = function(e) NULL
+      )
+      if (is.null(custom_small)) base
+      else {
+        names(custom_small) <- names(custom)
+        c(base, custom_small)
+      }
+    }
+  })
+
   biomass_proxy <- reactive({
     req(all_indices())
     compute_biomass_proxy(all_indices())
@@ -6518,10 +6646,23 @@ server <- function(input, output, session) {
     gis_loaded(TRUE)
   })
 
-  # When the opacity slider or the stretch mode change after the user has
-  # already loaded overlays, re-render at the new settings. We skip
-  # fit_to_bounds so the user's pan/zoom is preserved.
-  observeEvent(list(input$map_opacity, input$gis_color_stretch), {
+  # Opacity changes go straight to the browser: each overlay group is
+  # an image element inside a leaflet pane, and CSS opacity is a 1-
+  # frame paint. We never need to rebuild / reproject the raster on
+  # disk just because the user dragged the slider. The previous code
+  # re-ran render_gis_overlays() for every nudge, which on big rasters
+  # meant a full GeoTIFF round-trip + leafem re-attach (multi-second).
+  observeEvent(input$map_opacity, {
+    if (!isTRUE(gis_loaded())) return()
+    session$sendCustomMessage("dronebior_set_layer_opacity",
+                              list(opacity = input$map_opacity))
+  }, ignoreInit = TRUE)
+
+  # Stretch changes (Fixed semantic / Data range / Percentile 2-98)
+  # still require recomputing the color domain per layer, so we have
+  # to re-render. Skip fit_to_bounds so the user's pan/zoom is
+  # preserved.
+  observeEvent(input$gis_color_stretch, {
     if (!isTRUE(gis_loaded())) return()
     render_gis_overlays(
       all_selected   = intersect(isolate(selected_overlay_layers()), overlay_choices),
@@ -7315,27 +7456,100 @@ server <- function(input, output, session) {
   stage_timing <- reactiveVal(list(run_id = NA_character_, image_count = NA_integer_,
                                    stages = list()))
 
-  output$odm_progress_ui <- renderUI({
+  # Single source of truth for the ODM log. Previously TWO reactives
+  # (the progress card and the autoload observer) each called
+  # `readLines()` on the full log file every 3 seconds — doubling the
+  # I/O and, on OneDrive Files-On-Demand, sometimes the network round
+  # trips.
+  #
+  # `odm_log_state()` polls every 3 s, but only re-reads the file when
+  # its (size, mtime) actually changed. The parsed state is kept in a
+  # session-local cache so a tick that finds the log unchanged returns
+  # the previous state instantly. Both consumers (progress UI and
+  # autoload observer) read from this single reactive.
+  odm_log_state_cache <- reactiveVal(NULL)
+
+  odm_log_state <- reactive({
     invalidateLater(3000, session)
     path <- input$odm_log_path
     if (!is.character(path) || !nzchar(path) || !file.exists(path)) {
-      return(tags$div(class = "text-muted",
-                      "No ODM log found yet. Click Run ODM, or paste the path of a log written by docker."))
+      return(list(status = "missing", path = path))
     }
+    info <- file.info(path)
+    cached <- odm_log_state_cache()
+    if (!is.null(cached) &&
+        identical(cached$path, path) &&
+        isTRUE(cached$size == info$size) &&
+        isTRUE(cached$mtime == info$mtime)) {
+      # File unchanged since last poll - reuse the parsed state. Saves
+      # one full readLines per tick AND any regex/grep work over the
+      # whole log.
+      return(cached)
+    }
+
     lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
     if (!length(lines)) {
-      return(tags$div(class = "text-muted", "Log file is empty — ODM may still be initializing."))
+      state <- list(status = "empty", path = path,
+                    size = info$size, mtime = info$mtime,
+                    lines = character())
+      odm_log_state_cache(state)
+      return(state)
     }
     running_stages  <- regmatches(lines, regexpr("Running [a-z_]+ stage", lines))
     finished_stages <- regmatches(lines, regexpr("Finished [a-z_]+ stage", lines))
     running_names   <- sub("Running ([a-z_]+) stage", "\\1", running_stages)
     finished_names  <- sub("Finished ([a-z_]+) stage", "\\1", finished_stages)
-
     started_but_not_finished <- setdiff(running_names, finished_names)
     active_stage <- if (length(started_but_not_finished))
       started_but_not_finished[length(started_but_not_finished)] else NA_character_
     done_flag <- any(grepl("MMMMMMMMMM", lines))
     err_lines <- grep("\\[ERROR\\]|Traceback|out of memory|Killed", lines, value = TRUE)
+    init_time <- parse_odm_init_time(lines)
+    run_id <- if (!is.na(init_time))
+      format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC")) else NA_character_
+    image_count <- NA_integer_
+    img_hit <- grep("Loading [0-9]+ images|Found [0-9]+ usable images", lines, value = TRUE)
+    if (length(img_hit)) {
+      m <- regmatches(img_hit[1L], regexpr("[0-9]+", img_hit[1L]))
+      if (length(m)) image_count <- as.integer(m)
+    }
+
+    state <- list(
+      status         = "ok",
+      path           = path,
+      size           = info$size,
+      mtime          = info$mtime,
+      lines          = lines,
+      running_names  = running_names,
+      finished_names = finished_names,
+      active_stage   = active_stage,
+      done_flag      = done_flag,
+      err_lines      = err_lines,
+      init_time      = init_time,
+      run_id         = run_id,
+      image_count    = image_count
+    )
+    odm_log_state_cache(state)
+    state
+  })
+
+  output$odm_progress_ui <- renderUI({
+    state <- odm_log_state()
+    if (identical(state$status, "missing")) {
+      return(tags$div(class = "text-muted",
+                      "No ODM log found yet. Click Run ODM, or paste the path of a log written by docker."))
+    }
+    if (identical(state$status, "empty")) {
+      return(tags$div(class = "text-muted", "Log file is empty — ODM may still be initializing."))
+    }
+    lines           <- state$lines
+    running_names   <- state$running_names
+    finished_names  <- state$finished_names
+    active_stage    <- state$active_stage
+    done_flag       <- state$done_flag
+    err_lines       <- state$err_lines
+    init_time       <- state$init_time
+    image_count     <- state$image_count
 
     # Outputs-on-disk completion check: a run that crashed in
     # odm_report (numpy/gdal bug) is still effectively complete if the
@@ -7354,24 +7568,15 @@ server <- function(input, output, session) {
     }
     effectively_done <- done_flag || outputs_complete
 
-    init_time <- parse_odm_init_time(lines)
     now_time  <- as.numeric(Sys.time())
     total_elapsed <- if (is.finite(init_time)) now_time - init_time else NA_real_
-
-    # Parse image count from "Loading N images" / "Found N usable images".
-    image_count <- NA_integer_
-    img_hit <- grep("Loading [0-9]+ images|Found [0-9]+ usable images", lines, value = TRUE)
-    if (length(img_hit)) {
-      m <- regmatches(img_hit[1L], regexpr("[0-9]+", img_hit[1L]))
-      if (length(m)) image_count <- as.integer(m)
-    }
 
     # Update session state: reset on new run, record first-seen timings.
     # On run discovery, mark stages already past Running as `pre_observed` —
     # we missed their true start, so their measured duration is unreliable
     # and gets excluded from the persistent history.
     cur <- stage_timing()
-    run_id <- if (!is.na(init_time)) format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC")) else NA_character_
+    run_id <- state$run_id
     if (!identical(cur$run_id, run_id)) {
       cur <- list(run_id       = run_id,
                   image_count  = image_count,
@@ -7687,24 +7892,19 @@ server <- function(input, output, session) {
   #       in the latest opendronemap/odm Docker image -- without losing
   #       the actually-good upstream outputs).
   # Each unique run_id fires the side-effects exactly once per session.
+  #
+  # Shares the polling cache with output$odm_progress_ui through
+  # odm_log_state() - we no longer re-read the log file here. The
+  # reactive's own invalidateLater drives the 3-second tick, so the
+  # observer fires on every odm_log_state() change (including the
+  # ones that just refresh the cache TTL without changes).
   observe({
-    invalidateLater(3000, session)
+    state <- odm_log_state()
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
 
-    log_done   <- FALSE
-    log_run_id <- NA_character_
-    path <- input$odm_log_path
-    if (is.character(path) && nzchar(path) && file.exists(path)) {
-      lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
-      if (length(lines)) {
-        log_done <- any(grepl("MMMMMMMMMM", lines))
-        init_time <- parse_odm_init_time(lines)
-        if (!is.na(init_time)) {
-          log_run_id <- format(as.POSIXct(init_time, origin = "1970-01-01", tz = "UTC"))
-        }
-      }
-    }
+    log_done   <- isTRUE(state$status == "ok") && isTRUE(state$done_flag)
+    log_run_id <- if (isTRUE(state$status == "ok")) state$run_id %||% NA_character_ else NA_character_
 
     outputs_done <- FALSE
     outputs_run_id <- NA_character_
@@ -7989,9 +8189,29 @@ server <- function(input, output, session) {
     )
   }, digits = 2)
 
-  output$radiometric_qa <- renderTable({
+  # Radiometric QA runs per-band terra::global() across the raw and
+  # scaled rasters plus an alpha-mask scan, which is heavy on full
+  # 5 cm/px orthos. Make it explicit: only fires on the Run QA
+  # button, and the result is memoised by (ortho path + alpha + scale
+  # mode + panel-calibration fingerprint) so re-clicking with the
+  # same settings returns instantly.
+  radiometric_qa_result <- eventReactive(input$run_radiometric_qa, {
     req(mosaic(), base_reflectance())
-    qa <- spectral_qa_summary(mosaic()$raw_bands, base_reflectance(), mosaic()$alpha, radiometric_scale_info())
+    spectral_qa_summary(mosaic()$raw_bands, base_reflectance(),
+                        mosaic()$alpha, radiometric_scale_info())
+  }) |>
+    bindCache(
+      input$orthomosaic %||% "",
+      isTRUE(input$spectral_use_alpha),
+      input$radiometric_scale_mode %||% "Auto detect",
+      paste(panel_coefficients()$gain, collapse = ",")
+    )
+
+  output$radiometric_qa <- renderTable({
+    qa <- tryCatch(radiometric_qa_result(), error = function(e) NULL)
+    if (is.null(qa)) {
+      return(data.frame(message = "Click Run QA above to compute radiometric quality metrics."))
+    }
     numeric_cols <- vapply(qa, is.numeric, logical(1))
     qa[numeric_cols] <- lapply(qa[numeric_cols], function(v) ifelse(abs(v) >= 1000, format(round(v), big.mark = ","), formatC(v, format = "f", digits = 2)))
     qa
@@ -8126,9 +8346,9 @@ server <- function(input, output, session) {
   })
 
   output$index_summary <- renderTable({
-    req(all_indices())
+    req(all_indices_preview())
     format_summary_table(
-      summarize_spatraster(all_indices(), c("min", "mean", "max", "sd")),
+      summarize_spatraster(all_indices_preview(), c("min", "mean", "max", "sd")),
       unit = "unitless index",
       digits = 2
     )
@@ -8146,8 +8366,10 @@ server <- function(input, output, session) {
   })
 
   output$index_plot <- renderPlot({
-    req(all_indices(), input$index_layer)
-    layer <- all_indices()[[input$index_layer]]
+    req(all_indices_preview(), input$index_layer)
+    stack <- all_indices_preview()
+    if (!(input$index_layer %in% names(stack))) return(invisible(NULL))
+    layer <- stack[[input$index_layer]]
     display_layer <- if (isTRUE(input$fixed_index_limits)) layer else stretch_layer_for_display(layer, input$display_stretch %||% "Percentile 2-98")
     zlim <- index_zlim(input$index_layer, isTRUE(input$fixed_index_limits), layer)
     terra::plot(
@@ -8163,19 +8385,29 @@ server <- function(input, output, session) {
   })
 
   output$index_histogram_plot <- renderPlot({
-    req(all_indices(), input$index_layer)
-    vals <- terra::spatSample(all_indices()[[input$index_layer]], size = 80000, method = "regular", na.rm = TRUE, values = TRUE)[, 1]
+    req(all_indices_preview(), input$index_layer)
+    stack <- all_indices_preview()
+    if (!(input$index_layer %in% names(stack))) return(invisible(NULL))
+    vals <- terra::spatSample(stack[[input$index_layer]], size = 80000, method = "regular", na.rm = TRUE, values = TRUE)[, 1]
     hist(vals, breaks = 80, col = "#1f6f5b", border = NA, main = paste(input$index_layer, "histogram"), xlab = "Index value")
     if (isTRUE(input$fixed_index_limits) && input$index_layer %in% names(fixed_index_limits)) {
       abline(v = fixed_index_limits[[input$index_layer]], col = "#ef4444", lty = 2)
     }
   })
 
+  # Display-only classification of the application map. Runs on the
+  # preview-grade index stack (~160k cells) so the plot below redraws
+  # instantly when the user drags a threshold slider. The full-
+  # resolution classification is computed on demand inside the Export
+  # observer (see input$export_products) using `all_indices()`.
   application_map <- reactive({
-    req(all_indices(), input$application_index)
+    req(all_indices_preview(), input$application_index)
+    stack <- all_indices_preview()
+    validate(need(input$application_index %in% names(stack),
+                  paste("Index not in preview stack:", input$application_index)))
     thresholds <- c(input$class_water_max, input$class_bare_max, input$class_stress_max, input$class_moderate_max)
     validate(need(all(diff(sort(thresholds)) > 0), "Application thresholds must be distinct."))
-    build_application_map(all_indices()[[input$application_index]], thresholds)
+    build_application_map(stack[[input$application_index]], thresholds)
   })
 
   output$application_map_plot <- renderPlot({
@@ -8190,7 +8422,7 @@ server <- function(input, output, session) {
       breaks = seq(0.5, 5.5, by = 1),
       legend = FALSE,
       axes = TRUE,
-      main = paste(input$application_index, "application classes")
+      main = paste(input$application_index, "application classes (preview)")
     )
     par(mar = c(0, 0, 0, 0))
     plot.new()
@@ -8292,7 +8524,23 @@ server <- function(input, output, session) {
       terra::writeRaster(custom_index_raster(), custom_path, overwrite = TRUE, datatype = "FLT4S")
       paths <- c(paths, custom_index = custom_path)
     }
-    app_raster <- application_map()
+    # Re-classify on the FULL-resolution index stack for the exported
+    # GeoTIFF + GPKG. The on-screen `application_map()` is a preview
+    # built from `all_indices_preview()` and is not suitable for
+    # downstream science use - it shares thresholds but not the source
+    # grid. Doing the full-res classify only here keeps the slider
+    # interaction snappy while still writing scientifically correct
+    # outputs to disk.
+    thresholds_full <- c(input$class_water_max, input$class_bare_max,
+                         input$class_stress_max, input$class_moderate_max)
+    validate(need(all(diff(sort(thresholds_full)) > 0),
+                  "Application thresholds must be distinct."))
+    validate(need(input$application_index %in% names(all_indices()),
+                  paste("Index not available at full resolution:",
+                        input$application_index)))
+    app_raster <- build_application_map(
+      all_indices()[[input$application_index]], thresholds_full
+    )
     app_path <- file.path(input$output_dir, "application_map_classes.tif")
     terra::writeRaster(app_raster, app_path, overwrite = TRUE, datatype = "INT1U")
     paths <- c(paths, application_map = app_path)
@@ -8349,13 +8597,75 @@ server <- function(input, output, session) {
   selected_ids_value <- reactiveVal(integer())
   full_roi_status_value <- reactiveVal("No ROI selected yet.")
 
+  # Canopy Height Model with a persistent on-disk cache.
+  #
+  # Previously this reactive called build_chm_from_dsm_dtm() every
+  # time its inputs invalidated, which on a 22k x 20k DSM is multi-
+  # second work AND triggers OneDrive Files-On-Demand to hydrate both
+  # rasters from the network. That cost rippled into the 3D viewer,
+  # ROI metrics, time-series CHM mean, and the report.
+  #
+  # Strategy:
+  #   1. Pick the DSM / DTM via cached_products() (already cache-aware).
+  #   2. Resolve the canonical chm.tif written by build_chm_raster()
+  #      (the helper places it next to the DSM, which - through
+  #      cache_aware_path - is the local cache when the user has run
+  #      migration, otherwise the project folder).
+  #   3. If chm.tif exists AND is newer than both DSM and DTM, just
+  #      open the file - microseconds.
+  #   4. Otherwise call build_chm_raster() once, which writes chm.tif
+  #      to disk and returns the path. Subsequent reactive
+  #      invalidations follow path (3).
+  #
+  # bindCache on (paths + mtimes) means switching projects / re-
+  # running ODM correctly invalidates the in-session memo and we go
+  # back to step (3) or (4) for the new pair.
   chm_raster <- reactive({
     products <- cached_products()
-    if (!file.exists(products[["dsm"]]) || !file.exists(products[["dtm"]])) {
+    dsm_path <- products[["dsm"]]
+    dtm_path <- products[["dtm"]]
+    if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
       return(NULL)
     }
-    build_chm_from_dsm_dtm(products[["dsm"]], products[["dtm"]])
-  })
+    chm_path <- file.path(dirname(dsm_path), "chm.tif")
+    fresh_chm <- file.exists(chm_path) &&
+      isTRUE(file.info(chm_path)$mtime >= max(file.info(dsm_path)$mtime,
+                                              file.info(dtm_path)$mtime))
+    if (fresh_chm) {
+      r <- tryCatch(terra::rast(chm_path), error = function(e) NULL)
+      if (!is.null(r)) {
+        names(r) <- "CHM_m"
+        return(r)
+      }
+    }
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (!is.null(p)) {
+      written <- tryCatch(
+        build_chm_raster(p, force = !fresh_chm, cache_aware = TRUE),
+        error = function(e) NULL
+      )
+      if (!is.null(written) && file.exists(written)) {
+        r <- tryCatch(terra::rast(written), error = function(e) NULL)
+        if (!is.null(r)) {
+          names(r) <- "CHM_m"
+          return(r)
+        }
+      }
+    }
+    # Last-resort in-memory build (no on-disk cache written). Keeps
+    # behaviour identical to the pre-cache code when the project
+    # context is missing (e.g. running the app against a directory
+    # that does not look like a dronebio_project).
+    build_chm_from_dsm_dtm(dsm_path, dtm_path)
+  }) |>
+    bindCache(
+      cached_products()[["dsm"]] %||% "",
+      cached_products()[["dtm"]] %||% "",
+      tryCatch(as.character(file.info(cached_products()[["dsm"]] %||% "")$mtime),
+               error = function(e) ""),
+      tryCatch(as.character(file.info(cached_products()[["dtm"]] %||% "")$mtime),
+               error = function(e) "")
+    )
 
   dsm_raster <- reactive({
     products <- cached_products()
@@ -8640,34 +8950,81 @@ server <- function(input, output, session) {
     data.frame(x = mapped$x_map, y = mapped$y_map)
   })
 
-  full_selection_points <- reactive({
-    if (!isTRUE(input$use_full_roi_metrics)) {
-      full_roi_status_value("Full-resolution recalculation is off; using the viewer preview sample.")
-      return(selected_geometry_points()[0, , drop = FALSE])
+  # Cache for full-resolution ROI points. Keyed by a fingerprint of
+  # (ROI polygon + LAS path + mtime + CHM availability) so repeated
+  # requests for the same ROI never re-open the LAZ. On OneDrive
+  # Files-On-Demand and big stockpile clouds this matters: a single
+  # spatial-filtered read can be tens of seconds, and the previous
+  # reactive triggered one of those for every user interaction that
+  # nudged `selection_roi_analysis()`.
+  full_roi_cache <- reactiveVal(list(key = NA_character_, points = NULL))
+
+  full_selection_roi_key <- function(roi, full_path) {
+    if (is.null(roi) || nrow(roi) < 3) return(NA_character_)
+    if (!nzchar(full_path) || !file.exists(full_path)) return(NA_character_)
+    info <- file.info(full_path)
+    # Round coordinates to ~mm to keep the key stable under tiny JS
+    # roundtrip jitter while still distinguishing different ROIs.
+    fp <- paste0(
+      normalizePath(full_path, mustWork = FALSE), "|",
+      info$size, "|", info$mtime, "|",
+      paste(round(roi$x, 4), collapse = ","), "|",
+      paste(round(roi$y, 4), collapse = ",")
+    )
+    rlang_hash_compatible <- function(s) {
+      raw <- charToRaw(s)
+      h <- 0L
+      for (b in as.integer(raw)) h <- bitwXor(bitwShiftL(h, 5L) - h, b)
+      format(as.hexmode(abs(h)), width = 8)
     }
+    rlang_hash_compatible(fp)
+  }
+
+  # Heavy worker. Called only from the two trigger points below
+  # (explicit button and auto-mode observer) so it never fires on
+  # incidental reactive churn.
+  perform_full_roi_compute <- function() {
     pts_preview <- selected_geometry_points()
     if (nrow(pts_preview) == 0) {
       full_roi_status_value("No ROI selected yet.")
-      return(pts_preview[0, , drop = FALSE])
+      full_roi_cache(list(key = NA_character_, points = NULL))
+      return(invisible(NULL))
     }
     roi <- selection_roi_analysis()
     if (nrow(roi) < 3) {
       full_roi_status_value("Select at least three points to build a polygon ROI.")
-      return(pts_preview[0, , drop = FALSE])
+      full_roi_cache(list(key = NA_character_, points = NULL))
+      return(invisible(NULL))
     }
     full_path <- resolved_full_cloud_path()
     if (!nzchar(full_path) || !file.exists(full_path)) {
       full_roi_status_value("Full point cloud path is missing; using the viewer preview sample.")
-      return(pts_preview[0, , drop = FALSE])
+      full_roi_cache(list(key = NA_character_, points = NULL))
+      return(invisible(NULL))
     }
 
-    tryCatch({
+    key <- full_selection_roi_key(roi, full_path)
+    cur <- full_roi_cache()
+    if (!is.na(key) && identical(cur$key, key) && !is.null(cur$points)) {
+      # Identical request - skip the heavy read entirely.
+      full_roi_status_value(paste0(
+        "Full-resolution metrics cached. ROI uses ",
+        format(nrow(cur$points), big.mark = ","),
+        " points from ", basename(full_path), "."
+      ))
+      return(invisible(NULL))
+    }
+
+    with_gis_task(session,
+                  name   = "Reading full-resolution point cloud",
+                  detail = basename(full_path),
+                  tryCatch({
       pts <- read_full_point_cloud(full_path, roi_polygon = roi, max_points = Inf)
       if (nrow(pts) == 0) {
         full_roi_status_value("The ROI polygon did not intersect any full-resolution points; using the viewer preview sample.")
-        return(pts_preview[0, , drop = FALSE])
+        full_roi_cache(list(key = key, points = pts_preview[0, , drop = FALSE]))
+        return(invisible(NULL))
       }
-
       chm <- chm_raster()
       if (!is.null(chm)) {
         pts <- add_chm_heights(pts, chm)
@@ -8676,7 +9033,6 @@ server <- function(input, output, session) {
         pts <- add_point_heights(pts)
         pts <- add_cloud_runtime_attributes(pts, full_path, "full_georeferenced", "local low-Z proxy")
       }
-
       full_roi_status_value(paste0(
         "Full-resolution metrics active. ROI uses ",
         format(nrow(pts), big.mark = ","),
@@ -8684,11 +9040,51 @@ server <- function(input, output, session) {
         basename(attr(pts, "point_cloud_source")),
         if (!is.null(chm)) " with DSM-DTM CHM heights." else " with local low-Z height fallback."
       ))
-      pts
+      full_roi_cache(list(key = key, points = pts))
     }, error = function(e) {
       full_roi_status_value(paste("Full-resolution recalculation failed; using viewer preview sample. Reason:", conditionMessage(e)))
-      pts_preview[0, , drop = FALSE]
-    })
+      full_roi_cache(list(key = NA_character_, points = NULL))
+    }))
+    invisible(NULL)
+  }
+
+  observeEvent(input$compute_full_roi_metrics, {
+    perform_full_roi_compute()
+  })
+
+  # Optional auto-mode: when the user opts in, recompute on each
+  # change of the ROI or the underlying LAZ path. Still goes through
+  # the ROI-hash cache so identical ROIs across reactive ticks reuse
+  # the previous result.
+  observe({
+    if (!isTRUE(input$use_full_roi_metrics)) return()
+    # Touch the reactives we want to track changes on:
+    selection_roi_analysis()
+    resolved_full_cloud_path()
+    isolate(perform_full_roi_compute())
+  })
+
+  # Reset cache + status when the ROI is cleared, the user reloads
+  # the 3D scene, or the auto-toggle is switched off. Prevents stale
+  # full-res points from "leaking" into a fresh selection.
+  observeEvent(point_cloud_event(), {
+    full_roi_cache(list(key = NA_character_, points = NULL))
+  }, ignoreInit = TRUE)
+  observeEvent(input$use_full_roi_metrics, {
+    if (!isTRUE(input$use_full_roi_metrics)) {
+      full_roi_status_value("Full-resolution recalculation is off; using the viewer preview sample.")
+    }
+  }, ignoreInit = TRUE)
+
+  full_selection_points <- reactive({
+    if (point_cloud_event() == 0) {
+      return(selected_geometry_points()[0, , drop = FALSE])
+    }
+    cached <- full_roi_cache()
+    if (is.null(cached$points)) {
+      return(selected_geometry_points()[0, , drop = FALSE])
+    }
+    cached$points
   })
 
   analysis_points <- reactive({
@@ -11126,10 +11522,11 @@ server <- function(input, output, session) {
       out <- file.path(input$project_dir, "DroneBioR_report.html")
       field_csv <- if (!is.null(input$report_field_csv)) input$report_field_csv$datapath else NULL
       render_dronebio_report(
-        project     = project(),
-        output_file = out,
-        field_csv   = field_csv,
-        use_alpha   = isTRUE(input$use_alpha)
+        project        = project(),
+        output_file    = out,
+        field_csv      = field_csv,
+        use_alpha      = isTRUE(input$use_alpha),
+        rerun_workflow = isTRUE(input$report_rerun_workflow)
       )
       report_output_path(out)
       showNotification(

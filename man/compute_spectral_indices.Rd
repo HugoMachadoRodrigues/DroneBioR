@@ -22,12 +22,41 @@ support.
 }
 \description{
 Computes the subset of indices the input bands actually support.
-Multispectral input (Blue + Green + Red + RedEdge + NIR) yields all
-nine: NDVI, NDRE, EVI, SAVI, NDWI, GNDVI, CIrededge, MSAVI2 and VARI.
-RGB-only input (Blue + Green + Red) yields just VARI - the other
-indices need NIR / RedEdge.
+Multispectral input (Blue + Green + Red + RedEdge + NIR) yields the
+full set; RGB-only input still gets the visible-band indices
+(VARI, ExG, GLI, TGI, MGRVI, RGBVI). All formulas are referenced
+below; see the \verb{?<index>} modal in the Shiny UI for the citation
+next to each one.
 }
 \details{
+Indices computed when \strong{NIR} is present:
+NDVI    Rouse et al. 1974   (NIR - Red) / (NIR + Red)
+EVI     Huete et al. 2002   2.5 * (NIR - Red) / (NIR + 6\emph{Red - 7.5}Blue + 1)
+SAVI    Huete 1988          1.5 * (NIR - Red) / (NIR + Red + 0.5)
+OSAVI   Rondeaux 1996       (NIR - Red) / (NIR + Red + 0.16)
+MSAVI2  Qi 1994             (2\emph{NIR + 1 - sqrt((2}NIR+1)^2 - 8*(NIR-Red))) / 2
+NDWI    McFeeters 1996      (Green - NIR) / (Green + NIR)
+GNDVI   Gitelson 1996       (NIR - Green) / (NIR + Green)
+GCI     Gitelson 2003       NIR / Green - 1
+RVI     Jordan 1969         NIR / Red
+DVI     Tucker 1979         NIR - Red
+WDRVI   Gitelson 2004       (0.2\emph{NIR - Red) / (0.2}NIR + Red)
+TVI     Broge 2001          0.5 * (120*(NIR-Green) - 200*(Red-Green))
+
+Indices computed when \strong{both NIR and RedEdge} are present:
+NDRE        Gitelson 1994   (NIR - RedEdge) / (NIR + RedEdge)
+CIrededge   Gitelson 2003   NIR / RedEdge - 1
+MCARI       Daughtry 2000   ((RedEdge - Red) - 0.2*(RedEdge - Green)) * (RedEdge / Red)
+PSRI        Merzlyak 1999   (Red - Green) / RedEdge
+
+Indices that work on \strong{RGB-only} orthomosaics (always computed):
+VARI    Gitelson 2002       (Green - Red) / (Green + Red - Blue)
+ExG     Woebbecke 1995      2\emph{Green - Red - Blue
+GLI     Louhaichi 2001      (2}Green - Red - Blue) / (2\emph{Green + Red + Blue)
+TGI     Hunt 2013           -0.5 * (190}(Red - Green) - 120*(Red - Blue))
+MGRVI   Bendig 2015         (Green^2 - Red^2) / (Green^2 + Red^2)
+RGBVI   Bendig 2015         (Green^2 - Red\emph{Blue) / (Green^2 + Red}Blue)
+
 Pass \code{strict = TRUE} to keep the legacy behaviour where missing
 RedEdge / NIR raises an error; the default is to silently compute
 whatever is possible, which is what Drone Biomass Studio needs to

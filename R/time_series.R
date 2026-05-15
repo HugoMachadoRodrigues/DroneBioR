@@ -184,17 +184,77 @@ flight_time_series <- function(summary_fn,
 #' @name flight_summary_helpers
 NULL
 
+# Per-flight metric cache. Each entry is keyed by the metric name plus
+# the source file path and mtime; this way reopening the same flight
+# returns instantly while a freshly written ODM output transparently
+# invalidates the cached value. The cache lives under
+# `~/.dronebior/flight_metrics_cache.rds` so it survives R session
+# restarts and is shared between the Time Series tab and the
+# command-line callers of `flight_time_series()`.
+flight_metric_cache_path <- function() {
+  dir <- file.path(Sys.getenv("HOME", unset = tempdir()), ".dronebior")
+  file.path(dir, "flight_metrics_cache.rds")
+}
+
+read_flight_metric_cache <- function() {
+  path <- flight_metric_cache_path()
+  if (!file.exists(path)) return(list())
+  tryCatch(readRDS(path), error = function(e) list())
+}
+
+write_flight_metric_cache <- function(cache) {
+  path <- flight_metric_cache_path()
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tryCatch(saveRDS(cache, path), error = function(e) NULL)
+  invisible(path)
+}
+
+flight_metric_key <- function(metric, source_path) {
+  if (!file.exists(source_path)) return(NA_character_)
+  info <- file.info(source_path)
+  paste0(metric, "|", normalizePath(source_path, mustWork = FALSE),
+         "|", info$size, "|", info$mtime)
+}
+
+cached_flight_metric <- function(metric, source_path, compute) {
+  key <- flight_metric_key(metric, source_path)
+  if (is.na(key)) return(NA_real_)
+  cache <- read_flight_metric_cache()
+  if (!is.null(cache[[key]]) && is.finite(cache[[key]])) {
+    return(cache[[key]])
+  }
+  value <- tryCatch(as.numeric(compute()), error = function(e) NA_real_)
+  cache[[key]] <- value
+  write_flight_metric_cache(cache)
+  value
+}
+
 #' @rdname flight_summary_helpers
 #' @examples
 #' project <- dronebio_sample_project(target_dir = tempfile("ts-ndvi-"))
 #' flight_ndvi_mean(project)
 #' @export
 flight_ndvi_mean <- function(project) {
-  if (!file.exists(project$odm_orthomosaic)) return(NA_real_)
-  ortho <- read_multispectral_orthomosaic(project$odm_orthomosaic)
-  refl  <- scale_to_reflectance(ortho$bands)
-  ix    <- compute_spectral_indices(refl)
-  as.numeric(terra::global(ix[["NDVI"]], "mean", na.rm = TRUE)[, 1])
+  ortho_path <- project$odm_orthomosaic
+  if (!file.exists(ortho_path)) return(NA_real_)
+  cached_flight_metric("ndvi_mean", ortho_path, function() {
+    # NDVI-only path: read just the Red + NIR bands, scale them, and
+    # compute the single index. The previous implementation called
+    # compute_spectral_indices() which materialises ~22 SpatRaster
+    # operations -- on a 22k x 20k MicaSense ortho that is minutes of
+    # work even though we only need NDVI.
+    ortho <- read_multispectral_orthomosaic(ortho_path)
+    bands <- ortho$bands
+    needed <- c("Red", "NIR")
+    missing_bands <- setdiff(needed, names(bands))
+    if (length(missing_bands) > 0L) return(NA_real_)
+    bands_subset <- bands[[needed]]
+    refl <- scale_to_reflectance(bands_subset)
+    nir <- refl[["NIR"]]
+    red <- refl[["Red"]]
+    ndvi <- safe_ratio(nir - red, nir + red, eps = 1e-6)
+    as.numeric(terra::global(ndvi, "mean", na.rm = TRUE)[, 1])
+  })
 }
 
 #' @rdname flight_summary_helpers
@@ -202,12 +262,15 @@ flight_ndvi_mean <- function(project) {
 #' flight_biomass_proxy_mean(project)
 #' @export
 flight_biomass_proxy_mean <- function(project) {
-  if (!file.exists(project$odm_orthomosaic)) return(NA_real_)
-  ortho <- read_multispectral_orthomosaic(project$odm_orthomosaic)
-  refl  <- scale_to_reflectance(ortho$bands)
-  ix    <- compute_spectral_indices(refl)
-  proxy <- compute_biomass_proxy(ix)
-  as.numeric(terra::global(proxy, "mean", na.rm = TRUE)[, 1])
+  ortho_path <- project$odm_orthomosaic
+  if (!file.exists(ortho_path)) return(NA_real_)
+  cached_flight_metric("biomass_proxy_mean", ortho_path, function() {
+    ortho <- read_multispectral_orthomosaic(ortho_path)
+    refl  <- scale_to_reflectance(ortho$bands)
+    ix    <- compute_spectral_indices(refl)
+    proxy <- compute_biomass_proxy(ix)
+    as.numeric(terra::global(proxy, "mean", na.rm = TRUE)[, 1])
+  })
 }
 
 #' @rdname flight_summary_helpers
@@ -218,6 +281,21 @@ flight_chm_mean <- function(project) {
   dsm <- file.path(project$odm_project_dir, "odm_dem", "dsm.tif")
   dtm <- file.path(project$odm_project_dir, "odm_dem", "dtm.tif")
   if (!file.exists(dsm) || !file.exists(dtm)) return(NA_real_)
-  chm <- build_chm_from_dsm_dtm(dsm, dtm)
-  as.numeric(terra::global(chm, "mean", na.rm = TRUE)[, 1])
+  # Prefer the persisted chm.tif when present and fresher than its
+  # DSM/DTM parents: tens of milliseconds vs a full subtract +
+  # clamp + write pass on every call. Falls back to in-memory build
+  # for projects that have not been through build_chm_raster() yet.
+  chm_path <- file.path(dirname(dsm), "chm.tif")
+  if (file.exists(chm_path) &&
+      isTRUE(file.info(chm_path)$mtime >=
+             max(file.info(dsm)$mtime, file.info(dtm)$mtime))) {
+    return(cached_flight_metric("chm_mean", chm_path, function() {
+      chm <- terra::rast(chm_path)
+      as.numeric(terra::global(chm, "mean", na.rm = TRUE)[, 1])
+    }))
+  }
+  cached_flight_metric("chm_mean_inmem", dsm, function() {
+    chm <- build_chm_from_dsm_dtm(dsm, dtm)
+    as.numeric(terra::global(chm, "mean", na.rm = TRUE)[, 1])
+  })
 }

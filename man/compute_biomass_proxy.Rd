@@ -13,7 +13,11 @@ compute_biomass_proxy(indices)
 A \code{terra::SpatRaster} named \code{Biomass_Index_Proxy}.
 }
 \description{
-Compute an image-only biomass proxy
+Combines NDVI, SAVI and NDRE into a single -1..1 surface. Use as a
+qualitative biomass surrogate when no canopy-height information is
+available. For a more defensible biomass estimate, use
+\code{\link[=compute_biomass_proxies]{compute_biomass_proxies()}} which also produces height-weighted
+variants (greenness x CHM).
 }
 \examples{
 ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")

@@ -10,7 +10,8 @@ render_dronebio_report(
   field_csv = NULL,
   use_alpha = TRUE,
   roi_geojson = NULL,
-  snapshot_path = NULL
+  snapshot_path = NULL,
+  rerun_workflow = FALSE
 )
 }
 \arguments{
@@ -37,6 +38,16 @@ to \verb{<project>/studio_assets/rois.geojson} when that file exists.}
 the report embeds it in the "3D scene documentation" section.
 Otherwise the section falls back to a server-side \code{persp()}
 rendering of the DSM.}
+
+\item{rerun_workflow}{Logical. When \code{TRUE}, the report calls
+\code{run_dronebio_workflow()} from scratch and uses its in-memory
+outputs. When \code{FALSE} (the default), the report consumes the
+workflow artefacts already on disk under \verb{<output_dir>/} or the
+project's canonical \verb{outputs/} folder, falling back to a fresh
+workflow run only when no existing outputs can be found. Keeps
+the report cheap to re-render after the user has already run the
+workflow once - the previous behaviour silently re-did all the
+raster math on every render.}
 }
 \value{
 Invisibly returns the absolute path to the rendered file.

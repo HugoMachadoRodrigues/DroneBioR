@@ -26,6 +26,15 @@
 #'   the report embeds it in the "3D scene documentation" section.
 #'   Otherwise the section falls back to a server-side `persp()`
 #'   rendering of the DSM.
+#' @param rerun_workflow Logical. When `TRUE`, the report calls
+#'   `run_dronebio_workflow()` from scratch and uses its in-memory
+#'   outputs. When `FALSE` (the default), the report consumes the
+#'   workflow artefacts already on disk under `<output_dir>/` or the
+#'   project's canonical `outputs/` folder, falling back to a fresh
+#'   workflow run only when no existing outputs can be found. Keeps
+#'   the report cheap to re-render after the user has already run the
+#'   workflow once - the previous behaviour silently re-did all the
+#'   raster math on every render.
 #' @return Invisibly returns the absolute path to the rendered file.
 #' @examples
 #' \donttest{
@@ -39,11 +48,12 @@
 #' }
 #' @export
 render_dronebio_report <- function(project,
-                                   output_file   = NULL,
-                                   field_csv     = NULL,
-                                   use_alpha     = TRUE,
-                                   roi_geojson   = NULL,
-                                   snapshot_path = NULL) {
+                                   output_file    = NULL,
+                                   field_csv      = NULL,
+                                   use_alpha      = TRUE,
+                                   roi_geojson    = NULL,
+                                   snapshot_path  = NULL,
+                                   rerun_workflow = FALSE) {
   if (!requireNamespace("rmarkdown", quietly = TRUE)) {
     stop(
       "The 'rmarkdown' package is required to render reports. ",
@@ -95,12 +105,17 @@ render_dronebio_report <- function(project,
     intermediates_dir = intermediate_dir,
     knit_root_dir     = intermediate_dir,
     params = list(
-      project_dir   = project$project_dir,
-      field_csv     = field_csv,
-      use_alpha     = isTRUE(use_alpha),
-      output_dir    = file.path(intermediate_dir, "workflow_outputs"),
-      roi_geojson   = roi_geojson,
-      snapshot_path = snapshot_path
+      project_dir    = project$project_dir,
+      field_csv      = field_csv,
+      use_alpha      = isTRUE(use_alpha),
+      output_dir     = file.path(intermediate_dir, "workflow_outputs"),
+      roi_geojson    = roi_geojson,
+      snapshot_path  = snapshot_path,
+      rerun_workflow = isTRUE(rerun_workflow),
+      # Pass the project's existing output folder so the Rmd can read
+      # back reflectance_summary.csv / spectral_index_summary.csv /
+      # GeoTIFFs without rerunning the workflow.
+      existing_output_dir = project$output_dir
     ),
     quiet = TRUE,
     envir = new.env(parent = globalenv())
