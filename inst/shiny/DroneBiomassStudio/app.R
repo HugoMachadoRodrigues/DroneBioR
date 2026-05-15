@@ -8195,7 +8195,7 @@ server <- function(input, output, session) {
   # button, and the result is memoised by (ortho path + alpha + scale
   # mode + panel-calibration fingerprint) so re-clicking with the
   # same settings returns instantly.
-  radiometric_qa_result <- eventReactive(input$run_radiometric_qa, {
+  radiometric_qa_result <- reactive({
     req(mosaic(), base_reflectance())
     spectral_qa_summary(mosaic()$raw_bands, base_reflectance(),
                         mosaic()$alpha, radiometric_scale_info())
@@ -8205,7 +8205,8 @@ server <- function(input, output, session) {
       isTRUE(input$spectral_use_alpha),
       input$radiometric_scale_mode %||% "Auto detect",
       paste(panel_coefficients()$gain, collapse = ",")
-    )
+    ) |>
+    bindEvent(input$run_radiometric_qa)
 
   output$radiometric_qa <- renderTable({
     qa <- tryCatch(radiometric_qa_result(), error = function(e) NULL)
