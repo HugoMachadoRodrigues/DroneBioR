@@ -1569,7 +1569,7 @@ ui <- page_navbar(
     class = "dronebio-navbar-content",
     tags$div(
       class = "dronebio-navbar-brand",
-      tags$img(src = "logo.png", height = "160px",
+      tags$img(src = "logo.png", height = "80px",
                alt = "DroneBioR logo"),
       tags$span(class = "dronebio-navbar-title",
                 "Drone Biomass Studio")
@@ -2407,11 +2407,11 @@ ui <- page_navbar(
       .gis-task-banner {
         display: none;
         position: fixed;
-        /* Sits BELOW the navbar + the logo overflow so it never
-           overlaps the Workflow Stepper. The navbar's green band
-           is ~44px; the logo (160px) overflows below by another
-           ~120px - we add a small breathing margin past that. */
-        top: 180px;
+        /* Sits BELOW the navbar so it never overlaps the Workflow
+           Stepper. The navbar is now 80px (logo fits inside the
+           green band cleanly, no overflow); the banner clears it
+           with a small breathing margin. */
+        top: 92px;
         left: 50%;
         transform: translateX(-50%);
         z-index: 10000;
@@ -2700,18 +2700,20 @@ ui <- page_navbar(
         overflow: visible !important;
       }
       .navbar-brand {
-        /* navbar-brand becomes the flex parent for logo + title +
-           stepper. Fixed height = green band thickness. The logo
-           below is a flex CHILD with a larger explicit height,
-           which makes it overflow visibly above and below this
-           container without affecting the navbar's height. */
+        /* navbar-brand is the flex parent for logo + title + stepper.
+           Height matches the logo height exactly so the logo fits
+           entirely INSIDE the green band - no overflow, no overlap
+           into the page content below. A green band of 80px is the
+           smallest size that still leaves the 80px logo readable
+           (the 160px / 48px / overflow-below combination clipped
+           the logo against the left sidebar of every panel). */
         display: flex !important;
         align-items: center !important;
         width: 100% !important;
         margin: 0 !important;
         padding: 0 12px !important;
         max-width: none !important;
-        height: 48px !important;
+        height: 80px !important;
         line-height: 1 !important;
         overflow: visible !important;
       }
@@ -2731,18 +2733,14 @@ ui <- page_navbar(
         height: 100%;
         overflow: visible;
       }
-      /* The overflow trick: the image is a flex item with an
-         explicit height bigger than its parent's. align-self:
-         flex-start anchors the image's TOP to the navbar's top,
-         so the overflow happens entirely BELOW the navbar (into
-         the page area, where there is room). Without flex-start
-         the image would centre vertically and its top half would
-         get clipped against the top of the viewport. */
+      /* Logo height matches the navbar's height, so the image fits
+         inside the green band cleanly. No overflow gymnastics
+         needed - this is the size that survives all the tradeoffs
+         (readable, no clipping, no overlap with the page below). */
       .dronebio-navbar-brand img {
         display: block;
-        height: 160px;
+        height: 80px;
         flex-shrink: 0;
-        align-self: flex-start;
       }
       .dronebio-navbar-title {
         white-space: nowrap;
