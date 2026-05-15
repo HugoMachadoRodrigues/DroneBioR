@@ -1520,6 +1520,30 @@ ui <- page_navbar(
         });
       });
 
+      // Drawing-mode toggle for the GIS Workspace map. Adds a crosshair
+      // cursor to the map and pins a yellow drawing-mode badge at the
+      // top of the canvas so the user has obvious visual confirmation
+      // that clicks are being captured as ROI vertices. Driven by an R
+      // observer that watches input$gis_measure_tool.
+      Shiny.addCustomMessageHandler('dronebior_gis_drawing_mode', function(msg) {
+        var mapEl = document.getElementById('gis_map');
+        if (!mapEl) return;
+        if (msg && msg.active) {
+          mapEl.classList.add('dronebior-drawing-mode');
+          var badge = mapEl.querySelector('.dronebior-map-badge');
+          if (!badge) {
+            badge = document.createElement('div');
+            badge.className = 'dronebior-map-badge';
+            mapEl.appendChild(badge);
+          }
+          badge.textContent = (msg && msg.label) ? msg.label : 'Drawing mode';
+        } else {
+          mapEl.classList.remove('dronebior-drawing-mode');
+          var oldBadge = mapEl.querySelector('.dronebior-map-badge');
+          if (oldBadge) oldBadge.remove();
+        }
+      });
+
       // Now-loading banner driven by R-side gis_task_start/stop. The R
       // thread is single-threaded, so when it is blocked on a slow
       // terra::rast() open the UI cannot rerun any reactive output -
@@ -1805,6 +1829,27 @@ ui <- page_navbar(
       html, body { height: auto !important; min-height: 100%; overflow-y: auto !important; }
       body { background: #f6f8fb; }
       .navbar { box-shadow: 0 1px 8px rgba(16, 24, 40, 0.08); }
+      /* Crosshair cursor while the user is in a measurement / ROI
+         drawing mode. The class is toggled on the leaflet container by
+         a small JS handler watching input gis_measure_tool, so the
+         click target is unambiguous. */
+      .leaflet-container.dronebior-drawing-mode { cursor: crosshair !important; }
+      .dronebior-map-badge {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background: rgba(15, 23, 42, 0.9);
+        color: #facc15;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        pointer-events: none;
+        border: 1px solid rgba(250, 204, 21, 0.4);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      }
       /* Stops the leaflet container from showing a pale-grey 'void'
          outside the world bounds when the map tiles have noWrap = TRUE.
          The world stops cleanly at lng = +/-180 (no duplicate Australias)
@@ -5478,6 +5523,25 @@ server <- function(input, output, session) {
     leafletProxy("gis_map") |> clearGroup("Measurement")
   }, ignoreInit = TRUE)
 
+  # Toggle a crosshair cursor + on-map badge while the user is in any
+  # of the measurement / ROI-drawing tools, so it is OBVIOUS the map
+  # is in click-to-place mode. The badge is built inside the gis_map
+  # DOM element via a custom message handler; toggling the class on
+  # the same element flips the cursor instantly without re-rendering
+  # the map.
+  observe({
+    tool   <- input$gis_measure_tool %||% "Navigate"
+    drawing <- !identical(tool, "Navigate")
+    label   <- switch(tool,
+      "Measure distance"     = "Drawing mode - click to place distance points",
+      "Measure area"         = "Drawing mode - click polygon vertices, then 'Save ROI'",
+      "Measure volume (CHM)" = "Drawing mode - click polygon vertices, then compute CHM volume",
+      ""
+    )
+    session$sendCustomMessage("dronebior_gis_drawing_mode",
+                              list(active = drawing, label = label))
+  })
+
   observeEvent(input$clear_gis_measure, {
     gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
     leafletProxy("gis_map") |> clearGroup("Measurement")
@@ -5489,55 +5553,88 @@ server <- function(input, output, session) {
     if (nrow(pts) == 0) {
       return()
     }
+    # Pick the colour by tool so the user can tell distance / area /
+    # volume measurements apart at a glance.
+    accent <- if (identical(input$gis_measure_tool, "Measure volume (CHM)"))
+                "#f97316"                       # orange (volume)
+              else "#38bdf8"                    # sky blue (distance / area / ROI)
+    # Big, high-contrast markers - the previous radius=5 dark-on-dark
+    # circles were nearly invisible on Esri's deep-blue ocean and on
+    # dense canopy tiles, which is why the user reported "no vertices
+    # appear on the map when I draw an ROI." Yellow inner core + dark
+    # navy halo reads against any basemap.
+    pts$vertex <- seq_len(nrow(pts))
     proxy <- proxy |>
       addCircleMarkers(
         data = pts,
         lng = ~lng,
         lat = ~lat,
-        radius = 5,
+        radius = 8,
         color = "#0f172a",
-        weight = 1.5,
-        fillColor = "#38bdf8",
-        fillOpacity = 0.9,
+        weight = 2,
+        fillColor = "#facc15",
+        fillOpacity = 1,
+        opacity = 1,
+        label = ~as.character(vertex),
+        labelOptions = labelOptions(
+          permanent  = TRUE,
+          direction  = "right",
+          offset     = c(10, 0),
+          textOnly   = FALSE,
+          style      = list(
+            "background"  = "rgba(15, 23, 42, 0.85)",
+            "color"       = "#facc15",
+            "font-weight" = "700",
+            "padding"     = "2px 6px",
+            "border"      = "1px solid #facc15",
+            "border-radius" = "4px",
+            "box-shadow"  = "0 1px 3px rgba(0,0,0,0.4)"
+          )
+        ),
         group = "Measurement"
       )
-    if (identical(input$gis_measure_tool, "Measure distance") && nrow(pts) >= 2) {
-      proxy |>
+    # In-progress polyline: as soon as there are >= 2 vertices, draw the
+    # line segments connecting them. For "Measure area" / volume this
+    # shows the polygon forming BEFORE the third vertex closes it; for
+    # "Measure distance" this is the actual measurement line. Closing
+    # the polygon only happens at >= 3 vertices.
+    if (nrow(pts) >= 2) {
+      proxy <- proxy |>
         addPolylines(
           data = pts,
           lng = ~lng,
           lat = ~lat,
-          color = "#38bdf8",
+          color = accent,
           weight = 3,
           opacity = 0.95,
+          dashArray = if (identical(input$gis_measure_tool, "Measure distance")) NULL else "6,4",
           group = "Measurement"
         )
-    } else if (identical(input$gis_measure_tool, "Measure area") && nrow(pts) >= 3) {
+    }
+    if (identical(input$gis_measure_tool, "Measure area") && nrow(pts) >= 3) {
       closed <- rbind(pts, pts[1, , drop = FALSE])
-      proxy |>
+      proxy <- proxy |>
         addPolygons(
           data = closed,
           lng = ~lng,
           lat = ~lat,
-          color = "#38bdf8",
+          color = accent,
           weight = 3,
-          fillColor = "#38bdf8",
-          fillOpacity = 0.18,
+          fillColor = accent,
+          fillOpacity = 0.20,
           group = "Measurement"
         )
     } else if (identical(input$gis_measure_tool, "Measure volume (CHM)") && nrow(pts) >= 3) {
       closed <- rbind(pts, pts[1, , drop = FALSE])
-      proxy |>
+      proxy <- proxy |>
         addPolygons(
           data = closed,
           lng = ~lng,
           lat = ~lat,
-          # Distinct orange so users can tell volume polygons apart from
-          # plain area polygons on the same canvas.
-          color = "#f97316",
+          color = accent,
           weight = 3,
-          fillColor = "#f97316",
-          fillOpacity = 0.20,
+          fillColor = accent,
+          fillOpacity = 0.22,
           group = "Measurement"
         )
     }
