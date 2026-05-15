@@ -4778,6 +4778,16 @@ server <- function(input, output, session) {
         worldCopyJump = FALSE,
         minZoom = 2
       )) |>
+      # Explicit map panes pinning measurement / annotation / ROI
+      # layers ABOVE every raster overlay. Without this, leafem's
+      # addGeotiff and the orthomosaic raster image both render in
+      # leaflet's default overlayPane (zIndex 400), and on some
+      # browsers the layer stacking order placed CircleMarkers
+      # behind them - which is why the user saw nothing while
+      # drawing a ROI even with the markers technically rendered.
+      addMapPane("dbMeasurementPane", zIndex = 700) |>
+      addMapPane("dbAnnotationPane",  zIndex = 690) |>
+      addMapPane("dbRoiPane",         zIndex = 680) |>
       add_esri_imagery_tiles(group = "Satellite") |>
       addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
                        options = providerTileOptions(
@@ -5183,6 +5193,17 @@ server <- function(input, output, session) {
     pts <- gis_measure_points()
     pts <- rbind(pts, data.frame(lng = click$lng, lat = click$lat))
     gis_measure_points(pts)
+    # Brief confirmation toast so the user sees the click was registered
+    # even before the marker appears. Helps diagnose the "I clicked but
+    # nothing happened" case (which usually meant the marker rendered
+    # under another raster pane) and gives positive feedback when
+    # things ARE working.
+    showNotification(
+      paste0("Vertex ", nrow(pts), " placed at ",
+             formatC(click$lat, format = "f", digits = 4), ", ",
+             formatC(click$lng, format = "f", digits = 4)),
+      type = "default", duration = 2
+    )
   }, ignoreInit = TRUE)
 
   # Render annotations as their own leaflet group so they are independent
@@ -5591,6 +5612,7 @@ server <- function(input, output, session) {
             "box-shadow"  = "0 1px 3px rgba(0,0,0,0.4)"
           )
         ),
+        options = pathOptions(pane = "dbMeasurementPane"),
         group = "Measurement"
       )
     # In-progress polyline: as soon as there are >= 2 vertices, draw the
@@ -5608,6 +5630,7 @@ server <- function(input, output, session) {
           weight = 3,
           opacity = 0.95,
           dashArray = if (identical(input$gis_measure_tool, "Measure distance")) NULL else "6,4",
+          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     }
@@ -5622,6 +5645,7 @@ server <- function(input, output, session) {
           weight = 3,
           fillColor = accent,
           fillOpacity = 0.20,
+          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     } else if (identical(input$gis_measure_tool, "Measure volume (CHM)") && nrow(pts) >= 3) {
@@ -5635,6 +5659,7 @@ server <- function(input, output, session) {
           weight = 3,
           fillColor = accent,
           fillOpacity = 0.22,
+          options = pathOptions(pane = "dbMeasurementPane"),
           group = "Measurement"
         )
     }
