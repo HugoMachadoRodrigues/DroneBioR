@@ -1569,7 +1569,7 @@ ui <- page_navbar(
     class = "dronebio-navbar-content",
     tags$div(
       class = "dronebio-navbar-brand",
-      tags$img(src = "logo.png", height = "56px",
+      tags$img(src = "logo.png", height = "112px",
                alt = "DroneBioR logo"),
       tags$span(class = "dronebio-navbar-title",
                 "Drone Biomass Studio")
