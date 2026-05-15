@@ -2407,7 +2407,11 @@ ui <- page_navbar(
       .gis-task-banner {
         display: none;
         position: fixed;
-        top: 76px;
+        /* Sits BELOW the navbar + the logo overflow so it never
+           overlaps the Workflow Stepper. The navbar's green band
+           is ~44px; the logo (160px) overflows below by another
+           ~120px - we add a small breathing margin past that. */
+        top: 180px;
         left: 50%;
         transform: translateX(-50%);
         z-index: 10000;
@@ -2688,22 +2692,70 @@ ui <- page_navbar(
         padding-top: 0 !important;
         padding-bottom: 0 !important;
         min-height: 0 !important;
+        /* allow the oversized logo to spill out of the green band
+           below the navbar - the band height should be driven by
+           the title + stepper, NOT by the logo. */
+        overflow: visible !important;
       }
       .navbar > .container-fluid,
-      .navbar > .container { padding-top: 0 !important; padding-bottom: 0 !important; }
+      .navbar > .container {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        overflow: visible !important;
+      }
       .navbar-brand {
         width: 100% !important;
         margin: 0 !important;
-        /* Zero vertical padding: the green band hugs the logo
-           exactly, no extra green above or below it. Horizontal
-           padding stays at 8px so the logo and the stepper do not
-           touch the navbar edges. */
-        padding: 0 8px !important;
+        /* Zero vertical padding: the green band hugs the chips
+           and the title, with the oversized logo overlaying the
+           area below the navbar (see absolute positioning below). */
+        padding: 0 8px 0 180px !important;
         max-width: none !important;
         line-height: 1 !important;
+        position: relative;
+        overflow: visible !important;
       }
-      .dronebio-navbar-content { line-height: 1; }
-      .dronebio-navbar-brand img { display: block; }
+      .dronebio-navbar-content {
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        min-height: 44px;  /* the green band thickness */
+        position: relative;
+      }
+      /* The logo is taken OUT of the flex flow and absolutely
+         positioned so it can be bigger than the green band. It
+         spills below into the page content area, which is fine -
+         the area immediately below the navbar is the Project
+         Control Center's neutral background. */
+      .dronebio-navbar-brand {
+        position: absolute !important;
+        left: 8px;
+        top: 0;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        z-index: 10;
+      }
+      .dronebio-navbar-brand img {
+        display: block;
+        height: 160px;
+        /* re-position the logo so its vertical center matches the
+           green band's vertical center - that way the overflow
+           is split roughly evenly above and below the navbar
+           (anything that ends up above the navbar will sit on a
+           transparent strip; below sits over the page). */
+        margin-top: 0;
+        position: relative;
+        top: 8px;  /* tiny push down so the logo's bottom hangs
+                       cleanly below the green band */
+      }
+      .dronebio-navbar-title {
+        white-space: nowrap;
+        color: #ffffff;
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
       .dronebio-navbar-content {
         display: flex;
         align-items: center;
