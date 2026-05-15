@@ -1,29 +1,23 @@
-#' Seed a clickable sample DroneBioR project from bundled fixtures
+#' Seed a fixture-backed DroneBioR project (internal test helper)
 #'
-#' Builds a working `dronebio_project` in `target_dir` and seeds it with the
-#' synthetic fixtures shipped under `inst/extdata/`. The seeded tree mirrors
-#' the layout an OpenDroneMap run would produce, so downstream functions
-#' (`read_multispectral_orthomosaic`, `build_chm_from_dsm_dtm`,
-#' `summarize_odm_products`, `run_dronebio_workflow`, the Shiny app) work
-#' against it with no extra configuration.
+#' Internal helper used only by the package's `testthat` suite and the
+#' `@examples` blocks of base functions like
+#' [compute_spectral_indices()]. Copies the tiny GeoTIFFs and CSV
+#' fixtures shipped under `inst/extdata/` into a writable project
+#' directory laid out like a real ODM run. This lets the test suite
+#' exercise the full pipeline (read mosaic -> reflectance -> indices
+#' -> CHM -> report) without depending on real flight data.
 #'
-#' Useful for clicking through the package and the Shiny app before you have
-#' real flight data of your own. The fixtures are intentionally tiny
-#' (32x32 pixel multispectral subset, ~17 KB total) and **must not be used
-#' for science**.
+#' Not exported: the package has no user-facing "demo project" path.
+#' To use the app, point [run_drone_biomass_studio()] at a real
+#' project directory.
 #'
-#' Files are copied with `overwrite = FALSE`, so re-running the function is
-#' safe: it tops up missing files but does not clobber edits you have made
-#' to the seeded folder.
-#'
-#' @param target_dir Target project directory. Defaults to a stable folder
-#'   under `tempdir()` so multiple Shiny launches reuse the same seed.
+#' @param target_dir Target project directory. Defaults to a stable
+#'   folder under `tempdir()` so repeated test runs reuse the same
+#'   seed.
 #' @return A `dronebio_project` pointing at `target_dir`.
-#' @examples
-#' project <- dronebio_sample_project(target_dir = tempfile("dronebior-sample-"))
-#' file.exists(project$odm_orthomosaic)
-#' summarize_odm_products(project)
-#' @export
+#' @keywords internal
+#' @noRd
 dronebio_sample_project <- function(target_dir = file.path(tempdir(), "DroneBioR-sample")) {
   project <- dronebio_project(project_dir = target_dir)
 

@@ -8,21 +8,18 @@ run_drone_biomass_studio(
   project_dir = getwd(),
   port = NULL,
   launch.browser = TRUE,
-  sample = FALSE,
   ...
 )
 }
 \arguments{
-\item{project_dir}{Default project directory. Ignored when \code{sample = TRUE}.}
+\item{project_dir}{Default project directory. Should point at the root
+of a DroneBioR project (i.e. the folder that contains \verb{outputs/odm_*}
+from a previous engine run, or the parent of a folder where you will
+place real flight images and run the engine from inside the app).}
 
 \item{port}{Optional local port.}
 
 \item{launch.browser}{Logical. Open a browser window.}
-
-\item{sample}{Logical. When \code{TRUE}, seed and open the bundled sample
-project via \code{\link[=dronebio_sample_project]{dronebio_sample_project()}} so the app is immediately
-clickable without real flight data. Useful for demos and first-time
-users.}
 
 \item{...}{Additional arguments passed to \code{shiny::runApp()}.}
 }
@@ -34,10 +31,6 @@ Start Drone Biomass Studio
 }
 \examples{
 \dontrun{
-# First-time / no data of your own:
-run_drone_biomass_studio(sample = TRUE)
-
-# Real project:
 run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
 }
 }
