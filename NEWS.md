@@ -1,10 +1,159 @@
 # DroneBioR (development version)
 
-Focused stabilization pass on top of 0.4.0 - the GIS Workspace and 3D
-Modeling tabs now stay snappy on cloud-synced (OneDrive / iCloud /
-Dropbox) project folders, render correctly when the point cloud and
-the orthomosaic live in different coordinate frames, and finally
-show ROI vertices while the user is drawing them on the map.
+UX redesign of Drone Biomass Studio plus the GIS Workspace / 3D
+Modeling stabilization pass. The Studio now feels like a guided
+workflow tool rather than a wall of inputs: a sticky Project
+Control Center summarises the project state across every tab, a
+horizontal Workflow Stepper tracks the user's progress through
+Process -> GIS -> Spectral -> 3D Modeling -> Field model ->
+Export -> Time Series, and each tab carries its own CAD-style
+toolbar, accordion sidebar and cross-tab CTA row.
+
+## New features
+
+* **Project Control Center.** Sticky top card visible from every
+  tab. Shows project name + path, image count, engine, product
+  status pills (Ortho / DSM / DTM / CHM / Point cloud), the
+  last-update timestamp and a "Next action" link that jumps to the
+  right tab. Driven by a new `project_snapshot()` reactive.
+
+* **Workflow Stepper.** Seven horizontal chips above each panel:
+  Process -> GIS -> Spectral -> 3D Modeling -> Field model ->
+  Export -> Time Series. The active step is highlighted (matches
+  `input$main_nav`); completed steps get a green checkmark via a
+  new `workflow_completion()` reactive that checks
+  `quick_outputs_check()` + side-effect outputs (biomass model
+  summary, exports, flight registry, etc.). Click a step to jump
+  to that tab via `updateNavbarPage()`.
+
+* **Run-history manifest.** New internal helpers
+  `dronebio_runs_path()`, `record_dronebio_run()` and
+  `read_dronebio_runs()` in `R/products.R`. Every project gets a
+  `dronebio_runs.csv` with a canonical schema (`timestamp`,
+  `engine`, `preset`, `resolution_cm`, `image_count`, `bands`,
+  `crs`, `orthomosaic`, `dsm`, `dtm`, `chm`, `point_cloud`,
+  `textured_mesh`, `runtime_seconds`, `notes`) plus a JSON
+  `extras` column for non-standard fields. Appended on every
+  `run_dronebio_workflow()` call and on every Processing Engine
+  launch. Surfaced in the Exports panel as a 20-row "Run
+  manifest" table.
+
+* **GIS Workspace -- accordion sidebar.** Five panels: Project
+  paths / Map layers (open by default) plus Display options /
+  Annotations / ROI comparison (collapsed). Replaces the
+  forty-control linear sidebar.
+
+* **GIS Workspace -- map toolbar.** CAD-style button strip above
+  the leaflet canvas. Tool group: Navigate / Distance / Area-ROI /
+  Volume-CHM / Annotation; Action group: Save ROI / Clear / Center
+  map. Live status text on the right ("Measure area - 3 vertices
+  placed", "Annotation mode - click to pin"). Active tool gets a
+  green `.active` CSS class via a new `dronebior_gis_toolbar_active`
+  custom message handler. Toolbar Save / Clear buttons re-fire
+  existing sidebar handlers via a new `dronebior_click_button`
+  handler so the server logic is not duplicated.
+
+* **GIS Workspace -- Layer Manager card.** One row per active
+  overlay with type (Raster product / Biomass proxy / Spectral
+  index), band requirements and a Ready / Missing pill. Empty
+  state when nothing is selected ("Tick layers in the sidebar's
+  'Map layers' panel and click Load").
+
+* **GIS Workspace -- cross-tab CTA row.** "Open in 3D Modeling
+  -->", "Run Spectral QA -->", "Open Field Models -->", "Add to
+  Time Series -->" buttons below the map. Each fires
+  `updateNavbarPage("main_nav", ...)`.
+
+* **3D Modeling -- accordion sidebar.** Seven panels: Scene source
+  / GIS Workspace ROI (open) plus Display options / Classification
+  / Tree detection / Volume & profile / Selection actions
+  (collapsed). The "3D interaction tool" select moved to a hidden
+  input; the new "Tool" group at the start of the modeling-toolbar
+  drives it with CAD-style buttons (Inspect / Box / Lasso /
+  Polygon / Measure / Crown). Reuses the GIS toolbar's
+  active-state JS handler.
+
+* **3D Modeling -- cross-tab CTA row.** "Back to GIS Workspace",
+  "Run Spectral QA", "Open Field Models", "Open Exports" buttons
+  below the metric tabs.
+
+* **Spectral Analytics -- pipeline stepper.** Mini horizontal
+  stepper just above the spectral workspace cards
+  (`output$spectral_pipeline_stepper`): Mosaic -> Reflectance ->
+  Indices -> App map -> Export. Each step ticks green when the
+  corresponding reactive resolves; the next-to-be-done step is
+  highlighted active. Shares the same CSS as the top-level
+  workflow stepper.
+
+* **Spectral Analytics -- accordion sidebar.** Six panels
+  mirroring the calibration pipeline: Radiometric scale / Panel
+  ROI calibration / Preprocessing / Index preview (open by
+  default) / Custom index / Application map thresholds. Load
+  mosaic and Export promoted to a compact button row at the top.
+
+* **Spectral Analytics -- cross-tab CTA row.** "GIS Workspace",
+  "Open in 3D Modeling", "Fit field model", "Export center"
+  buttons at the bottom.
+
+* **Field Models -- CSV mapping wizard.** Upload any CSV; the
+  sidebar wizard shows column-role dropdowns auto-populated from
+  detected column names (sample_id / biomass / x-longitude /
+  y-latitude), plus a biomass units picker (kg/ha, Mg/ha, g/m^2)
+  and a target CRS EPSG. The CSV preview and detected-column
+  diagnostics show in the main area. The extract step renames
+  the chosen columns into the canonical schema before calling
+  `read_field_data()` so the existing pipeline keeps working.
+
+* **Exports -- Export Center.** "Deliverables" checkboxGroup with
+  eight export targets (reflectance / indices / biomass proxies /
+  index CSV / refl CSV / application map / tree-ROI CSV / HTML
+  report). "Destination + format" card with output folder, raster
+  format (COG / GTiff deflate / GTiff LZW), target resolution and
+  a checkbox to record the export in the runs manifest. Sidebar
+  buttons for "Open output folder" and "Open run manifest"
+  (system2 'open'). Runs-manifest card surfaces the
+  dronebio_runs.csv contents (most-recent 20 rows).
+
+* **Time Series -- Flight Manager.** "Add current project as
+  flight" big primary button validates via
+  `quick_outputs_check()` and calls `register_flight()` with
+  today's date + the active project_dir. Custom flight entry
+  fields collapse into an accordion. New
+  `output$ts_flight_manager` renders one row per registered
+  flight with a per-row Remove button (edits the registry CSV in
+  place; underlying project directory is untouched).
+
+## Performance and robustness (continued from prior unreleased work)
+
+* Cache-aware path resolution in the 3D Modeling tab.
+* PLY preview ~30-100x faster (single rawConnection).
+* Selection updates via custom message - no more renderUI rebuild
+  on every click.
+* `outputOptions(point_cloud_viewer, suspendWhenHidden = FALSE)`.
+* Decimal display rounded to 2 places everywhere.
+
+## Bug fixes (continued from prior unreleased work)
+
+* ROI vertices now show while drawing on the GIS Workspace map.
+* 3D Modeling alignment when the point cloud and orthomosaic
+  live in different coordinate frames (AABB-overlap + DSM-drape
+  Z-range checks + basemap snap fallback).
+* GIS Workspace map no longer renders multiple worlds (noWrap +
+  tile bounds + deep-ocean CSS background).
+* GIS ROI to 3D selection bridge uses the orthomosaic's CRS.
+* Frame-mismatch warning latched per scene.
+
+## New indices and biomass proxies
+
+* `compute_spectral_indices()` now produces 22 layers from full
+  multispectral inputs and 6 from RGB-only inputs (was 9 and 1).
+* `compute_biomass_proxies()` returns a stack of greenness x CHM
+  biomass surrogates (Biomass_NDVI_x_CHM, ..., Biomass_RGBVI_x_CHM)
+  plus the legacy spectral proxy. Wired into the GIS gis_stack
+  reactive: appended automatically when the project has a CHM.
+* `product_metadata` now carries formula / bands / range / unit /
+  reference / interpretation for every layer; the "?" modal next
+  to each overlay renders all fields.
 
 ## New features
 
