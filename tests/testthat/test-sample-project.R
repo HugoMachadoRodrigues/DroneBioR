@@ -37,5 +37,5 @@ test_that("The seeded sample project is consumable by the scientific pipeline", 
     project    = project,
     output_dir = tempfile("dronebior-sample-out-")
   )
-  expect_equal(terra::nlyr(result$indices), 9)
+  expect_equal(terra::nlyr(result$indices), 22)
 })

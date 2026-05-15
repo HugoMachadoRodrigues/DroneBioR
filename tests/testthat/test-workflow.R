@@ -12,7 +12,7 @@ test_that("run_dronebio_workflow runs end-to-end against the bundled fixtures", 
                 "biomass_proxy", "alpha", "reflectance_summary",
                 "index_summary", "output_paths")
   expect_true(all(expected %in% names(result)))
-  expect_equal(terra::nlyr(result$indices), 9)
+  expect_equal(terra::nlyr(result$indices), 22)
   expect_equal(terra::nlyr(result$reflectance), 5)
   expect_true(file.exists(result$output_paths[["indices"]]))
   expect_true(file.exists(result$output_paths[["reflectance"]]))

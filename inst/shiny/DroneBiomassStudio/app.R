@@ -228,10 +228,17 @@ digest_raster <- function(x) {
 #       No canonical bounded range; can exceed [-1, 1] in real imagery,
 #       so we use the data range to avoid clipping the actual signal.
 index_semantic_domain <- function(layer_name) {
-  diverging_idx <- c("NDVI", "NDRE", "NDWI", "GNDVI", "VARI", "Biomass_Index_Proxy")
-  bands         <- c("Red", "Green", "Blue", "NIR", "RedEdge", "MSAVI2")
+  # Indices that live on a symmetric [-1, 1] domain: yellow at 0 marks
+  # the biophysical transition (no chlorophyll / water vs vegetation).
+  diverging_idx <- c(
+    "NDVI", "NDRE", "NDWI", "GNDVI", "VARI", "OSAVI", "SAVI", "WDRVI",
+    "GLI", "MGRVI", "RGBVI",
+    "Biomass_Index_Proxy", "Biomass_Spectral"
+  )
+  # MSAVI2 is non-negative by construction and bands are [0,1] reflectance.
+  unit_zero_one <- c("Red", "Green", "Blue", "NIR", "RedEdge", "MSAVI2")
   if (layer_name %in% diverging_idx) return(c(-1, 1))
-  if (layer_name %in% bands)         return(c(0, 1))
+  if (layer_name %in% unit_zero_one) return(c(0, 1))
   NULL
 }
 
@@ -424,8 +431,8 @@ overlay_legend_html <- function(items) {
       "<div class='db-legend-row'>",
       "<div class='db-legend-title'>", item$name, title_suffix, "</div>",
       "<div class='db-legend-bar' style='background: linear-gradient(to right,", gradient, ");'></div>",
-      "<div class='db-legend-scale'><span>", format(round(item$min, 3), nsmall = 2),
-      suffix, "</span><span>", format(round(item$max, 3), nsmall = 2),
+      "<div class='db-legend-scale'><span>", format(round(item$min, 2), nsmall = 2),
+      suffix, "</span><span>", format(round(item$max, 2), nsmall = 2),
       suffix, "</span></div>",
       "</div>"
     )
@@ -492,103 +499,378 @@ product_metadata <- list(
   `RGB Orthomosaic` = list(
     label   = "RGB Orthomosaic",
     formula = "Natural-color composite of the Red, Green, Blue reflectance bands.",
-    unit    = "Visual",
+    unit    = "Visual composite (8-bit per channel)",
+    range   = "0-255 per channel",
+    bands   = "Red, Green, Blue",
+    reference = "Standard ODM odm_orthophoto output.",
     use     = "True-colour view of the survey area as the camera saw it. The bread-and-butter deliverable for stakeholder maps."
   ),
   DSM = list(
     label   = "DSM",
     formula = "Digital Surface Model produced by ODM (odm_dem/dsm.tif).",
     unit    = "Metres above the projected vertical datum",
+    range   = "Survey-dependent (typical 0 to a few hundred m)",
+    bands   = "None - structure-from-motion product",
+    reference = "ODM odm_dem step (SMRF non-ground + ground classification).",
     use     = "Top-of-canopy / structure surface. Use together with the DTM to compute canopy height (CHM)."
   ),
   DTM = list(
     label   = "DTM",
     formula = "Digital Terrain Model from ODM ground classification (odm_dem/dtm.tif).",
     unit    = "Metres above the projected vertical datum",
+    range   = "Survey-dependent (typical 0 to a few hundred m)",
+    bands   = "None - structure-from-motion product",
+    reference = "ODM odm_dem step. Refine with the CSF filter (Zhang et al. 2016) when dense canopies bias the ground classification.",
     use     = "Bare-earth surface. Subtract from the DSM to get canopy height."
   ),
   CHM = list(
     label   = "CHM",
-    formula = "Canopy Height Model = DSM - DTM, clamped to >= 0.",
+    formula = "CHM = DSM - DTM, then max(CHM, 0)",
     unit    = "Metres above local ground",
+    range   = "0 to canopy height (typically 0-40 m)",
+    bands   = "None - derived from DSM, DTM",
+    reference = "Standard photogrammetric canopy-height workflow (Lim et al. 2003).",
     use     = "Vegetation height above the bare-earth surface. Click 'Build CHM' in the Project status card if this layer is missing."
   ),
   NDVI = list(
     label = "NDVI",
     formula = "(NIR - Red) / (NIR + Red)",
-    unit = "Unitless index, normally -1 to 1",
-    use = "General vegetation vigor and canopy greenness."
+    unit = "Unitless ratio",
+    range = "[-1, 1]; healthy vegetation typically 0.3-0.9",
+    bands = "Red, NIR",
+    reference = "Rouse et al. 1974, ERTS-1 symposium.",
+    use = "General vegetation vigor and canopy greenness. Saturates over dense canopies."
   ),
   NDRE = list(
     label = "NDRE",
     formula = "(NIR - RedEdge) / (NIR + RedEdge)",
-    unit = "Unitless index, normally -1 to 1",
-    use = "Useful for chlorophyll and denser vegetation where NDVI may saturate."
+    unit = "Unitless ratio",
+    range = "[-1, 1]; healthy dense canopy typically 0.2-0.6",
+    bands = "RedEdge, NIR",
+    reference = "Gitelson & Merzlyak 1994.",
+    use = "Chlorophyll sensitive; better than NDVI for dense / mature canopies where NDVI saturates."
   ),
   EVI = list(
     label = "EVI",
-    formula = "2.5 * (NIR - Red) / (NIR + 6 * Red - 7.5 * Blue + 1)",
-    unit = "Unitless index; values can exceed -1 to 1 in real imagery",
-    use = "Vegetation vigor with atmospheric/background adjustment terms."
+    formula = "2.5 * (NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)",
+    unit = "Unitless index",
+    range = "Typically -1 to 2 in real imagery",
+    bands = "Blue, Red, NIR",
+    reference = "Huete et al. 2002, RSE 83.",
+    use = "Vegetation vigor with atmospheric (Blue) and soil-background corrections; reduces NDVI saturation."
   ),
   SAVI = list(
     label = "SAVI",
     formula = "1.5 * (NIR - Red) / (NIR + Red + 0.5)",
-    unit = "Unitless index, usually near -1 to 1",
-    use = "Vegetation index with soil background adjustment."
+    unit = "Unitless index",
+    range = "[-1, 1]",
+    bands = "Red, NIR",
+    reference = "Huete 1988, RSE 25.",
+    use = "Vegetation index with a soil-line correction (L=0.5). Use when canopy cover is partial."
+  ),
+  OSAVI = list(
+    label = "OSAVI",
+    formula = "(NIR - Red) / (NIR + Red + 0.16)",
+    unit = "Unitless index",
+    range = "[-1, 1]",
+    bands = "Red, NIR",
+    reference = "Rondeaux, Steven & Baret 1996, RSE 55.",
+    use = "Optimised SAVI with L=0.16; favoured for agricultural and grassland canopies because it tracks LAI more linearly than SAVI."
+  ),
+  MSAVI2 = list(
+    label = "MSAVI2",
+    formula = "(2*NIR + 1 - sqrt((2*NIR + 1)^2 - 8*(NIR - Red))) / 2",
+    unit = "Unitless index",
+    range = "[-1, 1] (non-negative by construction in vegetation)",
+    bands = "Red, NIR",
+    reference = "Qi et al. 1994, RSE 48.",
+    use = "Self-adjusting soil-line variant of SAVI - no L parameter; preferred for low-cover / arid scenes."
   ),
   NDWI = list(
     label = "NDWI",
     formula = "(Green - NIR) / (Green + NIR)",
-    unit = "Unitless index, normally -1 to 1",
-    use = "Water/moisture contrast using green and NIR reflectance."
+    unit = "Unitless ratio",
+    range = "[-1, 1]; open water > 0",
+    bands = "Green, NIR",
+    reference = "McFeeters 1996, IJRS 17.",
+    use = "Highlights surface water / canopy moisture. Useful as a water mask."
+  ),
+  GNDVI = list(
+    label = "GNDVI",
+    formula = "(NIR - Green) / (NIR + Green)",
+    unit = "Unitless ratio",
+    range = "[-1, 1]",
+    bands = "Green, NIR",
+    reference = "Gitelson, Kaufman & Merzlyak 1996, RSE 58.",
+    use = "Chlorophyll-sensitive analogue of NDVI; more responsive at mid-LAI canopy cover."
+  ),
+  CIrededge = list(
+    label = "CI rededge",
+    formula = "NIR / RedEdge - 1",
+    unit = "Unitless ratio",
+    range = "Typically 0-5",
+    bands = "RedEdge, NIR",
+    reference = "Gitelson, Vina, Ciganda et al. 2003, GRL 30.",
+    use = "Red-edge Chlorophyll Index; strongly correlated with leaf chlorophyll content."
+  ),
+  GCI = list(
+    label = "GCI",
+    formula = "NIR / Green - 1",
+    unit = "Unitless ratio",
+    range = "Typically 0-10",
+    bands = "Green, NIR",
+    reference = "Gitelson, Gritz & Merzlyak 2003, J Plant Physiol 160.",
+    use = "Green Chlorophyll Index; alternative to CIrededge when only Green + NIR are available."
+  ),
+  RVI = list(
+    label = "RVI",
+    formula = "NIR / Red",
+    unit = "Unitless ratio",
+    range = "Typically 1-30",
+    bands = "Red, NIR",
+    reference = "Jordan 1969, Ecology 50.",
+    use = "Simple Ratio (also called SR). Maximum-sensitivity vegetation index for dense canopies."
+  ),
+  DVI = list(
+    label = "DVI",
+    formula = "NIR - Red",
+    unit = "Reflectance difference",
+    range = "Typically 0-0.7 reflectance units",
+    bands = "Red, NIR",
+    reference = "Tucker 1979, RSE 8.",
+    use = "Difference Vegetation Index; simple but sensitive to brightness."
+  ),
+  WDRVI = list(
+    label = "WDRVI",
+    formula = "(0.2*NIR - Red) / (0.2*NIR + Red)",
+    unit = "Unitless ratio",
+    range = "[-1, 1]",
+    bands = "Red, NIR",
+    reference = "Gitelson 2004, J Plant Physiol 161.",
+    use = "Wide Dynamic Range Vegetation Index; extends NDVI's linear response into dense canopy (a=0.2)."
+  ),
+  TVI = list(
+    label = "TVI",
+    formula = "0.5 * (120*(NIR - Green) - 200*(Red - Green))",
+    unit = "Triangular area (unitless)",
+    range = "Survey-dependent, typically -30 to +50",
+    bands = "Green, Red, NIR",
+    reference = "Broge & Leblanc 2001, RSE 76.",
+    use = "Triangular Vegetation Index; tracks leaf chlorophyll and green LAI."
+  ),
+  MCARI = list(
+    label = "MCARI",
+    formula = "((RedEdge - Red) - 0.2*(RedEdge - Green)) * (RedEdge / Red)",
+    unit = "Unitless index",
+    range = "Typically -0.5 to 1",
+    bands = "Green, Red, RedEdge",
+    reference = "Daughtry, Walthall, Kim et al. 2000, RSE 74.",
+    use = "Modified Chlorophyll Absorption Ratio Index; minimises soil and non-photosynthetic vegetation background."
+  ),
+  PSRI = list(
+    label = "PSRI",
+    formula = "(Red - Green) / RedEdge",
+    unit = "Unitless ratio",
+    range = "Typically -0.3 to 0.3",
+    bands = "Green, Red, RedEdge",
+    reference = "Merzlyak, Gitelson, Chivkunova et al. 1999, Physiol Plantarum 106.",
+    use = "Plant Senescence Reflectance Index; detects senescent / stressed canopies (PSRI rises as chlorophyll drops)."
   ),
   VARI = list(
     label = "VARI",
     formula = "(Green - Red) / (Green + Red - Blue)",
-    unit = "Unitless index, usually centred around 0",
-    use = "RGB-only vegetation index, useful when no NIR/RedEdge bands are available (Sony / DJI / Phantom orthos)."
+    unit = "Unitless ratio",
+    range = "Usually [-1, 1], centred around 0",
+    bands = "Blue, Green, Red",
+    reference = "Gitelson, Kaufman, Stark & Rundquist 2002, RSE 80.",
+    use = "RGB-only vegetation index; the standard option for Sony / DJI / Phantom orthos without NIR."
+  ),
+  ExG = list(
+    label = "ExG",
+    formula = "2*Green - Red - Blue",
+    unit = "Reflectance combination",
+    range = "Approximately -1 to 2",
+    bands = "Blue, Green, Red",
+    reference = "Woebbecke, Meyer, Von Bargen & Mortensen 1995, Trans ASAE 38.",
+    use = "Excess Green Index; RGB-only greenness used in precision agriculture and turf monitoring."
+  ),
+  GLI = list(
+    label = "GLI",
+    formula = "(2*Green - Red - Blue) / (2*Green + Red + Blue)",
+    unit = "Unitless ratio",
+    range = "[-1, 1]",
+    bands = "Blue, Green, Red",
+    reference = "Louhaichi, Borman & Johnson 2001, Geocarto Int 16.",
+    use = "Green Leaf Index; normalised ExG, robust to overall illumination differences."
+  ),
+  TGI = list(
+    label = "TGI",
+    formula = "-0.5 * (190*(Red - Green) - 120*(Red - Blue))",
+    unit = "Triangular area (unitless)",
+    range = "Typically -50 to +50",
+    bands = "Blue, Green, Red",
+    reference = "Hunt, Doraiswamy, McMurtrey et al. 2013, Int J Appl Earth Obs 21.",
+    use = "Triangular Greenness Index; sensitive to leaf chlorophyll on RGB-only sensors."
+  ),
+  MGRVI = list(
+    label = "MGRVI",
+    formula = "(Green^2 - Red^2) / (Green^2 + Red^2)",
+    unit = "Unitless ratio",
+    range = "[-1, 1]",
+    bands = "Green, Red",
+    reference = "Bendig, Yu, Aasen et al. 2015, Int J Appl Earth Obs 39.",
+    use = "Modified Green-Red Vegetation Index; widely validated for RGB-UAV biomass estimation in cereal crops."
+  ),
+  RGBVI = list(
+    label = "RGBVI",
+    formula = "(Green^2 - Red*Blue) / (Green^2 + Red*Blue)",
+    unit = "Unitless ratio",
+    range = "[-1, 1]",
+    bands = "Blue, Green, Red",
+    reference = "Bendig, Yu, Aasen et al. 2015, Int J Appl Earth Obs 39.",
+    use = "RGB Vegetation Index; companion to MGRVI for RGB-UAV biomass estimation."
   ),
   Biomass_Index_Proxy = list(
-    label = "Biomass proxy",
-    formula = "mean(NDVI, SAVI, NDRE), clipped to -1 to 1",
+    label = "Biomass spectral proxy",
+    formula = "mean(NDVI, SAVI, NDRE), clamped to [-1, 1]",
     unit = "Unitless exploratory proxy",
-    use = "Image-only exploratory biomass surface. It is not kg/ha without field calibration."
+    range = "[-1, 1]",
+    bands = "Red, RedEdge, NIR",
+    reference = "Composite indicator (DroneBioR convention).",
+    use = "Image-only exploratory biomass surface. Combines greenness signals from three indices. Not biomass in kg/ha without field calibration."
+  ),
+  Biomass_Spectral = list(
+    label = "Biomass spectral",
+    formula = "mean(NDVI, SAVI, NDRE) clamped to [-1, 1]; falls back to VARI on RGB-only orthos.",
+    unit = "Unitless exploratory proxy",
+    range = "[-1, 1]",
+    bands = "Adaptive: Red+RedEdge+NIR if available, else Blue+Green+Red.",
+    reference = "Composite spectral biomass (DroneBioR convention).",
+    use = "Pure-spectral biomass surrogate. Use when no CHM is available."
+  ),
+  Biomass_NDVI_x_CHM = list(
+    label = "Biomass = NDVI x CHM",
+    formula = "NDVI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness (unitless metres)",
+    range = "0 to canopy-height * 1",
+    bands = "Red, NIR, DSM, DTM",
+    reference = "Greenness x height biomass surrogate; e.g. Lussem, Bolten, Gnyp et al. 2019, Eur J Remote Sens 52.",
+    use = "Volume-weighted biomass surrogate. Tracks above-ground biomass for herbaceous / shrub canopies. Calibrate against field plots before reporting kg/ha."
+  ),
+  Biomass_NDRE_x_CHM = list(
+    label = "Biomass = NDRE x CHM",
+    formula = "NDRE * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "RedEdge, NIR, DSM, DTM",
+    reference = "Red-edge variant of the greenness x height biomass surrogate; preferred for dense canopies where NDVI saturates."
+  ),
+  Biomass_SAVI_x_CHM = list(
+    label = "Biomass = SAVI x CHM",
+    formula = "SAVI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "Red, NIR, DSM, DTM",
+    reference = "Soil-corrected greenness x height surrogate; useful in mixed soil + canopy plots.",
+    use = "Volume-weighted biomass surrogate. Soil-adjusted, good for partial canopy cover."
+  ),
+  Biomass_GNDVI_x_CHM = list(
+    label = "Biomass = GNDVI x CHM",
+    formula = "GNDVI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "Green, NIR, DSM, DTM",
+    reference = "Green-NIR greenness x height surrogate.",
+    use = "Volume-weighted biomass surrogate using Green/NIR. Useful when red reflectance is unreliable."
+  ),
+  Biomass_VARI_x_CHM = list(
+    label = "Biomass = VARI x CHM (RGB)",
+    formula = "VARI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "Blue, Green, Red, DSM, DTM",
+    reference = "RGB-only biomass surrogate, drone analogue of Bendig et al. 2015.",
+    use = "Volume-weighted biomass surrogate for RGB-only drones. The recommended biomass layer for Sony / Phantom / DJI surveys."
+  ),
+  Biomass_EXG_x_CHM = list(
+    label = "Biomass = ExG x CHM (RGB)",
+    formula = "ExG * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * (max ExG)",
+    bands = "Blue, Green, Red, DSM, DTM",
+    reference = "ExG x height surrogate; common in precision-agriculture UAS pipelines.",
+    use = "RGB-only volume biomass surrogate, weighted by excess-green response."
+  ),
+  Biomass_MGRVI_x_CHM = list(
+    label = "Biomass = MGRVI x CHM (RGB)",
+    formula = "MGRVI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "Green, Red, DSM, DTM",
+    reference = "Bendig, Yu, Aasen et al. 2015 (validated for cereal biomass on RGB UAS).",
+    use = "Best-validated RGB-only biomass surrogate for cereals and grasses."
+  ),
+  Biomass_RGBVI_x_CHM = list(
+    label = "Biomass = RGBVI x CHM (RGB)",
+    formula = "RGBVI * CHM (CHM clipped to >= 0)",
+    unit = "Metres x greenness",
+    range = "0 to canopy-height * 1",
+    bands = "Blue, Green, Red, DSM, DTM",
+    reference = "Bendig, Yu, Aasen et al. 2015 (companion to MGRVI).",
+    use = "RGB-only volume biomass surrogate combining all three visible bands."
   ),
   NIR = list(
     label = "NIR",
-    formula = "ODM MicaSense NIR band after alpha masking and reflectance scaling",
-    unit = "Reflectance, displayed as 0 to 1",
-    use = "Near-infrared canopy response, important for vegetation indices."
+    formula = "ODM MicaSense NIR band after alpha masking and reflectance scaling.",
+    unit = "Reflectance",
+    range = "[0, 1] (clamped)",
+    bands = "NIR",
+    reference = "Source band - drives most chlorophyll-sensitive indices.",
+    use = "Near-infrared canopy response. The single most important band for vegetation indices."
   ),
   RedEdge = list(
     label = "RedEdge",
-    formula = "ODM MicaSense RedEdge band after alpha masking and reflectance scaling",
-    unit = "Reflectance, displayed as 0 to 1",
+    formula = "ODM MicaSense RedEdge band after alpha masking and reflectance scaling.",
+    unit = "Reflectance",
+    range = "[0, 1] (clamped)",
+    bands = "RedEdge",
+    reference = "Source band.",
     use = "Red-edge reflectance, useful for chlorophyll and dense canopies."
   ),
   Red = list(
     label = "Red",
-    formula = "ODM MicaSense Red band after alpha masking and reflectance scaling",
-    unit = "Reflectance, displayed as 0 to 1",
+    formula = "Red reflectance band after alpha masking and reflectance scaling.",
+    unit = "Reflectance",
+    range = "[0, 1] (clamped)",
+    bands = "Red",
+    reference = "Source band.",
     use = "Visible red reflectance used in NDVI, EVI and SAVI."
   ),
   Green = list(
     label = "Green",
-    formula = "ODM MicaSense Green band after alpha masking and reflectance scaling",
-    unit = "Reflectance, displayed as 0 to 1",
+    formula = "Green reflectance band after alpha masking and reflectance scaling.",
+    unit = "Reflectance",
+    range = "[0, 1] (clamped)",
+    bands = "Green",
+    reference = "Source band.",
     use = "Visible green reflectance used in NDWI and RGB visualization."
   ),
   Blue = list(
     label = "Blue",
-    formula = "ODM MicaSense Blue band after alpha masking and reflectance scaling",
-    unit = "Reflectance, displayed as 0 to 1",
+    formula = "Blue reflectance band after alpha masking and reflectance scaling.",
+    unit = "Reflectance",
+    range = "[0, 1] (clamped)",
+    bands = "Blue",
+    reference = "Source band.",
     use = "Visible blue reflectance used in EVI and RGB visualization."
   ),
   Hillshade = list(
     label = "Hillshade",
     formula = "terra::shade(slope, aspect, angle = 45, direction = 315) on the DSM",
-    unit = "Grayscale shading, 0 (dark) to 1 (bright)",
+    unit = "Grayscale shading",
+    range = "[0, 1]",
+    bands = "None - derived from DSM",
+    reference = "Standard analytical hillshading.",
     use = "Adds relief shading under colored overlays so terrain structure is readable."
   )
 )
@@ -601,7 +883,7 @@ help_input_id <- function(layer_name) {
   paste0("help_", gsub("[^A-Za-z0-9]", "_", layer_name))
 }
 
-format_summary_table <- function(x, unit, digits = 3) {
+format_summary_table <- function(x, unit, digits = 2) {
   out <- x
   numeric_cols <- vapply(out, is.numeric, logical(1))
   out[numeric_cols] <- lapply(out[numeric_cols], function(v) formatC(v, format = "f", digits = digits))
@@ -646,12 +928,26 @@ fixed_index_limits <- list(
   NDRE = c(-1, 1),
   EVI = c(-1, 2),
   SAVI = c(-1, 1),
+  OSAVI = c(-1, 1),
   NDWI = c(-1, 1),
   GNDVI = c(-1, 1),
   CIrededge = c(-1, 5),
+  GCI       = c(-1, 10),
+  RVI       = c(0, 30),
+  DVI       = c(-0.2, 0.7),
+  WDRVI     = c(-1, 1),
+  TVI       = c(-50, 50),
+  MCARI     = c(-0.5, 1),
+  PSRI      = c(-0.3, 0.3),
   MSAVI2 = c(-1, 1),
   VARI = c(-1, 1),
-  Biomass_Index_Proxy = c(-1, 1)
+  ExG    = c(-1, 2),
+  GLI    = c(-1, 1),
+  TGI    = c(-50, 50),
+  MGRVI  = c(-1, 1),
+  RGBVI  = c(-1, 1),
+  Biomass_Index_Proxy = c(-1, 1),
+  Biomass_Spectral     = c(-1, 1)
 )
 
 infer_radiometric_scale <- function(x) {
@@ -1453,6 +1749,20 @@ ui <- page_navbar(
           canvas.dispatchEvent(new KeyboardEvent('keydown',
             { key: 'Escape', bubbles: true }));
         }
+      });
+
+      // Push the current selection IDs into the live three.js scene
+      // without tearing down the points object. Reaches into the viewer's
+      // setSelection (added in the viewer script) which rebuilds only the
+      // small selection-highlight BufferGeometry from the existing point
+      // records. This is what makes clicking points feel instant on the
+      // 3D Modeling tab - the previous code re-encoded the full point
+      // cloud as JSON and rebuilt the entire scene on every click.
+      Shiny.addCustomMessageHandler('dronebior_3d_set_selection', function(msg) {
+        var v = window.__dronebior_viewer;
+        if (!v || !v.setSelection) return;
+        var ids = (msg && Array.isArray(msg.ids)) ? msg.ids : [];
+        v.setSelection(ids);
       });
 
       // Global keyboard shortcuts for the 3D viewer. These fire even
@@ -2929,12 +3239,40 @@ server <- function(input, output, session) {
     p
   })
 
+  # Cache-aware product paths. For every entry in odm_product_paths(),
+  # returns the same path UNLESS a same-named file already lives in the
+  # local cache (~/.dronebior/cache/<slug>/), in which case we point
+  # readers at the cached copy. This is what stops the 3D Modeling tab
+  # from re-pulling the DSM / point cloud from OneDrive Files-On-Demand
+  # on every reactive invocation - the cache copy is local SSD and
+  # never triggers a sync. The user must have run "Copy outputs to
+  # local cache" once for any of this to matter; otherwise it
+  # transparently returns the canonical paths.
+  cached_products <- reactive({
+    p <- project()
+    paths <- odm_product_paths(p)
+    for (k in names(paths)) {
+      paths[[k]] <- DroneBioR:::cache_aware_path(unname(paths[[k]]), p)
+    }
+    paths
+  })
+
   overlay_choices <- c(
     # Headline composite + the four canonical raster products
     "RGB Orthomosaic", "DSM", "DTM", "CHM",
-    # Spectral indices
-    "NDVI", "NDRE", "EVI", "SAVI", "NDWI", "VARI",
+    # Multispectral vegetation indices (need NIR; some also need RedEdge)
+    "NDVI", "NDRE", "EVI", "SAVI", "OSAVI", "MSAVI2", "NDWI",
+    "GNDVI", "CIrededge", "GCI", "RVI", "DVI", "WDRVI", "TVI",
+    "MCARI", "PSRI",
+    # RGB-only vegetation indices (work on any colour drone)
+    "VARI", "ExG", "GLI", "TGI", "MGRVI", "RGBVI",
+    # Biomass proxies. The spectral one (Biomass_Index_Proxy) is the
+    # legacy pure-spectral surface; the *_x_CHM family combines greenness
+    # with the canopy-height model for a volume-weighted biomass surrogate.
     "Biomass_Index_Proxy",
+    "Biomass_NDVI_x_CHM", "Biomass_NDRE_x_CHM", "Biomass_SAVI_x_CHM",
+    "Biomass_GNDVI_x_CHM", "Biomass_VARI_x_CHM", "Biomass_EXG_x_CHM",
+    "Biomass_MGRVI_x_CHM", "Biomass_RGBVI_x_CHM",
     # Individual reflectance bands
     "NIR", "RedEdge", "Red", "Green", "Blue",
     # Relief shading from the DSM
@@ -2945,6 +3283,10 @@ server <- function(input, output, session) {
   # The four canonical products (RGB Orthomosaic / DSM / DTM / CHM) are
   # stand-alone raster files, so they have no band requirements -- their
   # availability is checked separately via quick_outputs_check().
+  # The Biomass_*_x_CHM layers need both their spectral inputs and the
+  # CHM raster; we use the band requirements here to hide them on RGB
+  # orthos that lack the bands - CHM availability is enforced inside
+  # gis_stack() via compute_biomass_proxies().
   overlay_band_requirements <- list(
     `RGB Orthomosaic`   = c("Blue", "Green", "Red"),  # composite display
     DSM                 = character(),
@@ -2954,9 +3296,33 @@ server <- function(input, output, session) {
     NDRE                = c("RedEdge", "NIR"),
     EVI                 = c("Blue", "Red", "NIR"),
     SAVI                = c("Red", "NIR"),
+    OSAVI               = c("Red", "NIR"),
+    MSAVI2              = c("Red", "NIR"),
     NDWI                = c("Green", "NIR"),
+    GNDVI               = c("Green", "NIR"),
+    CIrededge           = c("RedEdge", "NIR"),
+    GCI                 = c("Green", "NIR"),
+    RVI                 = c("Red", "NIR"),
+    DVI                 = c("Red", "NIR"),
+    WDRVI               = c("Red", "NIR"),
+    TVI                 = c("Green", "Red", "NIR"),
+    MCARI               = c("Green", "Red", "RedEdge"),
+    PSRI                = c("Green", "Red", "RedEdge"),
     VARI                = c("Blue", "Green", "Red"),
+    ExG                 = c("Blue", "Green", "Red"),
+    GLI                 = c("Blue", "Green", "Red"),
+    TGI                 = c("Blue", "Green", "Red"),
+    MGRVI               = c("Green", "Red"),
+    RGBVI               = c("Blue", "Green", "Red"),
     Biomass_Index_Proxy = c("Red", "NIR", "RedEdge"),
+    Biomass_NDVI_x_CHM  = c("Red", "NIR"),
+    Biomass_NDRE_x_CHM  = c("RedEdge", "NIR"),
+    Biomass_SAVI_x_CHM  = c("Red", "NIR"),
+    Biomass_GNDVI_x_CHM = c("Green", "NIR"),
+    Biomass_VARI_x_CHM  = c("Blue", "Green", "Red"),
+    Biomass_EXG_x_CHM   = c("Blue", "Green", "Red"),
+    Biomass_MGRVI_x_CHM = c("Green", "Red"),
+    Biomass_RGBVI_x_CHM = c("Blue", "Green", "Red"),
     NIR                 = c("NIR"),
     RedEdge             = c("RedEdge"),
     Red                 = c("Red"),
@@ -3166,7 +3532,11 @@ server <- function(input, output, session) {
           unloadInvisibleTiles = FALSE,
           errorTileUrl = transparent_tile,
           zIndex = 220,
-          keepBuffer = 8
+          keepBuffer = 8,
+          # Prevent the world map from rendering as multiple copies side
+          # by side when the user is fully zoomed out (the symptom the
+          # user reported as 'mapa mundi com varias cenas iguais').
+          noWrap = TRUE
         )
       )
   }
@@ -3382,12 +3752,33 @@ server <- function(input, output, session) {
       product_name <- layer_name
       observeEvent(input[[help_input_id(product_name)]], {
         meta <- product_metadata[[product_name]]
+        if (is.null(meta)) {
+          showModal(modalDialog(
+            title = product_name,
+            tags$p("No documentation registered for this layer."),
+            easyClose = TRUE,
+            footer = modalButton("Close")
+          ))
+          return()
+        }
+        # Show every documented field. Each entry is hidden when the
+        # metadata entry does not define that field, so the modal stays
+        # compact for source bands (which have no 'range' or 'reference')
+        # but expands for the indices that do.
+        field_row <- function(label, value) {
+          if (is.null(value) || !nzchar(as.character(value))) return(NULL)
+          tags$p(tags$strong(paste0(label, ": ")), value)
+        }
         showModal(modalDialog(
-          title = meta$label,
-          tags$p(tags$strong("Formula: "), meta$formula),
-          tags$p(tags$strong("Display unit: "), meta$unit),
-          tags$p(tags$strong("Interpretation: "), meta$use),
+          title = meta$label %||% product_name,
+          field_row("Formula",        meta$formula),
+          field_row("Bands needed",   meta$bands),
+          field_row("Typical range",  meta$range),
+          field_row("Unit",           meta$unit),
+          field_row("Reference",      meta$reference),
+          field_row("Interpretation", meta$use),
           easyClose = TRUE,
+          size = "m",
           footer = modalButton("Close")
         ))
       }, ignoreInit = TRUE)
@@ -3467,7 +3858,7 @@ server <- function(input, output, session) {
 
   output$browser_selected_path <- renderTable({
     data.frame(selected_path = browser_selected(), stringsAsFactors = FALSE)
-  })
+  }, digits = 2)
 
   observeEvent(input$browser_go, {
     path <- input$browser_path_text
@@ -4016,11 +4407,11 @@ server <- function(input, output, session) {
 
   output$product_table <- renderTable({
     products()
-  })
+  }, digits = 2)
 
   output$processing_products <- renderTable({
     products()
-  })
+  }, digits = 2)
 
   observeEvent(input$processing_preset, {
     preset <- input$processing_preset
@@ -4095,7 +4486,7 @@ server <- function(input, output, session) {
       )),
       check.names = FALSE
     )
-  })
+  }, digits = 2)
 
   output$processing_workflow <- renderUI({
     products <- odm_product_paths(project())
@@ -4229,18 +4620,35 @@ server <- function(input, output, session) {
           scale_to_reflectance(bands_for_display)
         } else bands_for_display
 
-        incProgress(0.2, detail = "Computing spectral indices")
+        incProgress(0.15, detail = "Computing spectral indices")
         idx <- compute_spectral_indices(refl)
 
-        # Biomass_Index_Proxy needs NDVI + SAVI + NDRE; for RGB orthos
-        # the index stack only has VARI, so skip the proxy step silently.
-        incProgress(0.2, detail = "Stacking final layers")
+        # Biomass proxies. compute_biomass_proxies() returns the legacy
+        # Biomass_Spectral surface (mean of NDVI/SAVI/NDRE, or VARI on
+        # RGB-only orthos) plus a family of greenness x CHM layers when
+        # a CHM is available. The CHM is cheap to read - already cached
+        # by chm_raster() - so we always offer the multiplicative proxies
+        # when the project has DSM + DTM. Skips silently otherwise.
+        incProgress(0.15, detail = "Building biomass proxies")
+        proxy_stack <- tryCatch({
+          ch <- tryCatch(chm_raster(), error = function(e) NULL)
+          compute_biomass_proxies(idx, chm = ch)
+        }, error = function(e) NULL)
+
+        # Keep backwards compatibility: the historical Biomass_Index_Proxy
+        # layer name is still emitted alongside the new Biomass_Spectral
+        # one. Downstream code (legend mapping, time-series, product
+        # metadata) keys on the old name in places, and renaming would
+        # silently break those callers.
+        legacy_proxy <- NULL
         if (all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
-          proxy <- compute_biomass_proxy(idx)
-          out <- c(refl, idx, proxy)
-        } else {
-          out <- c(refl, idx)
+          legacy_proxy <- compute_biomass_proxy(idx)
         }
+
+        incProgress(0.2, detail = "Stacking final layers")
+        out <- c(refl, idx)
+        if (!is.null(legacy_proxy)) out <- c(out, legacy_proxy)
+        if (!is.null(proxy_stack))  out <- c(out, proxy_stack)
         incProgress(0.1, detail = "Done")
         out
       })
@@ -4296,10 +4704,21 @@ server <- function(input, output, session) {
     bindCache(input$project_dir)
 
   output$gis_map <- renderLeaflet({
-    m <- leaflet() |>
+    # leafletOptions() disables the world-wrap entirely (worldCopyJump,
+    # together with noWrap on the tile layers, makes leaflet stop
+    # rendering multiple copies of the map at low zoom). maxBounds keeps
+    # users from accidentally panning into the "void" past the equator
+    # pole-wise; the survey area lives well inside this envelope.
+    m <- leaflet(options = leafletOptions(
+        worldCopyJump = FALSE,
+        maxBounds = list(c(-85, -180), c(85, 180)),
+        minZoom = 2
+      )) |>
       add_esri_imagery_tiles(group = "Satellite") |>
-      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap") |>
-      addScaleBar(position = "bottomleft")
+      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
+                       options = providerTileOptions(noWrap = TRUE)) |>
+      addScaleBar(position = "bottomleft") |>
+      setView(lng = 0, lat = 0, zoom = 2)
 
     m <- add_project_footprint(m, input$orthomosaic)
 
@@ -5030,7 +5449,7 @@ server <- function(input, output, session) {
       r[all_cols]
     })
     do.call(rbind, lapply(rows_padded, as.data.frame, stringsAsFactors = FALSE))
-  }, digits = 3)
+  }, digits = 2)
 
   observeEvent(input$gis_measure_tool, {
     gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
@@ -5162,8 +5581,8 @@ server <- function(input, output, session) {
           as.character(nrow(pts)),
           formatC(area, format = "f", digits = 2),
           formatC(metrics$chm_area_m2, format = "f", digits = 2),
-          formatC(metrics$chm_height_mean_m, format = "f", digits = 3),
-          formatC(metrics$chm_height_max_m, format = "f", digits = 3),
+          formatC(metrics$chm_height_mean_m, format = "f", digits = 2),
+          formatC(metrics$chm_height_max_m, format = "f", digits = 2),
           formatC(metrics$chm_surface_volume_m3, format = "f", digits = 2)
         ),
         unit   = c("count", "m2", "m2", "m", "m", "m3")
@@ -5174,7 +5593,7 @@ server <- function(input, output, session) {
       value = c(as.character(nrow(pts)), formatC(area, format = "f", digits = 2), formatC(perimeter, format = "f", digits = 2)),
       unit = c("count", "m2", "m")
     )
-  })
+  }, digits = 2)
 
   manifest <- reactive({
     validate(need(dir.exists(input$images_dir), paste("Image folder not found:", input$images_dir)))
@@ -6049,15 +6468,15 @@ server <- function(input, output, session) {
         if (!is.null(mosaic()$alpha) && isTRUE(input$spectral_use_alpha)) "enabled" else "not used"
       )
     )
-  })
+  }, digits = 2)
 
   output$radiometric_qa <- renderTable({
     req(mosaic(), base_reflectance())
     qa <- spectral_qa_summary(mosaic()$raw_bands, base_reflectance(), mosaic()$alpha, radiometric_scale_info())
     numeric_cols <- vapply(qa, is.numeric, logical(1))
-    qa[numeric_cols] <- lapply(qa[numeric_cols], function(v) ifelse(abs(v) >= 1000, format(round(v), big.mark = ","), formatC(v, format = "f", digits = 3)))
+    qa[numeric_cols] <- lapply(qa[numeric_cols], function(v) ifelse(abs(v) >= 1000, format(round(v), big.mark = ","), formatC(v, format = "f", digits = 2)))
     qa
-  })
+  }, digits = 2)
 
   output$band_histogram_plot <- renderPlot({
     req(base_reflectance())
@@ -6160,9 +6579,9 @@ server <- function(input, output, session) {
   output$panel_calibration_table <- renderTable({
     x <- panel_coefficients()
     numeric_cols <- vapply(x, is.numeric, logical(1))
-    x[numeric_cols] <- lapply(x[numeric_cols], function(v) formatC(v, format = "f", digits = 5))
+    x[numeric_cols] <- lapply(x[numeric_cols], function(v) formatC(v, format = "f", digits = 2))
     x
-  })
+  }, digits = 2)
 
   output$mosaic_plot <- renderPlot({
     req(reflectance())
@@ -6192,9 +6611,9 @@ server <- function(input, output, session) {
     format_summary_table(
       summarize_spatraster(all_indices(), c("min", "mean", "max", "sd")),
       unit = "unitless index",
-      digits = 3
+      digits = 2
     )
-  })
+  }, digits = 2)
 
   observeEvent(input$compute_custom_index, {
     req(reflectance())
@@ -6275,9 +6694,9 @@ server <- function(input, output, session) {
     out <- summarize_application_map(application_map())
     if (nrow(out) == 0) return(data.frame(message = "No classified cells."))
     out$area_m2 <- formatC(out$area_m2, format = "f", digits = 2)
-    out$area_ha <- formatC(out$area_ha, format = "f", digits = 4)
+    out$area_ha <- formatC(out$area_ha, format = "f", digits = 2)
     out
-  })
+  }, digits = 2)
 
   observeEvent(input$compute_tree_spectral_metrics, {
     req(reflectance(), all_indices())
@@ -6342,9 +6761,9 @@ server <- function(input, output, session) {
       return(data.frame(message = "No tree or ROI spectral metrics computed yet."))
     }
     numeric_cols <- vapply(x, is.numeric, logical(1))
-    x[numeric_cols] <- lapply(x[numeric_cols], function(v) formatC(v, format = "f", digits = 4))
+    x[numeric_cols] <- lapply(x[numeric_cols], function(v) formatC(v, format = "f", digits = 2))
     x
-  })
+  }, digits = 2)
 
   observeEvent(input$export_products, {
     req(reflectance(), all_indices(), biomass_proxy())
@@ -6412,7 +6831,7 @@ server <- function(input, output, session) {
   full_roi_status_value <- reactiveVal("No ROI selected yet.")
 
   chm_raster <- reactive({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     if (!file.exists(products[["dsm"]]) || !file.exists(products[["dtm"]])) {
       return(NULL)
     }
@@ -6420,13 +6839,13 @@ server <- function(input, output, session) {
   })
 
   dsm_raster <- reactive({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     if (!file.exists(products[["dsm"]])) return(NULL)
     terra::rast(products[["dsm"]])[[1]]
   })
 
   dtm_raster <- reactive({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     if (!file.exists(products[["dtm"]])) return(NULL)
     terra::rast(products[["dtm"]])[[1]]
   })
@@ -6456,17 +6875,19 @@ server <- function(input, output, session) {
   # tool change, height-filter tweak rebuilt it from scratch. The
   # user perceived "the 3D plot is processing non-stop." Cached on
   # (dsm path, ortho path, draped-mode flag); recomputes only when
-  # one of those actually changes.
+  # one of those actually changes. The dsm_path goes through
+  # cached_products() so reads come from the local cache instead of
+  # OneDrive once the user has run the migration.
   draped_dsm_heightmap <- reactive({
     if (!isTRUE(input$show_draped_dsm)) return(NULL)
-    dsm_path <- odm_product_paths(project())[["dsm"]]
+    dsm_path <- cached_products()[["dsm"]]
     if (is.null(dsm_path) || !nzchar(dsm_path) || !file.exists(dsm_path)) {
       return(NULL)
     }
     build_dsm_heightmap(dsm_path, input$orthomosaic, grid_size = 180)
   }) |>
     bindCache(
-      odm_product_paths(project())[["dsm"]] %||% "",
+      cached_products()[["dsm"]] %||% "",
       input$orthomosaic %||% "",
       isTRUE(input$show_draped_dsm)
     )
@@ -6485,7 +6906,7 @@ server <- function(input, output, session) {
     bindCache(input$orthomosaic %||% "")
 
   point_cloud_reference_raster <- reactive({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     if (file.exists(products[["dsm"]])) {
       return(terra::rast(products[["dsm"]])[[1]])
     }
@@ -6502,26 +6923,47 @@ server <- function(input, output, session) {
     points
   }
 
+  # Cache-aware path resolvers for the two scene-source inputs. Both
+  # textInputs let the user type any path; if a file with the same
+  # basename also exists in ~/.dronebior/cache/<slug>/, we transparently
+  # read from there instead. The biggest practical win is on OneDrive
+  # projects where the canonical .laz file lives behind Files-On-Demand
+  # but a local copy already sits in the cache from a previous "Copy
+  # outputs to local cache" pass.
+  resolved_full_cloud_path <- reactive({
+    raw <- input$full_cloud_path %||% ""
+    if (!nzchar(raw)) return("")
+    DroneBioR:::cache_aware_path(raw, project())
+  })
+  resolved_ply_path <- reactive({
+    raw <- input$ply_path %||% ""
+    if (!nzchar(raw)) return("")
+    DroneBioR:::cache_aware_path(raw, project())
+  })
+
   point_cloud <- reactive({
     with_error_toast("Load point cloud", {
+      full_path <- resolved_full_cloud_path()
+      ply_path  <- resolved_ply_path()
       use_full_sample <- identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") &&
-        file.exists(input$full_cloud_path)
+        nzchar(full_path) && file.exists(full_path)
 
       if (isTRUE(use_full_sample)) {
-        pts <- read_full_point_cloud(input$full_cloud_path, max_points = input$max_points)
+        pts <- read_full_point_cloud(full_path, max_points = input$max_points)
         chm <- chm_raster()
         if (!is.null(chm)) {
           pts <- add_chm_heights(pts, chm)
-          pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "DSM-DTM CHM")
+          pts <- add_cloud_runtime_attributes(pts, full_path, "full_georeferenced", "DSM-DTM CHM")
         } else {
           pts <- add_point_heights(pts)
-          pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "local low-Z proxy")
+          pts <- add_cloud_runtime_attributes(pts, full_path, "full_georeferenced", "local low-Z proxy")
         }
       } else {
-        validate(need(file.exists(input$ply_path), paste("PLY file not found:", input$ply_path)))
-        pts <- read_ply_point_cloud(input$ply_path, max_points = input$max_points)
+        validate(need(nzchar(ply_path) && file.exists(ply_path),
+                      paste("PLY file not found:", ply_path)))
+        pts <- read_ply_point_cloud(ply_path, max_points = input$max_points)
         pts <- add_point_heights(pts)
-        pts <- add_cloud_runtime_attributes(pts, input$ply_path, "local_preview", "local low-Z proxy")
+        pts <- add_cloud_runtime_attributes(pts, ply_path, "local_preview", "local low-Z proxy")
       }
 
       point_classes(data.frame(point_id = pts$point_id, class = "Unclassified"))
@@ -6534,8 +6976,8 @@ server <- function(input, output, session) {
   }) |>
     bindCache(
       input$viewer_cloud_source,
-      input$full_cloud_path,
-      input$ply_path,
+      resolved_full_cloud_path(),
+      resolved_ply_path(),
       input$max_points
     ) |>
     bindEvent(point_cloud_event())
@@ -6548,6 +6990,47 @@ server <- function(input, output, session) {
   observeEvent(input$clear_point_selection, {
     selected_ids_value(integer())
     showNotification("Selection cleared.", type = "message", duration = 3)
+  })
+
+  # Surface the JS-detected coordinate-frame mismatch as a one-shot
+  # warning. Triggers when the orthomosaic / DSM and the loaded point
+  # cloud are in different coordinate frames - typically the PLY
+  # preview from odm_filterpoints/ (OpenSfM-local metres) vs the
+  # orthomosaic / DSM (projected UTM, SIRGAS, etc.). The viewer snaps
+  # the basemap plane to the points' XY bounds and disables the DSM
+  # drape; we tell the user so they know to switch to LAS/LAZ/COPC.
+  # last_basemap_mismatch_shown tracks whether the warning has fired in
+  # this session, because the JS sends the boolean once per scene build
+  # (priority="event"), so without the latch the user would see one
+  # toast per renderUI run.
+  last_basemap_mismatch_shown <- reactiveVal(FALSE)
+  observeEvent(point_cloud_event(), {
+    last_basemap_mismatch_shown(FALSE)
+  })
+  observeEvent(input$basemap_frame_mismatch, {
+    if (!isTRUE(input$basemap_frame_mismatch)) return()
+    if (isTRUE(last_basemap_mismatch_shown())) return()
+    last_basemap_mismatch_shown(TRUE)
+    showNotification(
+      paste0("Orthomosaic / DSM and point cloud are in different coordinate frames. ",
+             "The basemap was snapped to the points' bounding box and the DSM ",
+             "drape was disabled. For exact georeferencing, switch the 3D ",
+             "viewer source to the LAS/LAZ/COPC sample (it is in projected ",
+             "metres and matches the orthomosaic CRS)."),
+      type = "warning", duration = 10
+    )
+  }, ignoreInit = TRUE)
+
+  # Push selection updates to the live three.js scene without rebuilding
+  # it. Fires on every change to selected_ids_value (from JS clicks, from
+  # the GIS Workspace ROI bridge, from the Clear selection button). The
+  # viewer must already be mounted - point_cloud_event() > 0 - otherwise
+  # the message is a no-op on the JS side.
+  observe({
+    ids <- selected_ids_value()
+    if (point_cloud_event() == 0) return()
+    payload <- list(ids = if (length(ids) == 0L) list() else as.integer(ids))
+    session$sendCustomMessage("dronebior_3d_set_selection", payload)
   })
 
   selected_point_ids <- reactive({
@@ -6653,13 +7136,14 @@ server <- function(input, output, session) {
       full_roi_status_value("Select at least three points to build a polygon ROI.")
       return(pts_preview[0, , drop = FALSE])
     }
-    if (!file.exists(input$full_cloud_path)) {
+    full_path <- resolved_full_cloud_path()
+    if (!nzchar(full_path) || !file.exists(full_path)) {
       full_roi_status_value("Full point cloud path is missing; using the viewer preview sample.")
       return(pts_preview[0, , drop = FALSE])
     }
 
     tryCatch({
-      pts <- read_full_point_cloud(input$full_cloud_path, roi_polygon = roi, max_points = Inf)
+      pts <- read_full_point_cloud(full_path, roi_polygon = roi, max_points = Inf)
       if (nrow(pts) == 0) {
         full_roi_status_value("The ROI polygon did not intersect any full-resolution points; using the viewer preview sample.")
         return(pts_preview[0, , drop = FALSE])
@@ -6668,10 +7152,10 @@ server <- function(input, output, session) {
       chm <- chm_raster()
       if (!is.null(chm)) {
         pts <- add_chm_heights(pts, chm)
-        pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "DSM-DTM CHM")
+        pts <- add_cloud_runtime_attributes(pts, full_path, "full_georeferenced", "DSM-DTM CHM")
       } else {
         pts <- add_point_heights(pts)
-        pts <- add_cloud_runtime_attributes(pts, input$full_cloud_path, "full_georeferenced", "local low-Z proxy")
+        pts <- add_cloud_runtime_attributes(pts, full_path, "full_georeferenced", "local low-Z proxy")
       }
 
       full_roi_status_value(paste0(
@@ -6771,7 +7255,13 @@ server <- function(input, output, session) {
     }
     classified_mask <- !is.na(points$class) & points$class != "Unclassified"
     points$display_color[classified_mask] <- points$class_color[classified_mask]
-    points$selected <- points$point_id %in% selected_point_ids()
+    # Isolate the selection read so that clicking points / pulling in an
+    # ROI does not invalidate the renderUI and tear down the whole three.js
+    # scene from scratch. The initial render still uses the current
+    # selection IDs (zero on a fresh load, restored after a basemap-driven
+    # rebuild). Subsequent selection changes flow through the
+    # dronebior_3d_set_selection custom message instead.
+    points$selected <- points$point_id %in% isolate(selected_point_ids())
 
     point_json <- jsonlite::toJSON(
       points[, c("point_id", "x", "y", "z", "height_m", "display_color", "selected", "class", "class_color")],
@@ -6790,7 +7280,7 @@ server <- function(input, output, session) {
     # relative URLs the loaders compute themselves.
     mesh_url <- NULL
     if (isTRUE(input$show_textured_mesh)) {
-      mesh_path <- odm_product_paths(project())[["textured_obj"]]
+      mesh_path <- cached_products()[["textured_obj"]]
       if (file.exists(mesh_path)) {
         shiny::addResourcePath("dronebior_obj", dirname(mesh_path))
         mesh_url <- paste0("dronebior_obj/", basename(mesh_path))
@@ -6879,6 +7369,63 @@ server <- function(input, output, session) {
           const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
           const scale = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
 
+          // Coordinate-frame mismatch guard. The point cloud (especially the
+          // PLY preview, which can be in OpenSfM local metres) and the
+          // basemap (always in the orthomosaic's projected CRS - UTM /
+          // SIRGAS / WGS84) sometimes live in different frames. When that
+          // happens, the basemap's bounding box does not overlap the
+          // points' bounding box AT ALL, so its plane lands far away from
+          // the points and the two surfaces appear on visually disjoint
+          // planes. Detection: AABB-overlap. We DO NOT trigger the snap
+          // for partial overlap (small ROIs inside a wider ortho), only
+          // for fully disjoint bounding boxes.
+          let basemapXmin = hasBasemap ? basemap.xmin : minX;
+          let basemapXmax = hasBasemap ? basemap.xmax : maxX;
+          let basemapYmin = hasBasemap ? basemap.ymin : minY;
+          let basemapYmax = hasBasemap ? basemap.ymax : maxY;
+          let basemapFrameMismatch = false;
+          if (hasBasemap && hasPoints) {
+            const xOverlap = !(maxX < basemapXmin || minX > basemapXmax);
+            const yOverlap = !(maxY < basemapYmin || minY > basemapYmax);
+            if (!xOverlap || !yOverlap) {
+              basemapFrameMismatch = true;
+              basemapXmin = minX; basemapXmax = maxX;
+              basemapYmin = minY; basemapYmax = maxY;
+            }
+          }
+
+          // Separate Z-frame check for the DSM drape. The drape's heightmap
+          // values are absolute elevations (e.g. 50-80 m above mean sea
+          // level), while the point cloud's Z is whatever the source file
+          // gave us. If those ranges do not overlap (typical when the
+          // points are in OpenSfM-local metres centred on 0 but the DSM is
+          // in real-world EGM2008 elevations), draping anchors the surface
+          // far above or below the points. In that case we suppress the
+          // drape and fall back to the flat basemap_plane.
+          let drapedZmin = Infinity, drapedZmax = -Infinity;
+          if (drapedDsm && Array.isArray(drapedDsm.z_rows)) {
+            for (let row = 0; row < drapedDsm.nrow; row++) {
+              const z_row = drapedDsm.z_rows[row];
+              if (!z_row) continue;
+              for (let col = 0; col < drapedDsm.ncol; col++) {
+                const zv = z_row[col];
+                if (Number.isFinite(zv)) {
+                  if (zv < drapedZmin) drapedZmin = zv;
+                  if (zv > drapedZmax) drapedZmax = zv;
+                }
+              }
+            }
+          }
+          const drapedFrameMismatch = hasPoints &&
+            Number.isFinite(drapedZmin) && Number.isFinite(drapedZmax) &&
+            (drapedZmax < minZ || drapedZmin > maxZ);
+
+          if (window.Shiny) {
+            Shiny.setInputValue('basemap_frame_mismatch',
+              basemapFrameMismatch || drapedFrameMismatch,
+              { priority: 'event' });
+          }
+
           function hexToRgb(hex) {
             const h = hex.replace('#', '');
             return [
@@ -6903,9 +7450,15 @@ server <- function(input, output, session) {
           //  * Flat plane fallback (the previous behaviour): used when
           //    the user has not enabled draped mode or no DSM is
           //    available.
+          // DSM drape is only meaningful when the basemap and the points
+          // share a coordinate frame. When they do not (XY-bounds
+          // disjoint, OR DSM-Z range disjoint from point-Z range), the
+          // drape would float hundreds of scene units above/below the
+          // points. Fall back to the flat basemap plane in either case.
           const hasDrapedDsm = drapedDsm &&
             Array.isArray(drapedDsm.z_rows) &&
-            drapedDsm.nrow > 1 && drapedDsm.ncol > 1;
+            drapedDsm.nrow > 1 && drapedDsm.ncol > 1 &&
+            !basemapFrameMismatch && !drapedFrameMismatch;
 
           if (hasDrapedDsm && hasBasemap && basemap.data_uri) {
             const textureLoader = new THREE.TextureLoader();
@@ -6914,8 +7467,8 @@ server <- function(input, output, session) {
                 texture.colorSpace = THREE.SRGBColorSpace;
               }
               texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-              const planeWidth  = Math.max((basemap.xmax - basemap.xmin) / scale * 10, 0.1);
-              const planeHeight = Math.max((basemap.ymax - basemap.ymin) / scale * 10, 0.1);
+              const planeWidth  = Math.max((basemapXmax - basemapXmin) / scale * 10, 0.1);
+              const planeHeight = Math.max((basemapYmax - basemapYmin) / scale * 10, 0.1);
               const geom = new THREE.PlaneGeometry(
                 planeWidth, planeHeight,
                 drapedDsm.ncol - 1, drapedDsm.nrow - 1
@@ -6950,8 +7503,8 @@ server <- function(input, output, session) {
               });
               const mesh = new THREE.Mesh(geom, material);
               mesh.rotation.x = -Math.PI / 2;
-              const cxScene = (((basemap.xmin + basemap.xmax) / 2) - cx) / scale * 10;
-              const czScene = -((((basemap.ymin + basemap.ymax) / 2) - cy) / scale * 10);
+              const cxScene = (((basemapXmin + basemapXmax) / 2) - cx) / scale * 10;
+              const czScene = -((((basemapYmin + basemapYmax) / 2) - cy) / scale * 10);
               mesh.position.set(cxScene, 0, czScene);
               mesh.name = 'dsm_drape';
               scene.add(mesh);
@@ -6980,10 +7533,10 @@ server <- function(input, output, session) {
                 texture.colorSpace = THREE.SRGBColorSpace;
               }
               texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-              const planeWidth = Math.max((basemap.xmax - basemap.xmin) / scale * 10, 0.1);
-              const planeHeight = Math.max((basemap.ymax - basemap.ymin) / scale * 10, 0.1);
-              const planeX = (((basemap.xmin + basemap.xmax) / 2) - cx) / scale * 10;
-              const planeZ = -((((basemap.ymin + basemap.ymax) / 2) - cy) / scale * 10);
+              const planeWidth = Math.max((basemapXmax - basemapXmin) / scale * 10, 0.1);
+              const planeHeight = Math.max((basemapYmax - basemapYmin) / scale * 10, 0.1);
+              const planeX = (((basemapXmin + basemapXmax) / 2) - cx) / scale * 10;
+              const planeZ = -((((basemapYmin + basemapYmax) / 2) - cy) / scale * 10);
               const plane = new THREE.Mesh(
                 new THREE.PlaneGeometry(planeWidth, planeHeight),
                 new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0.88, side: THREE.DoubleSide })
@@ -7084,16 +7637,120 @@ server <- function(input, output, session) {
           const pointsObject = new THREE.Points(geometry, material);
           pointsObject.name = 'points';
           scene.add(pointsObject);
-          let selectedPointsObject = null;
-          let selectedPointMaterial = null;
+          // Always create the selected_points mesh, even if currently empty,
+          // so the dronebior_3d_set_selection handler can update it later
+          // without having to rebuild the scene from scratch. The selection
+          // is no longer part of the renderUI dependency graph.
+          const selectedGeometry = new THREE.BufferGeometry();
+          selectedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(selectedPositions, 3));
+          selectedGeometry.setAttribute('color', new THREE.Float32BufferAttribute(selectedColors, 3));
+          const selectedPointMaterial = new THREE.PointsMaterial({ size: initialPointSize * 2.3, vertexColors: true });
+          const selectedPointsObject = new THREE.Points(selectedGeometry, selectedPointMaterial);
+          selectedPointsObject.name = 'selected_points';
+          scene.add(selectedPointsObject);
+
+          // Wireframe AABB drawn around the current selection. Drawn as
+          // 12 line segments (THREE.LineSegments) of a yellow material so
+          // it stays visible against any background theme. The user sees
+          // this in the viewer the moment a box / lasso / polygon select
+          // closes, so they no longer have to flip to the 2D context
+          // sub-tab to confirm the ROI was captured.
+          const selectionBoxGeometry = new THREE.BufferGeometry();
+          selectionBoxGeometry.setAttribute('position',
+            new THREE.Float32BufferAttribute(new Float32Array(72), 3));
+          const selectionBoxMaterial = new THREE.LineBasicMaterial({
+            color: 0xfacc15,
+            transparent: true,
+            opacity: 0.95,
+            depthTest: false
+          });
+          const selectionBoxObject = new THREE.LineSegments(
+            selectionBoxGeometry, selectionBoxMaterial);
+          selectionBoxObject.name = 'selection_bbox';
+          selectionBoxObject.visible = false;
+          selectionBoxObject.renderOrder = 999;
+          scene.add(selectionBoxObject);
+
+          // Build a lookup from point_id to the original point record so
+          // setSelection can rebuild the highlight geometry without walking
+          // the full array every time.
+          const pointById = new Map();
+          points.forEach(p => pointById.set(p.point_id, p));
+          function rebuildSelectionMesh(ids) {
+            const selPos = [];
+            const selCol = [];
+            const idArr = (ids && ids.length) ? ids : [];
+            let bxMin = Infinity, byMin = Infinity, bzMin = Infinity;
+            let bxMax = -Infinity, byMax = -Infinity, bzMax = -Infinity;
+            for (let i = 0; i < idArr.length; i++) {
+              const p = pointById.get(idArr[i]);
+              if (!p) continue;
+              const pp = pos(p);
+              selPos.push(pp[0], pp[1], pp[2]);
+              if (pp[0] < bxMin) bxMin = pp[0]; if (pp[0] > bxMax) bxMax = pp[0];
+              if (pp[1] < byMin) byMin = pp[1]; if (pp[1] > byMax) byMax = pp[1];
+              if (pp[2] < bzMin) bzMin = pp[2]; if (pp[2] > bzMax) bzMax = pp[2];
+              const c = (p.class && p.class !== 'Unclassified')
+                ? (p.class_color || p.display_color)
+                : '#ef4444';
+              const rgb = hexToRgb(c);
+              selCol.push(rgb[0], rgb[1], rgb[2]);
+            }
+            selectedGeometry.setAttribute('position',
+              new THREE.Float32BufferAttribute(selPos, 3));
+            selectedGeometry.setAttribute('color',
+              new THREE.Float32BufferAttribute(selCol, 3));
+            selectedGeometry.attributes.position.needsUpdate = true;
+            selectedGeometry.attributes.color.needsUpdate = true;
+            selectedGeometry.computeBoundingSphere();
+
+            // Pump the 12 edges of the AABB into the LineSegments geometry.
+            // Pad zero-width axes (single point selected, or a perfectly
+            // co-planar lasso) by a small fraction of the scene radius so
+            // the box stays a visible cuboid rather than a degenerate
+            // line / quad.
+            if (idArr.length === 0 || !Number.isFinite(bxMin)) {
+              selectionBoxObject.visible = false;
+            } else {
+              const pad = Math.max((maxX - minX), (maxY - minY), (maxZ - minZ), 1) / scale * 10 * 0.005;
+              if (bxMax - bxMin < pad) { const m = (bxMin + bxMax)/2; bxMin = m - pad; bxMax = m + pad; }
+              if (byMax - byMin < pad) { const m = (byMin + byMax)/2; byMin = m - pad; byMax = m + pad; }
+              if (bzMax - bzMin < pad) { const m = (bzMin + bzMax)/2; bzMin = m - pad; bzMax = m + pad; }
+              const v = [
+                [bxMin,byMin,bzMin],[bxMax,byMin,bzMin],
+                [bxMax,byMin,bzMin],[bxMax,byMin,bzMax],
+                [bxMax,byMin,bzMax],[bxMin,byMin,bzMax],
+                [bxMin,byMin,bzMax],[bxMin,byMin,bzMin],
+                [bxMin,byMax,bzMin],[bxMax,byMax,bzMin],
+                [bxMax,byMax,bzMin],[bxMax,byMax,bzMax],
+                [bxMax,byMax,bzMax],[bxMin,byMax,bzMax],
+                [bxMin,byMax,bzMax],[bxMin,byMax,bzMin],
+                [bxMin,byMin,bzMin],[bxMin,byMax,bzMin],
+                [bxMax,byMin,bzMin],[bxMax,byMax,bzMin],
+                [bxMax,byMin,bzMax],[bxMax,byMax,bzMax],
+                [bxMin,byMin,bzMax],[bxMin,byMax,bzMax]
+              ];
+              const flat = new Float32Array(72);
+              for (let i = 0; i < v.length; i++) {
+                flat[i*3]   = v[i][0];
+                flat[i*3+1] = v[i][1];
+                flat[i*3+2] = v[i][2];
+              }
+              selectionBoxGeometry.setAttribute('position',
+                new THREE.Float32BufferAttribute(flat, 3));
+              selectionBoxGeometry.attributes.position.needsUpdate = true;
+              selectionBoxGeometry.computeBoundingSphere();
+              selectionBoxObject.visible = true;
+            }
+          }
+          // If the initial render already has a selection (e.g. the
+          // scene rebuilt while a selection from a prior session was
+          // active), draw the box right away.
           if (selectedPositions.length > 0) {
-            const selectedGeometry = new THREE.BufferGeometry();
-            selectedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(selectedPositions, 3));
-            selectedGeometry.setAttribute('color', new THREE.Float32BufferAttribute(selectedColors, 3));
-            selectedPointMaterial = new THREE.PointsMaterial({ size: initialPointSize * 2.3, vertexColors: true });
-            selectedPointsObject = new THREE.Points(selectedGeometry, selectedPointMaterial);
-            selectedPointsObject.name = 'selected_points';
-            scene.add(selectedPointsObject);
+            const initialIds = points
+              .filter(p => p.selected)
+              .map(p => p.point_id);
+            rebuildSelectionMesh(initialIds);
           }
 
           const grid = new THREE.GridHelper(12, 12, 0x94a3b8, 0x334155);
@@ -7264,6 +7921,14 @@ server <- function(input, output, session) {
                 // Clears any in-progress overlay drawing so the user
                 // can start a new polygon/lasso without re-loading.
                 if (overlayCtx) overlayCtx.clearRect(0, 0, width, height);
+              },
+              setSelection: function(ids) {
+                // Update the highlight mesh in place. The point cloud and
+                // its full position buffer stay untouched, which is what
+                // keeps clicking points snappy even on 35k+ samples - the
+                // previous code rebuilt every BufferAttribute and re-ran
+                // jsonlite::toJSON in R on every click.
+                rebuildSelectionMesh(ids || []);
               }
             };
 
@@ -7580,6 +8245,15 @@ server <- function(input, output, session) {
       }))
     )
   })
+  # Keep the 3D viewer alive when the user navigates away to another main
+  # tab. Without this, Shiny suspends the renderUI as soon as its DOM is
+  # hidden; coming back to the 3D Modeling tab re-evaluates ALL its
+  # reactive dependencies and rebuilds the entire three.js scene from
+  # scratch - the symptom the user described as "every minute the view
+  # redraws from a different plane." The viewer is cheap to keep mounted
+  # because three.js's animate loop pauses naturally when the canvas is
+  # not visible.
+  outputOptions(output, "point_cloud_viewer", suspendWhenHidden = FALSE)
 
   output$point_cloud_status <- renderText({
     if (point_cloud_event() == 0) {
@@ -7682,7 +8356,7 @@ server <- function(input, output, session) {
     paste(layers, collapse = " + ")
   })
   output$modeling_metric_surface_sub <- renderUI({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     ortho_ok <- file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]])
     dsm_ok   <- file.exists(products[["dsm"]])
     mesh_ok  <- file.exists(products[["textured_obj"]])
@@ -7702,7 +8376,7 @@ server <- function(input, output, session) {
   # Workspace tab, the pills here flip from Missing to Available without
   # any extra action.
   scene_sources_state <- reactive({
-    products <- odm_product_paths(project())
+    products <- cached_products()
     list(
       ortho = file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]]),
       dsm   = file.exists(products[["dsm"]]),
@@ -7764,7 +8438,7 @@ server <- function(input, output, session) {
       ))
     }
     x
-  })
+  }, digits = 2)
 
   # ---- 3D Modeling: pull a GIS Workspace ROI into the 3D selection -------
   # The GIS Workspace lets users draw polygons on the orthomosaic and
@@ -7776,11 +8450,21 @@ server <- function(input, output, session) {
   # request - the user has already drawn the right region on the map.
   observe({
     rois <- roi_collection()
+    # Keep the previously-selected ROI focused when the user adds another
+    # one on the GIS Workspace tab; only pre-select the newest ROI when
+    # the dropdown is currently empty. Drives the cross-tab ergonomics
+    # the user expects: pick on the map, switch tab, the right ROI is
+    # already chosen here.
+    current <- isolate(input$gis_roi_to_3d) %||% ""
+    keep <- nzchar(current) && current %in% names(rois)
+    pick <- if (keep) current
+            else if (length(rois) > 0) names(rois)[length(rois)]
+            else NULL
     updateSelectInput(
       session,
       "gis_roi_to_3d",
       choices  = if (length(rois) == 0) character(0) else names(rois),
-      selected = isolate(input$gis_roi_to_3d) %||% NULL
+      selected = pick
     )
   })
 
@@ -7788,12 +8472,17 @@ server <- function(input, output, session) {
     name <- input$gis_roi_to_3d %||% ""
     rois <- roi_collection()
     if (!nzchar(name) || !name %in% names(rois)) {
-      showNotification("Pick a saved ROI in the dropdown first (Use GIS Workspace ROI section).",
-                       type = "warning", duration = 5)
+      showNotification(
+        if (length(rois) == 0)
+          "No ROIs saved yet. Draw and save one on the GIS Workspace tab first."
+        else
+          "Pick a saved ROI in the dropdown first (Use GIS Workspace ROI section).",
+        type = "warning", duration = 6
+      )
       return()
     }
     if (point_cloud_event() == 0) {
-      showNotification("Load the 3D scene first, then pull the ROI in.",
+      showNotification("Load the 3D scene first (click 'Load 3D scene'), then pull the ROI in.",
                        type = "warning", duration = 5)
       return()
     }
@@ -7804,10 +8493,24 @@ server <- function(input, output, session) {
       return()
     }
 
-    ref_raster <- point_cloud_reference_raster()
+    # Reproject the ROI through the ORTHOMOSAIC's CRS. The ROI was drawn
+    # on the GIS Workspace orthomosaic layer, so its WGS84 coordinates
+    # are anchored to the orthomosaic's georeferencing. Previously this
+    # used point_cloud_reference_raster() which prefers the DSM - on
+    # projects where DSM and orthomosaic happen to be in different CRSs
+    # the selected polygon landed in a slightly different location than
+    # the user drew. We fall back to the DSM only when no orthomosaic
+    # is available, since SOME reference frame is better than refusing.
+    ref_raster <- NULL
+    if (file.exists(input$orthomosaic %||% "")) {
+      ref_raster <- tryCatch(terra::rast(input$orthomosaic)[[1]], error = function(e) NULL)
+    }
+    if (is.null(ref_raster)) {
+      ref_raster <- point_cloud_reference_raster()
+    }
     if (is.null(ref_raster)) {
       showNotification(
-        "Project has no DSM or orthomosaic with a known CRS, so the ROI cannot be reprojected.",
+        "Project has no orthomosaic or DSM with a known CRS, so the ROI cannot be reprojected.",
         type = "warning", duration = 6)
       return()
     }
@@ -7945,7 +8648,7 @@ server <- function(input, output, session) {
 
   output$selection_metrics <- renderTable({
     format_selection_metrics(selection_metrics())
-  })
+  }, digits = 2)
 
   # 3D viewer remote controls. Buttons in the top toolbar send custom
   # messages to the JS handlers registered in tags$head, which in turn
@@ -7986,7 +8689,7 @@ server <- function(input, output, session) {
     selected <- input$modeling_layers %||% character(0)
     layer_map <- list(
       "Points"          = c("points"),
-      "Selected"        = c("selected_points"),
+      "Selected"        = c("selected_points", "selection_bbox"),
       "DSM drape"       = c("dsm_drape", "basemap_plane"),
       "Textured mesh"   = c("textured_mesh"),
       "Trees"           = c("trees"),
@@ -8132,7 +8835,7 @@ server <- function(input, output, session) {
         units  = ""
       ))
     }
-    fmt <- function(x, digits = 3) {
+    fmt <- function(x, digits = 2) {
       if (!is.finite(x)) return("-") else formatC(x, format = "f", digits = digits)
     }
     data.frame(
@@ -8167,7 +8870,7 @@ server <- function(input, output, session) {
       units = c("", "m^3", "m^3", "m^3", "m^2", "m^2", "m", "count", "m^2", "m", "m", "m"),
       stringsAsFactors = FALSE
     )
-  })
+  }, digits = 2)
 
   output$vertical_profile_plot <- renderPlot({
     profile <- vertical_profile()
@@ -8199,7 +8902,7 @@ server <- function(input, output, session) {
     }
     total$color <- unname(classification_palette[total$class])
     total
-  })
+  }, digits = 2)
 
   output$distance_measurement <- renderTable({
     d <- input$distance_measurement
@@ -8212,7 +8915,7 @@ server <- function(input, output, session) {
       unit = c("point_id", "point_id", "m"),
       check.names = FALSE
     )
-  })
+  }, digits = 2)
 
   output$full_roi_status <- renderText({
     full_roi_status_value()
@@ -8236,7 +8939,7 @@ server <- function(input, output, session) {
       updated_at = x$updated_at,
       check.names = FALSE
     )
-  })
+  }, digits = 2)
 
   output$selection_export_paths <- renderText({
     paths <- selection_export_paths()
@@ -8245,13 +8948,18 @@ server <- function(input, output, session) {
   })
 
   output$point_cloud_context_map <- renderLeaflet({
-    base <- leaflet() |>
+    base <- leaflet(options = leafletOptions(
+        worldCopyJump = FALSE,
+        maxBounds = list(c(-85, -180), c(85, 180)),
+        minZoom = 2
+      )) |>
       addMapPane("localOrthomosaicFallback", zIndex = 150) |>
       addMapPane("treeCandidates", zIndex = 420) |>
       addMapPane("classifiedPoints", zIndex = 440) |>
       addMapPane("selectionRoi", zIndex = 460) |>
       add_esri_imagery_tiles(group = "Satellite") |>
-      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap")
+      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
+                       options = providerTileOptions(noWrap = TRUE))
 
     if (!file.exists(input$orthomosaic)) {
       return(base |>
@@ -8442,7 +9150,7 @@ server <- function(input, output, session) {
     x <- tree_candidates()
     validate(need(nrow(x) > 0, "No tree candidates matched the current point-count and height thresholds."))
     format_tree_table(x)
-  })
+  }, digits = 2)
 
   output$selected_tree <- renderTable({
     req(tree_candidates())
@@ -8450,7 +9158,7 @@ server <- function(input, output, session) {
     validate(need(nrow(x) > 0, "No selected tree candidate."))
     id <- input$selected_tree_id %||% x$tree_id[[1]]
     format_tree_table(x[x$tree_id == id, , drop = FALSE])
-  })
+  }, digits = 2)
 
   extracted_field <- eventReactive(input$extract_field, {
     with_error_toast("Extract field samples", {
@@ -8464,7 +9172,7 @@ server <- function(input, output, session) {
   output$field_preview <- renderTable({
     req(extracted_field())
     utils::head(extracted_field(), 20)
-  }, digits = 4)
+  }, digits = 2)
 
   model <- eventReactive(input$fit_model, {
     with_error_toast("Fit biomass model", {
@@ -8641,7 +9349,7 @@ server <- function(input, output, session) {
   output$ts_flights_table <- renderTable({
     ts_refresh_trigger()
     list_flights(input$ts_registry_path)
-  })
+  }, digits = 2)
 
   output$ts_plot <- renderPlot({
     ts_refresh_trigger()

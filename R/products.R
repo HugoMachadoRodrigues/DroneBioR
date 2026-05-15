@@ -122,6 +122,34 @@ local_cache_dir <- function(project, cache_root = file.path(Sys.getenv("HOME"), 
   file.path(cache_root, slug)
 }
 
+#' Resolve a project file path to its local-cache copy when available.
+#'
+#' Reads against the cloud-synced project folder (OneDrive / iCloud /
+#' Dropbox) can stall the UI for seconds at a time, especially in the
+#' 3D Modeling tab where the DSM, point cloud and orthomosaic are all
+#' large. After `sync_outputs_to_local_cache()` has run, those files
+#' live under `~/.dronebior/cache/<slug>/`. This helper returns the
+#' cached copy when it exists (same basename inside `local_cache_dir`),
+#' and the original path otherwise. Cheap and safe to call on every
+#' reactive invocation.
+#'
+#' @param path Canonical filesystem path (typically from
+#'   `odm_product_paths(project)`).
+#' @param project A `dronebio_project` object whose cache directory
+#'   will be inspected. When `NULL`, returns `path` unchanged.
+#' @return Cached path if a copy exists, otherwise the input `path`.
+#' @noRd
+cache_aware_path <- function(path, project) {
+  if (is.null(project) || !is.character(path) || !length(path) ||
+      !nzchar(path)) {
+    return(path)
+  }
+  cache_dir <- tryCatch(local_cache_dir(project), error = function(e) NULL)
+  if (is.null(cache_dir) || !nzchar(cache_dir)) return(path)
+  cached <- file.path(cache_dir, basename(path))
+  if (file.exists(cached)) cached else path
+}
+
 #' Copy ODM outputs to a fast local cache once, return the new paths
 #'
 #' Use when the project root lives inside OneDrive / Google Drive /
