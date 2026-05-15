@@ -3542,13 +3542,19 @@ server <- function(input, output, session) {
           errorTileUrl = transparent_tile,
           zIndex = 220,
           keepBuffer = 8,
-          # The world map must stop at lng = +/-180 with NO repeated
-          # copies. The empty space that appears past the world bounds
-          # (the gray void left by the default leaflet container colour)
-          # is dressed up by a CSS rule below that paints
-          # `.leaflet-container` a deep ocean blue, so visually the
-          # margin reads as ocean instead of as a missing-tile area.
-          noWrap = TRUE
+          # noWrap: the world map stops at lng = +/-180, NO duplicate
+          # copies of Australia / Americas appear past the dateline.
+          noWrap = TRUE,
+          # bounds: Esri's World Imagery server returns an actual grey
+          # tile reading "Map data not yet available" when a tile is
+          # requested past lng = +/-180. The errorTileUrl callback does
+          # NOT save us here because Esri responds with HTTP 200 - the
+          # tile is technically valid, it just has placeholder content.
+          # Setting `bounds` here tells leaflet not to issue tile
+          # requests outside the world bounds at all, so the area
+          # beyond +/-180 shows the leaflet-container background colour
+          # (painted ocean-blue by the CSS rule below).
+          bounds = list(c(-85, -180), c(85, 180))
         )
       )
   }
@@ -4729,7 +4735,10 @@ server <- function(input, output, session) {
       )) |>
       add_esri_imagery_tiles(group = "Satellite") |>
       addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
-                       options = providerTileOptions(noWrap = TRUE)) |>
+                       options = providerTileOptions(
+                         noWrap = TRUE,
+                         bounds = list(c(-85, -180), c(85, 180))
+                       )) |>
       addScaleBar(position = "bottomleft") |>
       setView(lng = 0, lat = 0, zoom = 2)
 
@@ -8971,7 +8980,10 @@ server <- function(input, output, session) {
       addMapPane("selectionRoi", zIndex = 460) |>
       add_esri_imagery_tiles(group = "Satellite") |>
       addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
-                       options = providerTileOptions(noWrap = TRUE))
+                       options = providerTileOptions(
+                         noWrap = TRUE,
+                         bounds = list(c(-85, -180), c(85, 180))
+                       ))
 
     if (!file.exists(input$orthomosaic)) {
       return(base |>
