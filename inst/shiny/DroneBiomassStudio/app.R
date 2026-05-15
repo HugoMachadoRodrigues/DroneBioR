@@ -2731,15 +2731,18 @@ ui <- page_navbar(
         height: 100%;
         overflow: visible;
       }
-      /* The actual overflow trick: the image is a flex item with an
-         explicit height bigger than its parent's. align-items:
-         center keeps it vertically centered on the parent, and
-         overflow:visible on the parent (set above) lets it spill
-         above and below the navbar without expanding the navbar. */
+      /* The overflow trick: the image is a flex item with an
+         explicit height bigger than its parent's. align-self:
+         flex-start anchors the image's TOP to the navbar's top,
+         so the overflow happens entirely BELOW the navbar (into
+         the page area, where there is room). Without flex-start
+         the image would centre vertically and its top half would
+         get clipped against the top of the viewport. */
       .dronebio-navbar-brand img {
         display: block;
         height: 160px;
         flex-shrink: 0;
+        align-self: flex-start;
       }
       .dronebio-navbar-title {
         white-space: nowrap;
