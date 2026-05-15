@@ -3109,104 +3109,150 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 340,
-        sidebar_section("Scene source", tone = "scene"),
-        selectInput(
-          "viewer_cloud_source",
-          "3D viewer source",
-          choices = c("Full georeferenced LAS/LAZ/COPC sample", "PLY preview fallback"),
-          selected = if (file.exists(default_full_cloud(default_products))) "Full georeferenced LAS/LAZ/COPC sample" else "PLY preview fallback"
-        ),
-        textInput("full_cloud_path", "Full-resolution point cloud (LAS/LAZ/COPC)", value = default_full_cloud(default_products)),
-        textInput("ply_path", "Preview point cloud (PLY)", value = file.path(default_project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")),
-        numericInput("max_points", "Maximum preview points", value = 35000, min = 1000, max = 150000, step = 1000),
-        div(class = "sidebar-note", "Switch to the PLY preview for fast iteration; the LAS/LAZ/COPC source gives full georeferenced metrics and feeds ROI recalculation."),
-
-        sidebar_section("Scene composition", tone = "scene"),
-        checkboxInput("show_draped_dsm", "Show DSM as 3D draped orthomosaic (Pix4D-style)", value = TRUE),
-        checkboxInput("show_textured_mesh", "Show textured 3D mesh (ODM OBJ)", value = FALSE),
-        selectInput(
-          "point_color_mode",
-          "Point symbology",
-          choices = c("RGB", "Classification", "Height"),
-          selected = "RGB"
-        ),
-        sliderInput("point_size_pct", "Point size (%)",
-                    min = 25, max = 300, value = 100, step = 25, ticks = FALSE),
-        selectInput(
-          "viewer_bg_theme",
-          "Viewer background",
-          choices = c("Dark (navy)" = "dark",
-                      "Light (slate)" = "light",
-                      "White" = "white"),
-          selected = "dark"
-        ),
-        numericInput("min_point_height", "Point height filter min (m)", value = 0, min = 0, max = 100, step = 0.5),
-        numericInput("max_point_height", "Point height filter max (m)", value = 100, min = 0, max = 150, step = 0.5),
-
-        sidebar_section("Selection & classification", tone = "select"),
-        selectInput(
-          "selection_tool",
-          "3D interaction tool",
-          choices = c(
-            "Inspect trees",
-            "Box selection",
-            "Lasso selection",
-            "Polygon selection",
-            "Measure distance",
-            "Manual crown edit"
+        # Sidebar restructured into accordions. Essentials (scene
+        # source + GIS ROI bridge) are open; advanced controls
+        # (display, classification, tree detection, volume math)
+        # collapse so the panel does not feel like a 40-row form.
+        # The interaction-tool selectInput is hidden because the
+        # selection toolbar above the viewer now drives it.
+        accordion(
+          open = c("Scene source", "GIS Workspace ROI"),
+          accordion_panel(
+            "Scene source",
+            selectInput(
+              "viewer_cloud_source", "3D viewer source",
+              choices = c("Full georeferenced LAS/LAZ/COPC sample",
+                          "PLY preview fallback"),
+              selected = if (file.exists(default_full_cloud(default_products)))
+                           "Full georeferenced LAS/LAZ/COPC sample"
+                         else "PLY preview fallback"
+            ),
+            textInput("full_cloud_path",
+                      "Full-resolution point cloud (LAS/LAZ/COPC)",
+                      value = default_full_cloud(default_products)),
+            textInput("ply_path", "Preview point cloud (PLY)",
+                      value = file.path(default_project$odm_project_dir,
+                                        "odm_filterpoints",
+                                        "point_cloud.ply")),
+            numericInput("max_points", "Maximum preview points",
+                         value = 35000, min = 1000, max = 150000,
+                         step = 1000),
+            div(class = "d-flex gap-2 mt-2",
+                actionButton("open_file_browser_3d", "Browse files",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("load_3d_scene", "Load 3D scene",
+                             class = "btn-primary"))
           ),
-          selected = "Box selection"
-        ),
-        selectInput(
-          "classification_label",
-          "Class to assign",
-          choices = c("Unclassified", "Canopy", "Ground", "Tree crown", "Stem/trunk", "Low vegetation", "Noise", "Exclude")
-        ),
-        actionButton("classify_selection", "Classify selected points", class = "btn-outline-secondary"),
-
-        sidebar_section("Use GIS Workspace ROI", tone = "link"),
-        selectInput("gis_roi_to_3d", "Saved ROI", choices = character(0),
-                    selected = NULL),
-        actionButton("apply_gis_roi_to_3d", "Pull ROI into 3D selection",
-                     class = "btn-outline-secondary"),
-        div(class = "sidebar-note",
-            "Saved ROIs from the GIS Workspace tab show up here. Use them to drive 3D ROI metrics from polygons you already drew on the orthomosaic."),
-
-        sidebar_section("Tree detection", tone = "trees"),
-        numericInput("tree_grid", "Tree candidate grid size (m)", value = 4, min = 1, max = 15, step = 0.5),
-        numericInput("min_tree_height", "Minimum canopy height (m)", value = 1.5, min = 0.1, max = 20, step = 0.1),
-        numericInput("min_tree_points", "Minimum points per candidate", value = 5, min = 1, max = 100, step = 1),
-        checkboxInput("use_full_roi_metrics", "Recalculate selected ROI with full cloud + CHM", value = TRUE),
-
-        sidebar_section("Volume & profile", tone = "volume"),
-        numericInput("voxel_size", "Volume voxel size (m)", value = 0.5, min = 0.05, max = 5, step = 0.05),
-        numericInput("profile_bin_size", "Vertical profile bin size (m)", value = 1, min = 0.1, max = 10, step = 0.1),
-        selectInput(
-          "survey_volume_method",
-          "Survey volumes - base reference",
-          choices = c(
-            "External DTM (canopy / true biomass)"      = "dtm",
-            "Minimum Z inside ROI (classic stockpile)"  = "min_z",
-            "Mean Z inside ROI"                         = "mean_z",
-            "Ground quantile (robust min)"              = "ground_quantile",
-            "User-defined plane (Z = base value)"       = "user_plane",
-            "Perimeter TIN (Pix4D-style stockpile)"     = "perimeter_tin"
+          accordion_panel(
+            "GIS Workspace ROI",
+            selectInput("gis_roi_to_3d", "Saved ROI",
+                        choices = character(0), selected = NULL),
+            actionButton("apply_gis_roi_to_3d",
+                         "Pull ROI into 3D selection",
+                         class = "btn-outline-secondary w-100")
           ),
-          selected = "dtm"
+          accordion_panel(
+            "Display options",
+            checkboxInput("show_draped_dsm",
+                          "Show DSM as 3D draped orthomosaic (Pix4D-style)",
+                          value = TRUE),
+            checkboxInput("show_textured_mesh",
+                          "Show textured 3D mesh (ODM OBJ)",
+                          value = FALSE),
+            selectInput("point_color_mode", "Point symbology",
+                        choices = c("RGB", "Classification", "Height"),
+                        selected = "RGB"),
+            sliderInput("point_size_pct", "Point size (%)",
+                        min = 25, max = 300, value = 100,
+                        step = 25, ticks = FALSE),
+            selectInput("viewer_bg_theme", "Viewer background",
+                        choices = c("Dark (navy)" = "dark",
+                                    "Light (slate)" = "light",
+                                    "White" = "white"),
+                        selected = "dark"),
+            numericInput("min_point_height",
+                         "Point height filter min (m)",
+                         value = 0, min = 0, max = 100, step = 0.5),
+            numericInput("max_point_height",
+                         "Point height filter max (m)",
+                         value = 100, min = 0, max = 150, step = 0.5)
+          ),
+          accordion_panel(
+            "Classification",
+            selectInput("classification_label", "Class to assign",
+                        choices = c("Unclassified", "Canopy", "Ground",
+                                    "Tree crown", "Stem/trunk",
+                                    "Low vegetation", "Noise",
+                                    "Exclude")),
+            actionButton("classify_selection",
+                         "Classify selected points",
+                         class = "btn-outline-secondary w-100")
+          ),
+          accordion_panel(
+            "Tree detection",
+            numericInput("tree_grid",
+                         "Tree candidate grid size (m)",
+                         value = 4, min = 1, max = 15, step = 0.5),
+            numericInput("min_tree_height",
+                         "Minimum canopy height (m)",
+                         value = 1.5, min = 0.1, max = 20, step = 0.1),
+            numericInput("min_tree_points",
+                         "Minimum points per candidate",
+                         value = 5, min = 1, max = 100, step = 1),
+            checkboxInput("use_full_roi_metrics",
+                          "Recalculate selected ROI with full cloud + CHM",
+                          value = TRUE)
+          ),
+          accordion_panel(
+            "Volume & profile",
+            numericInput("voxel_size", "Volume voxel size (m)",
+                         value = 0.5, min = 0.05, max = 5, step = 0.05),
+            numericInput("profile_bin_size",
+                         "Vertical profile bin size (m)",
+                         value = 1, min = 0.1, max = 10, step = 0.1),
+            selectInput(
+              "survey_volume_method",
+              "Survey volumes - base reference",
+              choices = c(
+                "External DTM (canopy / true biomass)"      = "dtm",
+                "Minimum Z inside ROI (classic stockpile)"  = "min_z",
+                "Mean Z inside ROI"                         = "mean_z",
+                "Ground quantile (robust min)"              = "ground_quantile",
+                "User-defined plane (Z = base value)"       = "user_plane",
+                "Perimeter TIN (Pix4D-style stockpile)"     = "perimeter_tin"
+              ),
+              selected = "dtm"
+            ),
+            numericInput("survey_user_plane_z", "User-plane Z (m)",
+                         value = 0, step = 0.1),
+            numericInput("survey_ground_quantile",
+                         "Ground quantile (0..1)",
+                         value = 0.05, min = 0, max = 0.5, step = 0.01)
+          ),
+          accordion_panel(
+            "Selection actions",
+            textInput("selection_label", "Selection / ROI label",
+                      value = "roi_1"),
+            div(class = "d-flex flex-column gap-2",
+                actionButton("clear_point_selection", "Clear selection",
+                             class = "btn-outline-secondary"),
+                actionButton("save_manual_crown", "Save/update crown ROI",
+                             class = "btn-outline-secondary"),
+                actionButton("delete_manual_crown", "Delete crown ROI",
+                             class = "btn-outline-secondary"),
+                actionButton("export_selection", "Export selected ROI",
+                             class = "btn-outline-secondary"))
+          )
         ),
-        numericInput("survey_user_plane_z", "User-plane Z (m)", value = 0, step = 0.1),
-        numericInput("survey_ground_quantile", "Ground quantile (0..1)",
-                     value = 0.05, min = 0, max = 0.5, step = 0.01),
-
-        sidebar_section("Actions", tone = "actions"),
-        textInput("selection_label", "Selection / ROI label", value = "roi_1"),
-        actionButton("clear_point_selection", "Clear selection", class = "btn-outline-secondary"),
-        actionButton("save_manual_crown", "Save/update crown ROI", class = "btn-outline-secondary"),
-        actionButton("delete_manual_crown", "Delete crown ROI", class = "btn-outline-secondary"),
-        actionButton("export_selection", "Export selected ROI", class = "btn-outline-secondary"),
-        actionButton("open_file_browser_3d", "Browse project files", class = "btn-outline-secondary"),
-        actionButton("load_3d_scene", "Load 3D scene", class = "btn-primary"),
-        div(class = "sidebar-note", "Click a canopy marker in the 3D view to inspect approximate height, crown diameter and crown volume.")
+        # Hidden input: the selection toolbar above the viewer drives
+        # this. Kept here so every existing observer that reads
+        # input$selection_tool keeps working unchanged.
+        div(style = "display:none;",
+            selectInput("selection_tool", NULL,
+                        choices = c("Inspect trees", "Box selection",
+                                    "Lasso selection", "Polygon selection",
+                                    "Measure distance", "Manual crown edit"),
+                        selected = "Box selection"))
       ),
       div(
         class = "main-scroll",
@@ -3267,6 +3313,26 @@ ui <- page_navbar(
         ),
         div(
           class = "modeling-toolbar",
+          # CAD-style selection toolbar. Replaces the "3D interaction
+          # tool" select dropdown that used to live in the sidebar.
+          # The active tool gets a green .active class via a custom
+          # message handler; clicks here drive the hidden
+          # input$selection_tool selectInput.
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Tool"),
+              actionButton("tool_3d_inspect",  "Inspect",
+                           class = "gis-tool-btn"),
+              actionButton("tool_3d_box",      "Box",
+                           class = "gis-tool-btn"),
+              actionButton("tool_3d_lasso",    "Lasso",
+                           class = "gis-tool-btn"),
+              actionButton("tool_3d_polygon",  "Polygon",
+                           class = "gis-tool-btn"),
+              actionButton("tool_3d_measure",  "Measure",
+                           class = "gis-tool-btn"),
+              actionButton("tool_3d_crown",    "Crown",
+                           class = "gis-tool-btn")),
+          tags$span(class = "toolbar-divider"),
           div(class = "toolbar-group",
               tags$span(class = "toolbar-group-label", "Load"),
               actionButton("open_file_browser_3d_main", "Browse files", class = "btn-outline-secondary"),
@@ -3424,6 +3490,20 @@ ui <- page_navbar(
               )
             )
           )
+        ),
+        # 3D Modeling cross-tab CTA row. Mirrors the GIS Workspace
+        # pattern: once the user has finished inspecting the cloud,
+        # one click jumps to the next stage of the analysis.
+        div(
+          class = "gis-cta-row",
+          actionButton("3d_cta_gis",      "<-- Back to GIS Workspace",
+                       class = "btn-outline-secondary"),
+          actionButton("3d_cta_spectral", "Run Spectral QA -->",
+                       class = "btn-outline-primary"),
+          actionButton("3d_cta_field",    "Open Field Models -->",
+                       class = "btn-outline-secondary"),
+          actionButton("3d_cta_export",   "Open Exports -->",
+                       class = "btn-outline-secondary")
         )
       )
     )
@@ -9627,6 +9707,60 @@ server <- function(input, output, session) {
   observeEvent(input$cam_side,  { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "side")) })
   observeEvent(input$cam_iso,   { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "iso")) })
   observeEvent(input$cam_frame, { session$sendCustomMessage("dronebior_3d_camera_preset", list(name = "frame")) })
+
+  # 3D Modeling toolbar: CAD-style selection-tool buttons that drive
+  # the hidden input$selection_tool selectInput. Each maps 1:1 to one
+  # of the existing tool names so every downstream observer keeps
+  # working unchanged.
+  observeEvent(input$tool_3d_inspect, {
+    updateSelectInput(session, "selection_tool", selected = "Inspect trees")
+  })
+  observeEvent(input$tool_3d_box, {
+    updateSelectInput(session, "selection_tool", selected = "Box selection")
+  })
+  observeEvent(input$tool_3d_lasso, {
+    updateSelectInput(session, "selection_tool", selected = "Lasso selection")
+  })
+  observeEvent(input$tool_3d_polygon, {
+    updateSelectInput(session, "selection_tool", selected = "Polygon selection")
+  })
+  observeEvent(input$tool_3d_measure, {
+    updateSelectInput(session, "selection_tool", selected = "Measure distance")
+  })
+  observeEvent(input$tool_3d_crown, {
+    updateSelectInput(session, "selection_tool", selected = "Manual crown edit")
+  })
+  # Sync the active highlight in the 3D selection toolbar.
+  observe({
+    tool <- input$selection_tool %||% "Box selection"
+    active_id <- switch(tool,
+      "Inspect trees"    = "tool_3d_inspect",
+      "Box selection"    = "tool_3d_box",
+      "Lasso selection"  = "tool_3d_lasso",
+      "Polygon selection" = "tool_3d_polygon",
+      "Measure distance" = "tool_3d_measure",
+      "Manual crown edit" = "tool_3d_crown",
+      "tool_3d_box")
+    session$sendCustomMessage("dronebior_gis_toolbar_active",
+                              list(id = active_id,
+                                   all = c("tool_3d_inspect", "tool_3d_box",
+                                           "tool_3d_lasso", "tool_3d_polygon",
+                                           "tool_3d_measure", "tool_3d_crown")))
+  })
+
+  # 3D Modeling cross-tab CTAs.
+  observeEvent(input$`3d_cta_gis`, {
+    updateNavbarPage(session, "main_nav", selected = "GIS Workspace")
+  })
+  observeEvent(input$`3d_cta_spectral`, {
+    updateNavbarPage(session, "main_nav", selected = "Spectral Analytics")
+  })
+  observeEvent(input$`3d_cta_field`, {
+    updateNavbarPage(session, "main_nav", selected = "Field Models")
+  })
+  observeEvent(input$`3d_cta_export`, {
+    updateNavbarPage(session, "main_nav", selected = "Exports")
+  })
 
   # Live layer visibility from the checkboxGroupInput. We send ONE
   # message per layer so the JS handler can flip the .visible flag
