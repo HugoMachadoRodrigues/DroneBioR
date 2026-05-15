@@ -1805,6 +1805,15 @@ ui <- page_navbar(
       html, body { height: auto !important; min-height: 100%; overflow-y: auto !important; }
       body { background: #f6f8fb; }
       .navbar { box-shadow: 0 1px 8px rgba(16, 24, 40, 0.08); }
+      /* Stops the leaflet container from showing a pale-grey 'void'
+         outside the world bounds when the map tiles have noWrap = TRUE.
+         The world stops cleanly at lng = +/-180 (no duplicate Australias)
+         and any pixels past that read as ocean-blue instead of as a
+         broken tile area. The colour was sampled from Esri World Imagery
+         deep ocean so the join between tile and background is invisible
+         on the Satellite basemap; on the Light basemap it reads as a
+         dark frame. */
+      .leaflet-container { background-color: #0e2c43 !important; }
       .tab-content, .tab-pane, .bslib-page-fill {
         height: auto !important;
         max-height: none !important;
@@ -3532,14 +3541,14 @@ server <- function(input, output, session) {
           unloadInvisibleTiles = FALSE,
           errorTileUrl = transparent_tile,
           zIndex = 220,
-          keepBuffer = 8
-          # noWrap intentionally omitted: it stopped the "multiple worlds
-          # at zoom 0/1" issue but at zoom 2/3 left grey bars on the sides
-          # because one world copy is narrower than a typical container.
-          # We rely on minZoom = 2 (set in leafletOptions) so the user
-          # cannot zoom far enough out for duplicates to be obvious;
-          # tiles wrap naturally at the dateline for any remaining
-          # margin and the canvas reads as a continuous map.
+          keepBuffer = 8,
+          # The world map must stop at lng = +/-180 with NO repeated
+          # copies. The empty space that appears past the world bounds
+          # (the gray void left by the default leaflet container colour)
+          # is dressed up by a CSS rule below that paints
+          # `.leaflet-container` a deep ocean blue, so visually the
+          # margin reads as ocean instead of as a missing-tile area.
+          noWrap = TRUE
         )
       )
   }
@@ -4708,17 +4717,19 @@ server <- function(input, output, session) {
 
   output$gis_map <- renderLeaflet({
     # leafletOptions: minZoom = 2 keeps the user from zooming out far
-    # enough to see multiple copies of the world side by side (the
-    # original "mapa mundi com varias cenas iguais" symptom). The
-    # default tile-wrap behaviour is kept so the canvas reads as a
-    # continuous map at zoom 2/3 instead of leaving grey margins.
-    # worldCopyJump = TRUE makes panning across the dateline smooth.
+    # enough to see neighbouring world copies. worldCopyJump stays
+    # FALSE because the tile layers also pass noWrap = TRUE - the
+    # world stops cleanly at lng = +/-180 with no duplicates. The
+    # resulting empty area outside the world is hidden by the
+    # `.leaflet-container { background-color: ... }` rule loaded in
+    # the head of the page.
     m <- leaflet(options = leafletOptions(
-        worldCopyJump = TRUE,
+        worldCopyJump = FALSE,
         minZoom = 2
       )) |>
       add_esri_imagery_tiles(group = "Satellite") |>
-      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap") |>
+      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
+                       options = providerTileOptions(noWrap = TRUE)) |>
       addScaleBar(position = "bottomleft") |>
       setView(lng = 0, lat = 0, zoom = 2)
 
@@ -8951,7 +8962,7 @@ server <- function(input, output, session) {
 
   output$point_cloud_context_map <- renderLeaflet({
     base <- leaflet(options = leafletOptions(
-        worldCopyJump = TRUE,
+        worldCopyJump = FALSE,
         minZoom = 2
       )) |>
       addMapPane("localOrthomosaicFallback", zIndex = 150) |>
@@ -8959,7 +8970,8 @@ server <- function(input, output, session) {
       addMapPane("classifiedPoints", zIndex = 440) |>
       addMapPane("selectionRoi", zIndex = 460) |>
       add_esri_imagery_tiles(group = "Satellite") |>
-      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap")
+      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
+                       options = providerTileOptions(noWrap = TRUE))
 
     if (!file.exists(input$orthomosaic)) {
       return(base |>
