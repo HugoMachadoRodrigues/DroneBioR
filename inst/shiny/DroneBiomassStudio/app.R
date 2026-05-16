@@ -9274,6 +9274,58 @@ server <- function(input, output, session) {
     DroneBioR:::cache_aware_path(raw, project())
   })
 
+  # When the resolved PLY path is still on a cloud-sync folder
+  # (OneDrive / iCloud / Dropbox / Google Drive), copy it ONCE into
+  # the project's local cache and use the local copy from then on.
+  # Without this, every Load 3D scene click on a fresh-from-sync
+  # project triggers Files-On-Demand to rehydrate the PLY over the
+  # network - and after periods of inactivity the OS may dehydrate
+  # again. The local cache copy is permanent until the user wipes
+  # it, so the second Load (and every Load after a long idle)
+  # stays sub-second. Returns the (possibly new) local path; falls
+  # back to the original path if the copy fails.
+  materialize_ply_to_cache <- function(ply_path, proj) {
+    if (!is.character(ply_path) || !nzchar(ply_path) ||
+        !file.exists(ply_path)) {
+      return(ply_path)
+    }
+    if (is.null(proj)) return(ply_path)
+    sync_label <- tryCatch(DroneBioR:::is_cloud_sync_path(ply_path),
+                           error = function(e) NA_character_)
+    if (is.na(sync_label)) return(ply_path)  # not on cloud-sync
+    cache_dir <- tryCatch(DroneBioR:::local_cache_dir(proj),
+                          error = function(e) NULL)
+    if (is.null(cache_dir) || !nzchar(cache_dir)) return(ply_path)
+    dest <- file.path(cache_dir, basename(ply_path))
+    src_info <- file.info(ply_path)
+    dest_info <- if (file.exists(dest)) file.info(dest) else NULL
+    if (!is.null(dest_info) &&
+        isTRUE(dest_info$size  == src_info$size) &&
+        isTRUE(dest_info$mtime >= src_info$mtime)) {
+      return(dest)  # already cached, fresh
+    }
+    note_id <- showNotification(
+      paste0("Caching PLY preview locally from ", sync_label,
+             " (", round(src_info$size / 1024^2, 1), " MB). ",
+             "One-time copy so future Load 3D scene clicks are instant."),
+      type     = "message",
+      duration = NULL,
+      closeButton = FALSE
+    )
+    on.exit(removeNotification(note_id), add = TRUE)
+    dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+    ok <- tryCatch(
+      withProgress(message = "Caching PLY", value = 0.1, {
+        incProgress(0.5, detail = paste0("Copying ", basename(ply_path)))
+        result <- file.copy(ply_path, dest, overwrite = TRUE)
+        incProgress(0.4, detail = "Done")
+        result
+      }),
+      error = function(e) FALSE
+    )
+    if (isTRUE(ok) && file.exists(dest)) dest else ply_path
+  }
+
   point_cloud <- reactive({
     with_error_toast("Load point cloud", {
       full_path <- resolved_full_cloud_path()
@@ -9306,6 +9358,13 @@ server <- function(input, output, session) {
       } else {
         validate(need(nzchar(ply_path) && file.exists(ply_path),
                       paste("PLY file not found:", ply_path)))
+        # Auto-migrate the PLY from cloud-sync to the local cache on
+        # the first Load. After this returns, ply_path points at the
+        # local copy (or stays on cloud sync if copy failed); all
+        # downstream attributes use the actual path read from.
+        ply_path <- materialize_ply_to_cache(ply_path,
+                                             tryCatch(project(),
+                                                      error = function(e) NULL))
         pts <- read_ply_point_cloud(ply_path, max_points = input$max_points)
         pts <- add_point_heights(pts)
         pts <- add_cloud_runtime_attributes(pts, ply_path, "local_preview", "local low-Z proxy")
