@@ -39,6 +39,63 @@ downsample_raster <- function(x, size = 90000) {
   terra::spatSample(x, size = size, method = "regular", as.raster = TRUE, na.rm = FALSE)
 }
 
+# ---- 3D viewer point-cloud binary transport ---------------------------- #
+# The three.js viewer used to receive its point cloud as inline JSON
+# inside the renderUI <script> tag (point_json <- jsonlite::toJSON(...)).
+# For 150 k points that is ~28 MB of HTML pushed over the websocket
+# and then a slow JSON.parse() in the browser. We now pack the same
+# point data as a single binary file the browser fetches over HTTP,
+# which is ~5-7x smaller and dramatically faster to parse:
+#   * positions: float32 x 3 x N      (12 bytes / pt)
+#   * point_ids: uint32 x N           ( 4 bytes / pt)
+#   * class_ids: uint8  x N           ( 1 byte  / pt)
+#   * display_colors (RGB): uint8 x 3 x N (3 bytes / pt)
+#                                          ===========
+#                                          20 bytes / pt
+#
+# Class color used for the selection-highlight outline is computed
+# JS-side from class_id + a small palette JSON, so it does NOT need
+# to be repeated per point in the binary.
+#
+# Header (16 bytes, little-endian):
+#   magic    uint32 = 0x44423350 ('DB3P')
+#   version  uint32 = 1
+#   n_points uint32
+#   reserved uint32
+point_cloud_bin_dir <- function() {
+  d <- file.path(tempdir(), "dronebior_pcloud")
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  d
+}
+
+pack_point_cloud_binary <- function(points, palette, out_file) {
+  con <- file(out_file, "wb")
+  on.exit(close(con), add = TRUE)
+  n <- nrow(points)
+  # Header
+  writeBin(as.integer(0x44423350L), con, size = 4, endian = "little")
+  writeBin(1L,                     con, size = 4, endian = "little")
+  writeBin(as.integer(n),          con, size = 4, endian = "little")
+  writeBin(0L,                     con, size = 4, endian = "little")
+  if (n == 0L) return(out_file)
+  # Positions: x, y, z interleaved as Float32
+  pos_flat <- as.numeric(rbind(points$x, points$y, points$z))
+  writeBin(pos_flat, con, size = 4, endian = "little")
+  # Point IDs: Uint32
+  writeBin(as.integer(points$point_id), con, size = 4, endian = "little")
+  # Class IDs: Uint8 (0-indexed lookup into palette)
+  class_names <- names(palette)
+  class_to_id <- setNames(seq_along(class_names) - 1L, class_names)
+  unclassified_id <- as.integer(class_to_id[["Unclassified"]] %||% 0L)
+  raw_ids <- class_to_id[as.character(points$class)]
+  raw_ids[is.na(raw_ids)] <- unclassified_id
+  writeBin(as.integer(raw_ids), con, size = 1, endian = "little")
+  # Display colors: R, G, B interleaved as Uint8
+  rgb_mat <- grDevices::col2rgb(points$display_color %||% "#94a3b8")
+  writeBin(as.integer(c(rgb_mat)), con, size = 1, endian = "little")
+  out_file
+}
+
 # All user-created GIS Workspace artefacts (annotations and ROIs) are
 # saved under a single subfolder of the project so the user has one
 # obvious place to look in and version-control. Selection exports from
@@ -4273,6 +4330,18 @@ ui <- page_navbar(
 )
 
 server <- function(input, output, session) {
+  # Expose the point-cloud binary cache directory as a Shiny resource
+  # path so the three.js viewer can fetch packed point buffers via
+  # plain HTTP. addResourcePath is idempotent across sessions (it
+  # warns if the path is already mapped, then keeps the existing
+  # mapping); wrap in tryCatch so a second user session does not
+  # tear down the working mapping for the first.
+  tryCatch(
+    shiny::addResourcePath("dronebior_pcloud", point_cloud_bin_dir()),
+    error   = function(e) NULL,
+    warning = function(w) NULL
+  )
+
   # Sync the project-root and images-dir inputs between the Processing
   # Engine sidebar (`*_pe`) and the GIS Workspace sidebar. Each observer
   # only updates when the value actually differs, so the cross-update
@@ -9612,11 +9681,28 @@ server <- function(input, output, session) {
     # dronebior_3d_set_selection custom message instead.
     points$selected <- points$point_id %in% isolate(selected_point_ids())
 
-    point_json <- jsonlite::toJSON(
-      points[, c("point_id", "x", "y", "z", "height_m", "display_color", "selected", "class", "class_color")],
-      dataframe = "rows",
-      digits = 7,
+    # Pack the point cloud into a binary file and pass the URL to
+    # the viewer script. Saves ~5-7x payload + parse time vs the
+    # previous inline JSON path.
+    bin_filename <- sprintf("pc_%d_%d.bin",
+                            as.integer(Sys.getpid()),
+                            as.integer(Sys.time()))
+    bin_path <- file.path(point_cloud_bin_dir(), bin_filename)
+    pack_point_cloud_binary(points, classification_palette, bin_path)
+    point_bin_url     <- paste0("dronebior_pcloud/", bin_filename)
+    point_bin_url_json <- jsonlite::toJSON(point_bin_url, auto_unbox = TRUE)
+    point_meta_json <- jsonlite::toJSON(
+      list(
+        n              = nrow(points),
+        class_names    = names(classification_palette),
+        class_colors   = unname(classification_palette),
+        unclassified_id = unname(which(names(classification_palette) == "Unclassified") - 1L)
+      ),
       auto_unbox = TRUE
+    )
+    initial_selected_json <- jsonlite::toJSON(
+      as.integer(isolate(selected_point_ids()) %||% integer(0)),
+      auto_unbox = FALSE
     )
     tree_json <- jsonlite::toJSON(trees, dataframe = "rows", digits = 7, auto_unbox = TRUE)
     mode_json <- jsonlite::toJSON(input$selection_tool, auto_unbox = TRUE)
@@ -9674,7 +9760,14 @@ server <- function(input, output, session) {
             return;
           }
 
-          const points = __POINT_JSON__;
+          // Point cloud arrives over HTTP as a packed binary buffer
+          // (see pack_point_cloud_binary in app.R / R-side helper).
+          // The fetch happens AFTER the rest of the scene constants
+          // are declared, and the actual scene init is wrapped in
+          // initScene() called from the .then() callback.
+          const pointBinUrl       = __POINT_BIN_URL__;
+          const pointMeta         = __POINT_META_JSON__;
+          const initialSelectedIds = __INITIAL_SELECTED_JSON__;
           const trees = __TREE_JSON__;
           const mode = __MODE_JSON__;
           const savedCameraState = __CAMERA_STATE_JSON__;
@@ -9682,6 +9775,53 @@ server <- function(input, output, session) {
           const meshUrl = __MESH_URL_JSON__;
           const meshMtlUrl = __MESH_MTL_URL_JSON__;
           const drapedDsm = __DRAPED_DSM_JSON__;
+
+          // Decode the binary point cloud (header + 4 sections) into
+          // an array of point objects shaped like the legacy JSON
+          // path expected. Reconstruction is fast: one O(N) loop
+          // over typed arrays, no JSON.parse. Empty buffer (n = 0)
+          // returns an empty array so the empty-scene placeholder
+          // still wires up.
+          function buildPointsFromBinary(buf) {
+            const dv = new DataView(buf);
+            const magic = dv.getUint32(0, true);
+            if (magic !== 0x44423350) {
+              throw new Error('Unexpected point-cloud magic: 0x' + magic.toString(16));
+            }
+            const version = dv.getUint32(4, true);
+            const n = dv.getUint32(8, true);
+            if (n === 0) return [];
+            let off = 16;
+            const positions = new Float32Array(buf, off, n * 3); off += n * 12;
+            const pointIds  = new Uint32Array(buf, off, n);      off += n * 4;
+            const classIds  = new Uint8Array(buf, off, n);       off += n;
+            const colors    = new Uint8Array(buf, off, n * 3);
+            const selSet = new Set(initialSelectedIds || []);
+            const toHex2 = function(v) {
+              return ('00' + v.toString(16)).slice(-2);
+            };
+            const classNames  = (pointMeta && pointMeta.class_names)  || [];
+            const classColors = (pointMeta && pointMeta.class_colors) || [];
+            const out = new Array(n);
+            for (let i = 0; i < n; i++) {
+              const cid = classIds[i];
+              out[i] = {
+                point_id:      pointIds[i],
+                x:             positions[i * 3],
+                y:             positions[i * 3 + 1],
+                z:             positions[i * 3 + 2],
+                display_color: '#' + toHex2(colors[i * 3]) +
+                                     toHex2(colors[i * 3 + 1]) +
+                                     toHex2(colors[i * 3 + 2]),
+                class:         classNames[cid]  || 'Unclassified',
+                class_color:   classColors[cid] || '#94a3b8',
+                selected:      selSet.has(pointIds[i])
+              };
+            }
+            return out;
+          }
+
+          function initScene(points) {
           const width = container.clientWidth;
           const height = container.clientHeight || 560;
           const scene = new THREE.Scene();
@@ -10606,9 +10746,30 @@ server <- function(input, output, session) {
             }
           }
           animate();
+          } // end initScene
+
+          // Kick off the async load. cache: 'no-store' so a new
+          // scene rebuild (new filename) is always fetched fresh
+          // even when the browser would otherwise reuse a stale
+          // entry for a same-named URL.
+          fetch(pointBinUrl, { cache: 'no-store' })
+            .then(function(r) {
+              if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + pointBinUrl);
+              return r.arrayBuffer();
+            })
+            .then(function(buf) { initScene(buildPointsFromBinary(buf)); })
+            .catch(function(err) {
+              console.error('Failed to load point cloud binary:', err);
+              container.innerHTML =
+                '<div style=\"color:#fca5a5;padding:20px;\">' +
+                'Failed to load point cloud: ' + (err && err.message ? err.message : err) +
+                '</div>';
+            });
         })();
       "
-        viewer_script <- gsub("__POINT_JSON__", point_json, viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__POINT_BIN_URL__",       point_bin_url_json,    viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__POINT_META_JSON__",     point_meta_json,       viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__INITIAL_SELECTED_JSON__", initial_selected_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__TREE_JSON__", tree_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__MODE_JSON__", mode_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__CAMERA_STATE_JSON__", camera_state_json, viewer_script, fixed = TRUE)
