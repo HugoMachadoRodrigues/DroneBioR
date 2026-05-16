@@ -7287,10 +7287,25 @@ server <- function(input, output, session) {
   })
 
   output$roi_comparison_table <- renderTable({
-    # Recompute when the user presses the button. Reading the reactiveVal
-    # also forces invalidation when ROIs are added or cleared.
-    roi_comparison_request()
-    rois <- roi_collection()
+    # The comparison table is EXPLICITLY opt-in via the Compute
+    # button: every cell of it requires either gis_stack() (heavy
+    # raster stack) or chm_raster() (which on first call writes a
+    # ~1.7 GB chm.tif via build_chm_raster()). Previously the table
+    # re-rendered every time the user added an ROI on the map,
+    # which on OneDrive triggered the slow CHM write in the
+    # background AND the next tab navigation queued behind that R
+    # work. Now we only run the heavy path after compute is
+    # requested at least once; the rest of the time we just show
+    # the hint message.
+    req_count <- roi_comparison_request()
+    if (req_count == 0L) {
+      return(data.frame(
+        roi    = "(not computed)",
+        action = "Click 'Compute' in the GIS sidebar after you have drawn at least one ROI.",
+        stringsAsFactors = FALSE
+      ))
+    }
+    rois <- isolate(roi_collection())
     if (length(rois) == 0) {
       return(data.frame(
         roi    = "(no ROIs)",
@@ -7299,8 +7314,8 @@ server <- function(input, output, session) {
       ))
     }
 
-    gs <- tryCatch(gis_stack(), error = function(e) NULL)
-    ch <- tryCatch(chm_raster(), error = function(e) NULL)
+    gs <- tryCatch(isolate(gis_stack()),  error = function(e) NULL)
+    ch <- tryCatch(isolate(chm_raster()), error = function(e) NULL)
     if (is.null(gs) && is.null(ch)) {
       return(data.frame(
         roi    = "(no rasters)",
@@ -11374,9 +11389,16 @@ server <- function(input, output, session) {
                        options = providerTileOptions(
                          noWrap = TRUE,
                          bounds = list(c(-85, -180), c(85, 180))
-                       ))
+                       )) |>
+      setView(lng = 0, lat = 0, zoom = 2)
 
-    if (!file.exists(input$orthomosaic)) {
+    # Until the user has clicked Load 3D scene, do NOT touch the
+    # orthomosaic file at all. Even a single terra::rast(path) call
+    # on a OneDrive Files-On-Demand stub hydrates the multi-GB ortho
+    # synchronously - and the user reported R blocking on terra the
+    # moment they switched to the 3D tab. With this guard, the only
+    # work on tab nav is registering an empty leaflet base map.
+    if (point_cloud_event() == 0 || !file.exists(input$orthomosaic)) {
       return(base |>
         addLayersControl(
           baseGroups = c("Satellite", "Light basemap"),
