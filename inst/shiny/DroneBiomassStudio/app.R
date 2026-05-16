@@ -4251,6 +4251,36 @@ server <- function(input, output, session) {
   }) |>
     bindCache(project_dir_debounced() %||% "")
 
+  # Tag a (dataset_subdir, project_name) pair as MicaSense / RGB / other,
+  # so we can route the project picker and the `project()` fallback by
+  # camera type when the project contains BOTH a MicaSense and a Sony
+  # (or other RGB) ODM run. Returns "multispectral", "rgb", or
+  # NA_character_ when the layout doesn't tell us.
+  classify_odm_layout <- function(dataset_subdir, project_name) {
+    s <- tolower(paste(dataset_subdir %||% "", project_name %||% ""))
+    if (grepl("micasense|sequoia|altum|multispec", s)) return("multispectral")
+    if (grepl("aerial|sony|dji|rgb|phantom|mavic", s))  return("rgb")
+    NA_character_
+  }
+
+  # Pick the index in `df` that best matches the active camera type.
+  # Falls back to row 1 (most-recently-processed) when no match.
+  preferred_odm_row <- function(df, camera_type) {
+    if (is.null(df) || !nrow(df)) return(NA_integer_)
+    tags <- vapply(seq_len(nrow(df)),
+                   function(i) classify_odm_layout(df$dataset_subdir[i],
+                                                   df$project_name[i]),
+                   character(1))
+    cam <- camera_type %||% "multispectral"
+    hit <- which(tags == cam)
+    if (length(hit)) return(hit[1L])
+    # If the user wants RGB and no row is tagged "rgb" but some rows
+    # are untagged, prefer those over a MicaSense row.
+    untagged <- which(is.na(tags))
+    if (identical(cam, "rgb") && length(untagged)) return(untagged[1L])
+    1L
+  }
+
   output$odm_project_picker_ui <- renderUI({
     df <- available_odm_projects()
     if (!nrow(df)) {
@@ -4260,10 +4290,34 @@ server <- function(input, output, session) {
     labels <- vapply(seq_len(nrow(df)), function(i) {
       sprintf("%s/%s", df$dataset_subdir[i], df$project_name[i])
     }, character(1))
+    # Default to the row that matches input$camera_type instead of
+    # row 1 unconditionally. Without this tiebreaker, a project that
+    # contains BOTH `outputs/odm_micasense_dataset/micasense` and
+    # `outputs/odm_aerial_dataset/aerial_geoscan` defaulted to
+    # whichever was processed most recently - so a user working with
+    # the Sony camera kept seeing the MicaSense ortho on the map.
+    idx <- preferred_odm_row(df, input$camera_type)
+    if (is.na(idx) || idx < 1L || idx > length(labels)) idx <- 1L
     selectInput("odm_project_pick", "ODM project (detected on disk)",
                 choices = setNames(labels, labels),
-                selected = labels[1L])
+                selected = labels[idx])
   })
+
+  # Keep the picker in sync when the user toggles camera_type in the
+  # sidebar AFTER the picker has rendered: snap to the dataset that
+  # matches the new camera choice. ignoreInit so we don't fight the
+  # picker's initial render above.
+  observeEvent(input$camera_type, {
+    df <- available_odm_projects()
+    if (is.null(df) || !nrow(df)) return()
+    idx <- preferred_odm_row(df, input$camera_type)
+    if (is.na(idx)) return()
+    preferred_label <- sprintf("%s/%s", df$dataset_subdir[idx], df$project_name[idx])
+    current <- input$odm_project_pick %||% ""
+    if (!identical(current, preferred_label)) {
+      updateSelectInput(session, "odm_project_pick", selected = preferred_label)
+    }
+  }, ignoreInit = TRUE)
 
   # Pick the right ODM dataset/project layout for the current root.
   # Precedence:
@@ -4287,7 +4341,13 @@ server <- function(input, output, session) {
       if (length(match_idx)) chosen_row <- df[match_idx[1L], , drop = FALSE]
     }
     if (is.null(chosen_row) && !is.null(df) && nrow(df) >= 1L) {
-      chosen_row <- df[1L, , drop = FALSE]
+      # No explicit pick yet (typical on first paint, before
+      # odm_project_picker_ui has rendered). Prefer the row matching
+      # input$camera_type so a Sony user sees the Sony ODM run, not
+      # whichever happens to be most-recently-processed on disk.
+      idx <- preferred_odm_row(df, input$camera_type)
+      if (is.na(idx)) idx <- 1L
+      chosen_row <- df[idx, , drop = FALSE]
     }
     p <- if (!is.null(chosen_row)) {
       dronebio_project(
