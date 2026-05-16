@@ -1594,11 +1594,20 @@ ui <- page_navbar(
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"),
     tags$script(src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"),
     tags$script(HTML("
-      document.addEventListener('shown.bs.tab', function() {
-        window.setTimeout(function() {
-          window.dispatchEvent(new Event('resize'));
-        }, 80);
-      });
+      // Old global tab-shown handler used to dispatch a window
+      // 'resize' on every Bootstrap tab transition so leaflet maps
+      // would invalidateSize themselves. The problem is leaflet
+      // and leafem both wire window.resize handlers to EVERY map
+      // they have registered, including ones whose Shiny output is
+      // still suspended (point_cloud_context_map in particular,
+      // which lives behind suspendWhenHidden = TRUE on the 3D
+      // Modeling tab). Those half-initialised maps then threw
+      // '_leaflet_pos undefined' and 'getVisibleGroups undefined'
+      // every time the user switched tabs. The replacement is
+      // dronebior_invalidate_maps below, fired by an R observer on
+      // input$main_nav; it only pokes maps that are present in the
+      // DOM and have non-zero size, so the blast radius is bounded.
+      //
       // leafem's addGeotiff(imagequery = TRUE) injects DOM elements that
       // are not standard leaflet controls, so clearControls() leaves them
       // behind. We expose a custom message handler that R can call to
