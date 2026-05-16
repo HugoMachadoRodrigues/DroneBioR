@@ -6512,24 +6512,15 @@ server <- function(input, output, session) {
   # Full-resolution `reflectance()` / `all_indices()` are reserved for
   # the explicit Export / Run-QA / Compute-tree-metrics buttons.
   #
-  # Cached on the same keys as mosaic() plus the panel-calibration and
-  # preprocessing knobs, so toggling any of those refreshes the
-  # preview exactly once.
+  # Do not bindCache() this reactive: before Load mosaic is clicked,
+  # downstream outputs call it and hit req(reflectance()). Caching that
+  # silent pre-load state leaves index_plot / index_summary blank after
+  # the real Load event. The downsample itself is cheap once reflectance()
+  # exists, so direct reactivity is safer here.
   reflectance_preview <- reactive({
     req(reflectance())
     downsample_raster(reflectance(), size = 160000)
-  }) |>
-    bindCache(
-      input$orthomosaic %||% "",
-      isTRUE(input$spectral_use_alpha),
-      input$radiometric_scale_mode %||% "Auto detect",
-      paste(panel_coefficients()$gain, collapse = ","),
-      isTRUE(input$remove_physical_invalid),
-      as.integer(input$median_filter_size %||% 0),
-      isTRUE(input$clean_valid_mask),
-      as.integer(input$downsample_factor %||% 1),
-      input$downsample_method %||% "None"
-    )
+  })
 
   indices_preview <- reactive({
     req(reflectance_preview())
@@ -6563,12 +6554,12 @@ server <- function(input, output, session) {
   })
 
   output$index_layer_ui <- renderUI({
-    choices <- tryCatch(names(all_indices()), error = function(e) c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "GNDVI", "CIrededge", "MSAVI2", "VARI"))
+    choices <- tryCatch(names(all_indices_preview()), error = function(e) c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "GNDVI", "CIrededge", "MSAVI2", "VARI"))
     selectInput("index_layer", "Index preview", choices = choices, selected = choices[[1]])
   })
 
   output$application_index_ui <- renderUI({
-    choices <- tryCatch(names(all_indices()), error = function(e) c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "GNDVI", "CIrededge", "MSAVI2", "VARI"))
+    choices <- tryCatch(names(all_indices_preview()), error = function(e) c("NDVI", "NDRE", "EVI", "SAVI", "NDWI", "GNDVI", "CIrededge", "MSAVI2", "VARI"))
     selectInput("application_index", "Application map index", choices = choices, selected = "NDVI")
   })
 
