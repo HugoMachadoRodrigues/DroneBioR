@@ -4332,39 +4332,49 @@ server <- function(input, output, session) {
   # On first paint, apply persisted preferences (if any) so the
   # sidebar shows the user's last-used camera + paths instead of
   # the hardcoded MicaSense defaults.
+  #
+  # session$onFlushed callbacks fire OUTSIDE a reactive context, so
+  # any read of input$* or reactiveVal()s has to go through isolate
+  # (otherwise "Operation not allowed without an active reactive
+  # context" hits the first time the callback fires, which on the
+  # user's flow was the moment they navigated to the GIS tab and
+  # the first server flush completed).
   session$onFlushed(function() {
-    if (isTRUE(studio_prefs_loaded())) return()
-    p <- isolate(input$project_dir) %||% ""
-    if (!nzchar(p) || !dir.exists(p)) {
+    isolate({
+      if (isTRUE(studio_prefs_loaded())) return()
+      p <- input$project_dir %||% ""
+      if (!nzchar(p) || !dir.exists(p)) {
+        studio_prefs_loaded(TRUE)
+        return()
+      }
+      prefs <- read_studio_prefs(p)
+      if (is.null(prefs)) {
+        studio_prefs_loaded(TRUE)
+        return()
+      }
+      if (!is.null(prefs$camera_type) && nzchar(prefs$camera_type)) {
+        updateSelectInput(session, "camera_type", selected = prefs$camera_type)
+      }
+      if (!is.null(prefs$images_dir) && nzchar(prefs$images_dir)) {
+        updateTextInput(session, "images_dir", value = prefs$images_dir)
+      }
+      if (!is.null(prefs$output_dir) && nzchar(prefs$output_dir)) {
+        updateTextInput(session, "output_dir", value = prefs$output_dir)
+      }
+      if (!is.null(prefs$odm_project_pick) && nzchar(prefs$odm_project_pick)) {
+        # The picker is rendered by output$odm_project_picker_ui
+        # after available_odm_projects resolves. updateSelectInput
+        # before it exists is a no-op, so we both updateSelectInput
+        # now (helps when the picker has already rendered) AND
+        # store the desired pick in studio_prefs() so the
+        # picker-init code below honours it once choices are
+        # available.
+        updateSelectInput(session, "odm_project_pick",
+                          selected = prefs$odm_project_pick)
+      }
+      studio_prefs(prefs)
       studio_prefs_loaded(TRUE)
-      return()
-    }
-    prefs <- read_studio_prefs(p)
-    if (is.null(prefs)) {
-      studio_prefs_loaded(TRUE)
-      return()
-    }
-    if (!is.null(prefs$camera_type) && nzchar(prefs$camera_type)) {
-      updateSelectInput(session, "camera_type", selected = prefs$camera_type)
-    }
-    if (!is.null(prefs$images_dir) && nzchar(prefs$images_dir)) {
-      updateTextInput(session, "images_dir", value = prefs$images_dir)
-    }
-    if (!is.null(prefs$output_dir) && nzchar(prefs$output_dir)) {
-      updateTextInput(session, "output_dir", value = prefs$output_dir)
-    }
-    if (!is.null(prefs$odm_project_pick) && nzchar(prefs$odm_project_pick)) {
-      # The picker is rendered by output$odm_project_picker_ui after
-      # available_odm_projects resolves. updateSelectInput before it
-      # exists is a no-op, so we both updateSelectInput now (helps
-      # when the picker has already rendered) AND store the desired
-      # pick in studio_prefs() so the picker-init code below honours
-      # it once choices are available.
-      updateSelectInput(session, "odm_project_pick",
-                        selected = prefs$odm_project_pick)
-    }
-    studio_prefs(prefs)
-    studio_prefs_loaded(TRUE)
+    })
   }, once = TRUE)
 
   # Single writer: any time the four sticky inputs change AFTER the
