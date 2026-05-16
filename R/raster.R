@@ -101,26 +101,59 @@ read_multispectral_orthomosaic <- function(orthomosaic,
 #' terra::minmax(refl)
 #' @export
 scale_to_reflectance <- function(x, scale_factor = NULL) {
-  # Detect the scale factor from a coarse regular sample instead of a
-  # full-raster terra::global("max") pass. On a 22k x 20k 5-band ortho
-  # the global() scan was a ~110 s synchronous read; we only need to
-  # discriminate among {<=1.5, 10000, 65535}, which a few thousand
-  # cells per band cover comfortably. Callers that want exact stats
-  # still go through summarize_spatraster()/terra::global() downstream.
+  # Detect the scale factor cheaply. The previous spatSample path
+  # measured at ~91 s on the user's real 5-band 437 Mcell ortho even
+  # at size = 5000: with na.rm = TRUE and a heavy alpha mask, terra
+  # keeps reading more cells until it finds 5000 valid samples,
+  # which on COGs with sparse coverage degenerates into a near-full
+  # scan. We use a three-step cascade instead:
+  #   1. terra::minmax(x, compute = FALSE) - reads the cached
+  #      metadata statistics if the file has them (GDAL writes
+  #      STATISTICS_MAXIMUM for most COGs). Zero pixel reads.
+  #   2. terra::values(x, row = middle, nrows = 50) - a single
+  #      contiguous block of ~50 rows from the middle of the
+  #      raster. ~11 MB for a 22k-wide ortho on disk, ~100 ms.
+  #      We pick the middle so we are inside the valid-data area
+  #      on heavily-masked orthos.
+  #   3. terra::global("max", na.rm = TRUE) - full scan, only as a
+  #      last resort. This is the original (slow) path; preserved
+  #      so degenerate inputs still return a correct answer.
+  # We only need to discriminate among {<=1.5, 10000, 65535}, so any
+  # of the three suffice in practice.
   if (is.null(scale_factor)) {
-    max_value <- tryCatch({
-      samp <- terra::spatSample(x, size = 5000, method = "regular",
-                                na.rm = TRUE, values = TRUE)
-      if (is.data.frame(samp)) samp <- as.matrix(samp)
-      v <- as.numeric(samp)
-      v <- v[is.finite(v)]
-      if (length(v) > 0) max(v) else NA_real_
-    }, error = function(e) NA_real_)
-    # Fallback to the original full-raster scan when sampling came
-    # back empty (e.g. a fully masked ortho with no valid cells).
+    max_value <- NA_real_
+
+    # 1) Cached metadata.
+    mm <- tryCatch(terra::minmax(x, compute = FALSE),
+                   error = function(e) NULL)
+    if (!is.null(mm) && is.matrix(mm) && "max" %in% rownames(mm)) {
+      candidate <- suppressWarnings(max(mm["max", ], na.rm = TRUE))
+      if (is.finite(candidate)) max_value <- candidate
+    }
+
+    # 2) Mid-raster contiguous block.
+    if (!is.finite(max_value)) {
+      n_rows <- tryCatch(terra::nrow(x), error = function(e) NA_integer_)
+      if (is.finite(n_rows) && n_rows > 0L) {
+        mid    <- max(1L, as.integer(n_rows) %/% 2L - 25L)
+        nr     <- min(50L, as.integer(n_rows) - mid + 1L)
+        block  <- tryCatch(
+          terra::values(x, mat = TRUE, row = mid, nrows = nr),
+          error = function(e) NULL
+        )
+        if (!is.null(block)) {
+          v <- as.numeric(block)
+          v <- v[is.finite(v)]
+          if (length(v) > 0L) max_value <- max(v)
+        }
+      }
+    }
+
+    # 3) Last-resort full scan.
     if (!is.finite(max_value)) {
       max_value <- max(terra::global(x, "max", na.rm = TRUE)$max, na.rm = TRUE)
     }
+
     if (!is.finite(max_value)) {
       stop("Could not compute raster maximum for radiometric scaling.", call. = FALSE)
     }
