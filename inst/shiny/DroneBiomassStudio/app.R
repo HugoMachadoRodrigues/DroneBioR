@@ -5492,9 +5492,17 @@ server <- function(input, output, session) {
 
     tryCatch({
       ortho <- read_multispectral_orthomosaic(orthomosaic_path, use_alpha = use_alpha)
-      rgb <- if (isTRUE(scale_reflectance)) scale_to_reflectance(ortho$bands) else ortho$bands
-      rgb <- rgb[[c("Blue", "Green", "Red")]]
-      rgb <- downsample_raster(rgb, size = 250000)
+      # Order of operations matters here. Previously we ran
+      # scale_to_reflectance() on the FULL band stack and then
+      # downsampled. With terraOptions(memmax = 4) the full-stack
+      # terra::clamp inside scale_to_reflectance materialised the
+      # 437 Mcell 5-band intermediate to /tmp, which was the dominant
+      # ~90 s cost on the user's real ortho. Now: subset to RGB,
+      # downsample to 250 k cells, THEN scale/clamp. The scale step
+      # operates on a tiny in-memory raster (sub-second).
+      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb <- downsample_raster(rgb_full, size = 250000)
+      if (isTRUE(scale_reflectance)) rgb <- scale_to_reflectance(rgb)
       e <- terra::ext(rgb)
       png_path <- tempfile(fileext = ".png")
       grDevices::png(png_path, width = 900, height = 900, bg = "transparent")
@@ -5533,9 +5541,15 @@ server <- function(input, output, session) {
 
     tryCatch({
       ortho <- read_multispectral_orthomosaic(orthomosaic_path, use_alpha = use_alpha)
-      rgb <- scale_to_reflectance(ortho$bands)
-      rgb <- rgb[[c("Blue", "Green", "Red")]]
-      rgb <- downsample_raster(rgb, size = 90000)
+      # Same ordering rule as build_orthomosaic_texture above: pick
+      # the RGB sub-stack first, downsample to ~90 k cells, scale
+      # last. The clamp inside scale_to_reflectance otherwise
+      # materialises the full ortho intermediate to /tmp under the
+      # memory cap, which was the bulk of the user's reported wait
+      # on the 3D context map.
+      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb <- downsample_raster(rgb_full, size = 90000)
+      rgb <- scale_to_reflectance(rgb)
       for (i in seq_len(terra::nlyr(rgb))) {
         vals <- terra::values(rgb[[i]], mat = FALSE)
         vals <- vals[is.finite(vals)]
