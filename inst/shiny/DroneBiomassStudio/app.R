@@ -8189,9 +8189,18 @@ server <- function(input, output, session) {
       updateTextInput(session, "ply_path", value = unname(paths[["point_cloud_ply"]]))
       filled <- c(filled, "PLY preview")
     }
+    # Textured mesh used to be auto-enabled when the OBJ existed on
+    # disk, but the consequence on OneDrive Files-On-Demand projects
+    # was a hundreds-of-MB browser fetch on every Load 3D scene
+    # click - the user reported a 5-minute load. We leave the
+    # checkbox at its sidebar default (off) so a Load click only
+    # touches the point cloud + (optional) basemap; the user can
+    # tick "Show textured 3D mesh (ODM OBJ)" deliberately once
+    # they want the heavy fetch.
     if (file.exists(pick_best_textured_obj(p))) {
-      updateCheckboxInput(session, "show_textured_mesh", value = TRUE)
-      filled <- c(filled, "textured mesh enabled")
+      filled <- c(filled, paste0(
+        "textured mesh available (toggle 'Show textured 3D mesh' ",
+        "in the 3D sidebar to enable)"))
     }
     if (file.exists(paths[["dsm"]])) {
       updateCheckboxInput(session, "show_draped_dsm", value = TRUE)
@@ -9561,15 +9570,31 @@ server <- function(input, output, session) {
     # MTL + texture PNGs as a Shiny resource path so the browser can
     # GET them; OBJLoader / MTLLoader pull in the related files via
     # relative URLs the loaders compute themselves.
-    mesh_url <- NULL
+    #
+    # Some ODM runs ship the OBJ without the companion .mtl (e.g. the
+    # `--gltf` output path). When MTLLoader fetches the missing file
+    # the browser logs a 404. We probe for the .mtl on the R side
+    # and only set mesh_mtl_url when it exists; the viewer script
+    # then uses OBJLoader-only when the URL is null, dodging both
+    # the 404 and the spurious "MTLLoader failed" console message.
+    mesh_url     <- NULL
+    mesh_mtl_url <- NULL
     if (isTRUE(input$show_textured_mesh)) {
       mesh_path <- cached_products()[["textured_obj"]]
       if (file.exists(mesh_path)) {
         shiny::addResourcePath("dronebior_obj", dirname(mesh_path))
         mesh_url <- paste0("dronebior_obj/", basename(mesh_path))
+        mtl_path <- file.path(
+          dirname(mesh_path),
+          paste0(tools::file_path_sans_ext(basename(mesh_path)), ".mtl")
+        )
+        if (file.exists(mtl_path)) {
+          mesh_mtl_url <- paste0("dronebior_obj/", basename(mtl_path))
+        }
       }
     }
-    mesh_url_json <- jsonlite::toJSON(mesh_url, auto_unbox = TRUE, null = "null")
+    mesh_url_json     <- jsonlite::toJSON(mesh_url,     auto_unbox = TRUE, null = "null")
+    mesh_mtl_url_json <- jsonlite::toJSON(mesh_mtl_url, auto_unbox = TRUE, null = "null")
 
     # Draped DSM heightfield comes from the cached reactive (see
     # draped_dsm_heightmap above) so re-renders triggered by
@@ -9598,6 +9623,7 @@ server <- function(input, output, session) {
           const savedCameraState = __CAMERA_STATE_JSON__;
           const basemap = __BASEMAP_JSON__;
           const meshUrl = __MESH_URL_JSON__;
+          const meshMtlUrl = __MESH_MTL_URL_JSON__;
           const drapedDsm = __DRAPED_DSM_JSON__;
           const width = container.clientWidth;
           const height = container.clientHeight || 560;
@@ -9832,71 +9858,79 @@ server <- function(input, output, session) {
           }
 
           // ODM textured-mesh loader. ODM writes odm_textured_model_geo.obj
-          // with an MTL alongside it and one or more texture PNGs in the
-          // same folder. OBJLoader + MTLLoader resolve those relative
-          // paths automatically; all we have to do is rewrite the loaded
-          // geometry into the viewer's local coord system (the same
-          // affine transform we apply to point positions).
-          if (meshUrl && THREE.OBJLoader && THREE.MTLLoader) {
+          // and (sometimes) a companion .mtl with texture PNGs in the
+          // same folder. We probe the .mtl path on the R side
+          // (meshMtlUrl is null when missing) and pick the loader
+          // path accordingly, so a missing .mtl no longer triggers a
+          // browser 404 + MTLLoader failed console message.
+          const _applyObjTransform = function(obj) {
+            obj.traverse(function(child) {
+              if (child.isMesh && child.geometry &&
+                  child.geometry.attributes &&
+                  child.geometry.attributes.position) {
+                const positions = child.geometry.attributes.position;
+                for (let i = 0; i < positions.count; i++) {
+                  const ox = positions.getX(i);
+                  const oy = positions.getY(i);
+                  const oz = positions.getZ(i);
+                  // ODM OBJ is in projected metres, +Z up. Match
+                  // the same transform used for point cloud
+                  // positions so points and mesh share a frame.
+                  positions.setX(i,  (ox - cx)    / scale * 10);
+                  positions.setY(i,  (oz - minZ)  / scale * 10);
+                  positions.setZ(i, -(oy - cy)    / scale * 10);
+                }
+                positions.needsUpdate = true;
+                if (child.geometry.attributes.normal) {
+                  child.geometry.deleteAttribute('normal');
+                }
+                child.geometry.computeVertexNormals();
+                child.geometry.computeBoundingSphere();
+                if (!child.material) {
+                  child.material = new THREE.MeshLambertMaterial({
+                    color: 0xaaaaaa, side: THREE.DoubleSide
+                  });
+                }
+              }
+            });
+            obj.name = 'textured_mesh';
+            scene.add(obj);
+          };
+          if (meshUrl && THREE.OBJLoader) {
             const baseDir = meshUrl.substring(0, meshUrl.lastIndexOf('/') + 1);
             const objName = meshUrl.substring(meshUrl.lastIndexOf('/') + 1);
-            const mtlName = objName.replace(/\\.obj$/i, '.mtl');
-            const mtlLoader = new THREE.MTLLoader();
-            mtlLoader.setPath(baseDir);
-            mtlLoader.load(mtlName, function(materials) {
-              materials.preload();
+            const loadObjOnly = function() {
               const objLoader = new THREE.OBJLoader();
-              objLoader.setMaterials(materials);
               objLoader.setPath(baseDir);
-              objLoader.load(objName, function(obj) {
-                obj.traverse(function(child) {
-                  if (child.isMesh && child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
-                    const positions = child.geometry.attributes.position;
-                    for (let i = 0; i < positions.count; i++) {
-                      const ox = positions.getX(i);
-                      const oy = positions.getY(i);
-                      const oz = positions.getZ(i);
-                      // ODM OBJ is in projected metres, +Z up. Match
-                      // the same transform used for point cloud
-                      // positions so points and mesh share a frame.
-                      positions.setX(i,  (ox - cx)    / scale * 10);
-                      positions.setY(i,  (oz - minZ)  / scale * 10);
-                      positions.setZ(i, -(oy - cy)    / scale * 10);
-                    }
-                    positions.needsUpdate = true;
-                    if (child.geometry.attributes.normal) {
-                      child.geometry.deleteAttribute('normal');
-                    }
-                    child.geometry.computeVertexNormals();
-                    child.geometry.computeBoundingSphere();
-                  }
-                });
-                obj.name = 'textured_mesh';
-                scene.add(obj);
-              }, undefined, function(err) {
+              objLoader.load(objName, _applyObjTransform, undefined,
+                             function(err) {
                 console.warn('OBJLoader failed:', err);
               });
-            }, undefined, function(err) {
-              console.warn('MTLLoader failed (loading OBJ without materials):', err);
-              const objLoader = new THREE.OBJLoader();
-              objLoader.setPath(baseDir);
-              objLoader.load(objName, function(obj) {
-                obj.traverse(function(child) {
-                  if (child.isMesh && child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
-                    const positions = child.geometry.attributes.position;
-                    for (let i = 0; i < positions.count; i++) {
-                      positions.setX(i,  (positions.getX(i) - cx)   / scale * 10);
-                      positions.setY(i,  (positions.getZ(i) - minZ) / scale * 10);
-                      positions.setZ(i, -(positions.getY(i) - cy)   / scale * 10);
-                    }
-                    positions.needsUpdate = true;
-                    child.material = new THREE.MeshLambertMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
-                  }
+            };
+            if (meshMtlUrl && THREE.MTLLoader) {
+              const mtlName = meshMtlUrl.substring(
+                meshMtlUrl.lastIndexOf('/') + 1);
+              const mtlLoader = new THREE.MTLLoader();
+              mtlLoader.setPath(baseDir);
+              mtlLoader.load(mtlName, function(materials) {
+                materials.preload();
+                const objLoader = new THREE.OBJLoader();
+                objLoader.setMaterials(materials);
+                objLoader.setPath(baseDir);
+                objLoader.load(objName, _applyObjTransform, undefined,
+                               function(err) {
+                  console.warn('OBJLoader failed:', err);
                 });
-                obj.name = 'textured_mesh';
-                scene.add(obj);
+              }, undefined, function(err) {
+                console.warn('MTLLoader failed (loading OBJ without materials):', err);
+                loadObjOnly();
               });
-            });
+            } else {
+              // No .mtl on disk: load the OBJ directly with a flat
+              // material. Avoids the 404 + spurious MTLLoader error
+              // entirely.
+              loadObjOnly();
+            }
           }
 
           const positions = [];
@@ -10523,6 +10557,7 @@ server <- function(input, output, session) {
         viewer_script <- gsub("__CAMERA_STATE_JSON__", camera_state_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__BASEMAP_JSON__", basemap_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__MESH_URL_JSON__", mesh_url_json, viewer_script, fixed = TRUE)
+        viewer_script <- gsub("__MESH_MTL_URL_JSON__", mesh_mtl_url_json, viewer_script, fixed = TRUE)
         viewer_script <- gsub("__DRAPED_DSM_JSON__", draped_dsm_json, viewer_script, fixed = TRUE)
         viewer_script
       }))
@@ -11412,17 +11447,26 @@ server <- function(input, output, session) {
     fit_leaflet_to_orthomosaic("point_cloud_context_map", input$orthomosaic)
   }, ignoreInit = TRUE)
 
+  # NOTE: the three observers below talk to point_cloud_context_map
+  # via leafletProxy(). Previously they each called clearGroup()
+  # FIRST and only then checked whether the 3D scene had been
+  # loaded. On a fresh app boot, the context map is suspended
+  # (output$point_cloud_context_map has suspendWhenHidden = TRUE),
+  # so the leafletProxy call hit a non-existent map and the JS
+  # console filled up with "Couldn't find map with id
+  # point_cloud_context_map" warnings every time any reactive
+  # dependency invalidated. Reorder the observers so the
+  # scene-loaded check runs BEFORE we touch the proxy.
+
   observe({
-    leafletProxy("point_cloud_context_map") |> clearGroup("Selected ROI")
     if (point_cloud_event() == 0 || !file.exists(input$orthomosaic)) {
       return()
     }
-
+    leafletProxy("point_cloud_context_map") |> clearGroup("Selected ROI")
     roi <- selection_roi_analysis()
     if (nrow(roi) < 3) {
       return()
     }
-
     ortho_for_context <- orthomosaic_raster_cached()
     if (is.null(ortho_for_context)) return()
     roi_ll <- transform_xy_to_wgs84(data.frame(x_map = roi$x, y_map = roi$y), ortho_for_context)
@@ -11442,12 +11486,12 @@ server <- function(input, output, session) {
   })
 
   observe({
-    proxy <- leafletProxy("point_cloud_context_map") |>
-      clearGroup("Classified points") |>
-      removeControl("classification_legend")
     if (point_cloud_event() == 0 || !file.exists(input$orthomosaic)) {
       return()
     }
+    proxy <- leafletProxy("point_cloud_context_map") |>
+      clearGroup("Classified points") |>
+      removeControl("classification_legend")
 
     pts <- display_points()
     pts <- pts[!is.na(pts$class) & pts$class != "Unclassified", , drop = FALSE]
@@ -11499,11 +11543,10 @@ server <- function(input, output, session) {
   })
 
   observe({
-    leafletProxy("point_cloud_context_map") |> clearGroup("Tree candidates")
     if (point_cloud_event() == 0 || !file.exists(input$orthomosaic)) {
       return()
     }
-
+    leafletProxy("point_cloud_context_map") |> clearGroup("Tree candidates")
     trees <- tree_candidates()
     if (is.null(trees) || nrow(trees) == 0) {
       return()
