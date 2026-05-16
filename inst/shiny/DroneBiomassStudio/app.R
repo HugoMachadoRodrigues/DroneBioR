@@ -3473,10 +3473,15 @@ ui <- page_navbar(
           ),
           accordion_panel(
             "GIS Workspace ROI",
-            selectInput("gis_roi_to_3d", "Saved ROI",
-                        choices = character(0), selected = NULL),
+            selectInput("gis_roi_to_3d", "Saved ROIs (multi-select)",
+                        choices = character(0), selected = NULL,
+                        multiple = TRUE),
+            div(class = "small text-muted mb-2",
+                "Hold Cmd / Ctrl to pick more than one. Pulling ",
+                "with multiple ROIs selected highlights the union of ",
+                "all their points."),
             actionButton("apply_gis_roi_to_3d",
-                         "Pull ROI into 3D selection",
+                         "Pull ROI(s) into 3D selection",
                          class = "btn-outline-secondary w-100")
           ),
           accordion_panel(
@@ -4281,6 +4286,106 @@ server <- function(input, output, session) {
   project_dir_debounced <- debounce(reactive(input$project_dir), 700)
   images_dir_debounced  <- debounce(reactive(input$images_dir),  700)
 
+  # ---- Per-project preference persistence -----------------------------
+  # Without this, the launcher always opened with the MicaSense
+  # defaults baked into dronebio_project(): imagens/micasense,
+  # outputs/odm_micasense_dataset/micasense, camera_type =
+  # multispectral. A Sony user had to repaste their paths and toggle
+  # camera_type on every launch.
+  #
+  # We persist a tiny JSON file at <project_dir>/.dronebior_studio.json
+  # with the four sticky knobs:
+  #   - camera_type
+  #   - images_dir
+  #   - output_dir
+  #   - odm_project_pick  (e.g. "outputs/odm_aerial_dataset/aerial_geoscan")
+  #
+  # The file is read on the first onFlushed after launch (so all UI
+  # inputs are registered when we updateInput() them) and rewritten
+  # whenever any of those four inputs changes. Project-local (not a
+  # global preference) so different projects can have different
+  # defaults.
+  studio_prefs_path <- function(project_dir) {
+    if (!is.character(project_dir) || !length(project_dir) ||
+        !nzchar(project_dir)) {
+      return(NA_character_)
+    }
+    file.path(project_dir, ".dronebior_studio.json")
+  }
+  read_studio_prefs <- function(project_dir) {
+    path <- studio_prefs_path(project_dir)
+    if (is.na(path) || !file.exists(path)) return(NULL)
+    tryCatch(jsonlite::fromJSON(path), error = function(e) NULL)
+  }
+  write_studio_prefs <- function(project_dir, prefs) {
+    path <- studio_prefs_path(project_dir)
+    if (is.na(path)) return(invisible(NULL))
+    tryCatch({
+      jsonlite::write_json(prefs, path, auto_unbox = TRUE,
+                           pretty = TRUE)
+    }, error = function(e) NULL)
+    invisible(path)
+  }
+  studio_prefs_loaded <- reactiveVal(FALSE)
+  studio_prefs <- reactiveVal(list())
+
+  # On first paint, apply persisted preferences (if any) so the
+  # sidebar shows the user's last-used camera + paths instead of
+  # the hardcoded MicaSense defaults.
+  session$onFlushed(function() {
+    if (isTRUE(studio_prefs_loaded())) return()
+    p <- isolate(input$project_dir) %||% ""
+    if (!nzchar(p) || !dir.exists(p)) {
+      studio_prefs_loaded(TRUE)
+      return()
+    }
+    prefs <- read_studio_prefs(p)
+    if (is.null(prefs)) {
+      studio_prefs_loaded(TRUE)
+      return()
+    }
+    if (!is.null(prefs$camera_type) && nzchar(prefs$camera_type)) {
+      updateSelectInput(session, "camera_type", selected = prefs$camera_type)
+    }
+    if (!is.null(prefs$images_dir) && nzchar(prefs$images_dir)) {
+      updateTextInput(session, "images_dir", value = prefs$images_dir)
+    }
+    if (!is.null(prefs$output_dir) && nzchar(prefs$output_dir)) {
+      updateTextInput(session, "output_dir", value = prefs$output_dir)
+    }
+    if (!is.null(prefs$odm_project_pick) && nzchar(prefs$odm_project_pick)) {
+      # The picker is rendered by output$odm_project_picker_ui after
+      # available_odm_projects resolves. updateSelectInput before it
+      # exists is a no-op, so we both updateSelectInput now (helps
+      # when the picker has already rendered) AND store the desired
+      # pick in studio_prefs() so the picker-init code below honours
+      # it once choices are available.
+      updateSelectInput(session, "odm_project_pick",
+                        selected = prefs$odm_project_pick)
+    }
+    studio_prefs(prefs)
+    studio_prefs_loaded(TRUE)
+  }, once = TRUE)
+
+  # Single writer: any time the four sticky inputs change AFTER the
+  # initial load, refresh the JSON. ignoreInit = TRUE so we do not
+  # rewrite the file on every keystroke during the initial render.
+  observe({
+    if (!isTRUE(studio_prefs_loaded())) return()
+    pd <- input$project_dir %||% ""
+    if (!nzchar(pd) || !dir.exists(pd)) return()
+    new_prefs <- list(
+      camera_type      = input$camera_type      %||% "multispectral",
+      images_dir       = input$images_dir       %||% "",
+      output_dir       = input$output_dir       %||% "",
+      odm_project_pick = input$odm_project_pick %||% ""
+    )
+    cur <- studio_prefs()
+    if (identical(new_prefs, cur)) return()
+    studio_prefs(new_prefs)
+    write_studio_prefs(pd, new_prefs)
+  })
+
   # Heartbeat for the client-side watchdog. Every 1 s while the R
   # session is idle, we send a tiny custom message. The browser tracks
   # the time since the last heartbeat - when that gap exceeds 2.5 s
@@ -4364,17 +4469,25 @@ server <- function(input, output, session) {
     labels <- vapply(seq_len(nrow(df)), function(i) {
       sprintf("%s/%s", df$dataset_subdir[i], df$project_name[i])
     }, character(1))
-    # Default to the row that matches input$camera_type instead of
-    # row 1 unconditionally. Without this tiebreaker, a project that
-    # contains BOTH `outputs/odm_micasense_dataset/micasense` and
-    # `outputs/odm_aerial_dataset/aerial_geoscan` defaulted to
-    # whichever was processed most recently - so a user working with
-    # the Sony camera kept seeing the MicaSense ortho on the map.
-    idx <- preferred_odm_row(df, input$camera_type)
-    if (is.na(idx) || idx < 1L || idx > length(labels)) idx <- 1L
+    # Precedence for the initial picker selection:
+    #   1. The persisted pick from .dronebior_studio.json (set by the
+    #      onFlushed reader above when it found the project's prefs
+    #      file). Honours the user's actual last-used dataset.
+    #   2. The row whose subdir/name matches input$camera_type (the
+    #      MicaSense-vs-Sony tiebreaker for projects that contain
+    #      both ODM trees).
+    #   3. Row 1 (most-recently-processed) as a fallback.
+    persisted <- studio_prefs()$odm_project_pick %||% ""
+    selected_label <- if (nzchar(persisted) && persisted %in% labels) {
+      persisted
+    } else {
+      idx <- preferred_odm_row(df, input$camera_type)
+      if (is.na(idx) || idx < 1L || idx > length(labels)) idx <- 1L
+      labels[idx]
+    }
     selectInput("odm_project_pick", "ODM project (detected on disk)",
                 choices = setNames(labels, labels),
-                selected = labels[idx])
+                selected = selected_label)
   })
 
   # Keep the picker in sync when the user toggles camera_type in the
@@ -10610,15 +10723,18 @@ server <- function(input, output, session) {
   # request - the user has already drawn the right region on the map.
   observe({
     rois <- roi_collection()
-    # Keep the previously-selected ROI focused when the user adds another
-    # one on the GIS Workspace tab; only pre-select the newest ROI when
-    # the dropdown is currently empty. Drives the cross-tab ergonomics
-    # the user expects: pick on the map, switch tab, the right ROI is
-    # already chosen here.
-    current <- isolate(input$gis_roi_to_3d) %||% ""
-    keep <- nzchar(current) && current %in% names(rois)
-    pick <- if (keep) current
-            else if (length(rois) > 0) names(rois)[length(rois)]
+    # Keep the previously-selected ROIs focused when the user adds
+    # another one on the GIS Workspace tab; only pre-select the
+    # newest ROI when the dropdown is currently empty. Drives the
+    # cross-tab ergonomics the user expects: pick on the map, switch
+    # tab, the right ROIs are already chosen here. Now a vector
+    # because the input is multi-select.
+    current <- isolate(input$gis_roi_to_3d) %||% character(0)
+    current <- current[nzchar(current) & current %in% names(rois)]
+    pick <- if (length(current))
+              current
+            else if (length(rois) > 0)
+              names(rois)[length(rois)]
             else NULL
     updateSelectInput(
       session,
@@ -10629,20 +10745,28 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$apply_gis_roi_to_3d, {
-    name <- input$gis_roi_to_3d %||% ""
+    # Multi-select input: input$gis_roi_to_3d is a character vector
+    # (or NULL when nothing is selected). Iterate every chosen ROI,
+    # accumulate their points, and apply a UNION as the 3D selection.
+    # Previously this took a single name and overwrote
+    # selected_ids_value() on each click, so users could not pull a
+    # second ROI without losing the first.
+    names_chosen <- input$gis_roi_to_3d %||% character(0)
+    names_chosen <- names_chosen[nzchar(names_chosen)]
     rois <- roi_collection()
-    if (!nzchar(name) || !name %in% names(rois)) {
+    names_chosen <- names_chosen[names_chosen %in% names(rois)]
+    if (length(names_chosen) == 0L) {
       showNotification(
         if (length(rois) == 0)
-          "No ROIs saved yet. Draw and save one on the GIS Workspace tab first."
+          "No ROIs saved yet. Draw and save at least one on the GIS Workspace tab first."
         else
-          "Pick a saved ROI in the dropdown first (Use GIS Workspace ROI section).",
+          "Pick one or more saved ROIs in the dropdown above first.",
         type = "warning", duration = 6
       )
       return()
     }
     if (point_cloud_event() == 0) {
-      showNotification("Load the 3D scene first (click 'Load 3D scene'), then pull the ROI in.",
+      showNotification("Load the 3D scene first (click 'Load 3D scene'), then pull the ROI(s) in.",
                        type = "warning", duration = 5)
       return()
     }
@@ -10670,58 +10794,79 @@ server <- function(input, output, session) {
     }
     if (is.null(ref_raster)) {
       showNotification(
-        "Project has no orthomosaic or DSM with a known CRS, so the ROI cannot be reprojected.",
+        "Project has no orthomosaic or DSM with a known CRS, so the ROIs cannot be reprojected.",
         type = "warning", duration = 6)
       return()
     }
 
-    roi <- rois[[name]]
-    ll  <- data.frame(lng = roi$lng, lat = roi$lat)
-    poly_xy <- tryCatch({
-      ll_sf  <- sf::st_as_sf(ll, coords = c("lng", "lat"), crs = 4326)
-      proj_s <- sf::st_transform(ll_sf, terra::crs(ref_raster))
-      coords <- sf::st_coordinates(proj_s)
-      if (points_are_georeferenced(pts)) {
-        data.frame(x = coords[, 1], y = coords[, 2])
-      } else {
-        e  <- terra::ext(ref_raster)
-        xr <- range(pts$x, na.rm = TRUE)
-        yr <- range(pts$y, na.rm = TRUE)
-        denom_x <- as.numeric(e[2] - e[1])
-        denom_y <- as.numeric(e[4] - e[3])
-        if (!is.finite(denom_x) || denom_x == 0 || !is.finite(denom_y) || denom_y == 0) return(NULL)
-        x_local <- xr[1] + (coords[, 1] - as.numeric(e[1])) * diff(xr) / denom_x
-        y_local <- yr[1] + (coords[, 2] - as.numeric(e[3])) * diff(yr) / denom_y
-        data.frame(x = x_local, y = y_local)
-      }
-    }, error = function(err) NULL)
+    # Shared helper: turns one ROI (WGS84 polygon) into the set of
+    # point IDs that fall inside it, returning integer(0) on failure
+    # so the loop below can skip cleanly.
+    project_and_hit <- function(roi) {
+      ll <- data.frame(lng = roi$lng, lat = roi$lat)
+      poly_xy <- tryCatch({
+        ll_sf  <- sf::st_as_sf(ll, coords = c("lng", "lat"), crs = 4326)
+        proj_s <- sf::st_transform(ll_sf, terra::crs(ref_raster))
+        coords <- sf::st_coordinates(proj_s)
+        if (points_are_georeferenced(pts)) {
+          data.frame(x = coords[, 1], y = coords[, 2])
+        } else {
+          e  <- terra::ext(ref_raster)
+          xr <- range(pts$x, na.rm = TRUE)
+          yr <- range(pts$y, na.rm = TRUE)
+          denom_x <- as.numeric(e[2] - e[1])
+          denom_y <- as.numeric(e[4] - e[3])
+          if (!is.finite(denom_x) || denom_x == 0 ||
+              !is.finite(denom_y) || denom_y == 0) return(NULL)
+          x_local <- xr[1] + (coords[, 1] - as.numeric(e[1])) * diff(xr) / denom_x
+          y_local <- yr[1] + (coords[, 2] - as.numeric(e[3])) * diff(yr) / denom_y
+          data.frame(x = x_local, y = y_local)
+        }
+      }, error = function(err) NULL)
+      if (is.null(poly_xy) || nrow(poly_xy) < 3) return(integer(0))
+      poly_closed <- rbind(poly_xy, poly_xy[1, , drop = FALSE])
+      tryCatch({
+        pts_sf  <- sf::st_as_sf(pts[, c("x", "y", "point_id")], coords = c("x", "y"))
+        poly_sf <- sf::st_sfc(sf::st_polygon(list(as.matrix(poly_closed))))
+        inside  <- sf::st_intersects(pts_sf, poly_sf, sparse = FALSE)[, 1]
+        pts$point_id[inside]
+      }, error = function(err) integer(0))
+    }
 
-    if (is.null(poly_xy) || nrow(poly_xy) < 3) {
-      showNotification("Could not project the ROI into the point-cloud frame.",
-                       type = "warning", duration = 5)
+    per_roi <- vapply(names_chosen, function(nm) {
+      length(project_and_hit(rois[[nm]]))
+    }, integer(1))
+    all_ids <- integer(0)
+    for (nm in names_chosen) {
+      all_ids <- c(all_ids, project_and_hit(rois[[nm]]))
+    }
+    all_ids <- unique(as.integer(all_ids))
+
+    if (length(all_ids) == 0L) {
+      showNotification(
+        paste0("None of the selected ROIs intersected any preview points: ",
+               paste(names_chosen, collapse = ", "), "."),
+        type = "warning", duration = 6)
       return()
     }
 
-    poly_closed <- rbind(poly_xy, poly_xy[1, , drop = FALSE])
-    hit_ids <- tryCatch({
-      pts_sf  <- sf::st_as_sf(pts[, c("x", "y", "point_id")], coords = c("x", "y"))
-      poly_sf <- sf::st_sfc(sf::st_polygon(list(as.matrix(poly_closed))))
-      inside  <- sf::st_intersects(pts_sf, poly_sf, sparse = FALSE)[, 1]
-      pts$point_id[inside]
-    }, error = function(err) integer())
-
-    if (length(hit_ids) == 0) {
-      showNotification(paste0("ROI '", name, "' did not intersect any preview points."),
-                       type = "warning", duration = 5)
-      return()
-    }
-
-    selected_ids_value(unique(as.integer(hit_ids)))
-    updateTextInput(session, "selection_label", value = name)
+    selected_ids_value(all_ids)
+    # Label tracks the union; if only one ROI was pulled, keep its
+    # own name for downstream export filenames.
+    new_label <- if (length(names_chosen) == 1L) names_chosen
+                 else paste0("rois_", length(names_chosen),
+                             "_union_", format(Sys.time(), "%H%M%S"))
+    updateTextInput(session, "selection_label", value = new_label)
+    detail <- paste(sprintf("%s (%s)", names_chosen,
+                            format(per_roi, big.mark = ",")),
+                    collapse = "; ")
     showNotification(
-      paste0("ROI '", name, "' applied to 3D selection: ",
-             format(length(hit_ids), big.mark = ","), " preview points."),
-      type = "message", duration = 5
+      paste0("Pulled ", length(names_chosen),
+             " ROI", if (length(names_chosen) > 1L) "s" else "",
+             " into 3D selection: ",
+             format(length(all_ids), big.mark = ","),
+             " preview points (", detail, ")."),
+      type = "message", duration = 6
     )
   })
 
