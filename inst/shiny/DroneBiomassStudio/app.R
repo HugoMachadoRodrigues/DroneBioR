@@ -3568,15 +3568,22 @@ ui <- page_navbar(
             "Display options",
             checkboxInput("show_orthomosaic_basemap",
                           "Show orthomosaic basemap (ground plane)",
-                          value = TRUE),
+                          value = FALSE),
             div(class = "small text-muted",
                 style = "margin-top:-6px; margin-bottom:6px;",
-                "Disabling skips the orthomosaic read on Load. ",
-                "Recommended off when the project is on OneDrive ",
-                "and only the point cloud matters."),
+                "Off by default. Reading the full orthomosaic + writing ",
+                "the texture PNG can take minutes on OneDrive projects, ",
+                "so tick this only when you actually need the ground ",
+                "plane image. Just the point cloud loads in seconds."),
             checkboxInput("show_draped_dsm",
                           "Show DSM as 3D draped orthomosaic (Pix4D-style)",
-                          value = TRUE),
+                          value = FALSE),
+            div(class = "small text-muted",
+                style = "margin-top:-6px; margin-bottom:6px;",
+                "Off by default. Builds the DSM heightfield + alpha mask ",
+                "from the orthomosaic, another multi-minute read on ",
+                "OneDrive. Enable for terrain context once you are sure ",
+                "the rest of the scene loads quickly."),
             checkboxInput("show_textured_mesh",
                           "Show textured 3D mesh (ODM OBJ)",
                           value = FALSE),
@@ -6395,10 +6402,34 @@ server <- function(input, output, session) {
   mosaic <- reactive({
     with_error_toast("Load orthomosaic", {
       validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
-      masked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = isTRUE(input$spectral_use_alpha))
-      unmasked <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = FALSE)
-      masked$raw_bands <- unmasked$bands
-      masked
+      # withProgress + a long-duration showNotification so the user
+      # KNOWS the app is reading the orthomosaic during the
+      # multi-minute hydration on OneDrive Files-On-Demand. Before
+      # this, the Spectral tab just looked frozen after clicking
+      # Load mosaic; users could not tell whether anything was
+      # happening at all.
+      progress_id <- showNotification(
+        ui = paste0("Reading orthomosaic from ",
+                    basename(input$orthomosaic),
+                    ". On OneDrive Files-On-Demand the first ",
+                    "read hydrates the full file and can take ",
+                    "several minutes - this is normal."),
+        type     = "message",
+        duration = NULL,
+        closeButton = FALSE
+      )
+      on.exit(removeNotification(progress_id), add = TRUE)
+      withProgress(message = "Reading orthomosaic", value = 0.1, {
+        incProgress(0.4, detail = "Opening with alpha mask")
+        masked <- read_multispectral_orthomosaic(
+          input$orthomosaic, use_alpha = isTRUE(input$spectral_use_alpha))
+        incProgress(0.4, detail = "Opening raw bands for QA")
+        unmasked <- read_multispectral_orthomosaic(
+          input$orthomosaic, use_alpha = FALSE)
+        masked$raw_bands <- unmasked$bands
+        incProgress(0.1, detail = "Done")
+        masked
+      })
     })
   }) |>
     bindCache(input$orthomosaic, input$spectral_use_alpha) |>
@@ -8328,9 +8359,16 @@ server <- function(input, output, session) {
         "textured mesh available (toggle 'Show textured 3D mesh' ",
         "in the 3D sidebar to enable)"))
     }
+    # Same opt-in posture as the textured mesh above: do NOT auto-
+    # enable the draped-DSM checkbox just because dsm.tif exists.
+    # Building the heightfield + projecting the alpha mask costs a
+    # full orthomosaic read on OneDrive (multi-minute), and a user
+    # that just wants the point cloud should not pay it on every
+    # Load 3D scene click. Surface the availability instead.
     if (file.exists(paths[["dsm"]])) {
-      updateCheckboxInput(session, "show_draped_dsm", value = TRUE)
-      filled <- c(filled, "draped DSM enabled")
+      filled <- c(filled, paste0(
+        "DSM available (toggle 'Show DSM as 3D draped orthomosaic' ",
+        "in the 3D sidebar to enable)"))
     }
     filled
   }
