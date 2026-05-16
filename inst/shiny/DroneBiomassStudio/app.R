@@ -9268,14 +9268,14 @@ server <- function(input, output, session) {
   })
 
   output$point_cloud_viewer <- renderUI({
+    # We DO want the basemap texture even before a point cloud is
+    # loaded: it gives the user a visible orthomosaic-on-ground plane
+    # so they understand the 3D scene is alive while they decide
+    # what to load. The expensive read is already deferred by
+    # suspendWhenHidden = TRUE (set below), so this only fires when
+    # the user has actually navigated to the 3D Modeling tab.
+    basemap <- viewer_basemap()
     scene_loaded <- point_cloud_event() > 0
-    # Defer the basemap texture build (full orthomosaic read +
-    # plotRGB to PNG) until the user actually loads a 3D scene.
-    # Previously this fired at app startup because the output had
-    # suspendWhenHidden = FALSE, which on a OneDrive Files-On-Demand
-    # project meant minutes of blocking I/O before any tab became
-    # responsive - including the GIS map render.
-    basemap <- if (isTRUE(scene_loaded)) viewer_basemap() else NULL
     if (isTRUE(scene_loaded)) {
       req(display_points())
       points <- display_points()
@@ -11086,14 +11086,15 @@ server <- function(input, output, session) {
         ))
     }
     bounds <- raster_bounds_4326(ortho_for_context)
-    # Same deferral as point_cloud_viewer: avoid kicking off a full
-    # orthomosaic RGB context build (read + percentile-clip per band)
-    # before the user has actually loaded a 3D scene. Without this
-    # guard, app startup on OneDrive Files-On-Demand projects blocks
-    # R for minutes - which manifests as "the GIS tab shows no map"
-    # and "tabs feel out of sync" because every input click queues
-    # behind the synchronous raster read.
-    local_ortho <- if (point_cloud_event() > 0) context_orthomosaic() else NULL
+    # Build the local orthomosaic context unconditionally now that
+    # this renderLeaflet only fires when the user navigates to the
+    # 3D Modeling tab (suspendWhenHidden defaults to TRUE for this
+    # output - see the note further down). Hiding the local
+    # orthomosaic until point_cloud_event() > 0 left the tab looking
+    # empty when the user had not clicked Load 3D scene yet, even
+    # though the context map IS the orientation aid they need
+    # before clicking Load.
+    local_ortho <- context_orthomosaic()
     if (!is.null(local_ortho)) {
       base <- base |>
         addRasterImage(
