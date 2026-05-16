@@ -1639,6 +1639,29 @@ ui <- page_navbar(
         });
       });
 
+      // Leaflet has a long-standing quirk where a map that was first
+      // rendered inside a hidden Bootstrap tab keeps its initial
+      // (0 x 0) container size after the tab becomes visible: the
+      // base tiles never load and the canvas looks blank. The
+      // standard fix is to call map.invalidateSize() once the tab
+      // is visible. We dispatch the standard 'resize' event so the
+      // leaflet htmlwidgets binding picks it up regardless of
+      // whether we have a direct handle on the L.map instance.
+      Shiny.addCustomMessageHandler('dronebior_invalidate_maps', function(_msg) {
+        var fire = function() {
+          // Force a layout sync first so getBoundingClientRect()
+          // returns the right size, THEN nudge leaflet via the
+          // window resize event htmlwidgets watches.
+          void document.body.offsetHeight;
+          window.dispatchEvent(new Event('resize'));
+        };
+        // Two ticks: one for the immediate DOM reflow after the
+        // tab becomes visible, one for ~80 ms later in case
+        // Bootstrap's tab fade animation has not finished yet.
+        setTimeout(fire, 0);
+        setTimeout(fire, 120);
+      });
+
       // Mark the active chip in the static Workflow Stepper. R sends
       // { tab: '<navbar tab title>' } whenever input$main_nav
       // changes - we toggle the .active class on each chip so the
@@ -4578,6 +4601,15 @@ server <- function(input, output, session) {
   observeEvent(input$main_nav, {
     session$sendCustomMessage("dronebior_stepper_active",
                               list(tab = input$main_nav))
+    # Nudge every leaflet map on the page to re-measure its
+    # container after the active tab changes. Bootstrap fades the
+    # previous tab out and the new one in via display:none ->
+    # display:block; leaflet maps that were rendered while their
+    # container was hidden keep their 0x0 viewport and end up
+    # blank (no basemap, no overlays). The custom message
+    # dispatches a window resize event which the leaflet
+    # htmlwidgets binding picks up to call map.invalidateSize().
+    session$sendCustomMessage("dronebior_invalidate_maps", list())
   }, ignoreInit = FALSE)
 
   # Push completion state to the live stepper via custom message.
