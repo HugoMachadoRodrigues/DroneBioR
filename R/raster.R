@@ -101,11 +101,29 @@ read_multispectral_orthomosaic <- function(orthomosaic,
 #' terra::minmax(refl)
 #' @export
 scale_to_reflectance <- function(x, scale_factor = NULL) {
-  max_value <- max(terra::global(x, "max", na.rm = TRUE)$max, na.rm = TRUE)
-  if (!is.finite(max_value)) {
-    stop("Could not compute raster maximum for radiometric scaling.", call. = FALSE)
-  }
+  # Detect the scale factor from a coarse regular sample instead of a
+  # full-raster terra::global("max") pass. On a 22k x 20k 5-band ortho
+  # the global() scan was a ~110 s synchronous read; we only need to
+  # discriminate among {<=1.5, 10000, 65535}, which a few thousand
+  # cells per band cover comfortably. Callers that want exact stats
+  # still go through summarize_spatraster()/terra::global() downstream.
   if (is.null(scale_factor)) {
+    max_value <- tryCatch({
+      samp <- terra::spatSample(x, size = 5000, method = "regular",
+                                na.rm = TRUE, values = TRUE)
+      if (is.data.frame(samp)) samp <- as.matrix(samp)
+      v <- as.numeric(samp)
+      v <- v[is.finite(v)]
+      if (length(v) > 0) max(v) else NA_real_
+    }, error = function(e) NA_real_)
+    # Fallback to the original full-raster scan when sampling came
+    # back empty (e.g. a fully masked ortho with no valid cells).
+    if (!is.finite(max_value)) {
+      max_value <- max(terra::global(x, "max", na.rm = TRUE)$max, na.rm = TRUE)
+    }
+    if (!is.finite(max_value)) {
+      stop("Could not compute raster maximum for radiometric scaling.", call. = FALSE)
+    }
     if (max_value <= 1.5) {
       return(x)
     }

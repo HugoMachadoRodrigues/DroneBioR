@@ -9115,26 +9115,40 @@ server <- function(input, output, session) {
   # back to step (3) or (4) for the new pair.
   chm_raster <- reactive({
     products <- cached_products()
-    dsm_path <- products[["dsm"]]
-    dtm_path <- products[["dtm"]]
-    if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
-      return(NULL)
-    }
-    chm_path <- file.path(dirname(dsm_path), "chm.tif")
-    fresh_chm <- file.exists(chm_path) &&
-      isTRUE(file.info(chm_path)$mtime >= max(file.info(dsm_path)$mtime,
-                                              file.info(dtm_path)$mtime))
-    if (fresh_chm) {
+    # Honour an existing chm.tif unconditionally: either the canonical
+    # products$chm path or chm.tif next to the DSM (the path that
+    # build_chm_raster writes to). Previously we ALSO required the
+    # CHM mtime to be >= DSM mtime AND >= DTM mtime, which is too
+    # strict on OneDrive: a routine resync touches the DSM/DTM mtime
+    # and we rebuilt the entire ~700 MB chm.tif from a 437 Mcell
+    # subtract every single time. The "Build CHM" button in the
+    # sidebar exists for the user to refresh it deliberately when
+    # they really do want a recompute.
+    chm_candidates <- unique(c(
+      unname(products[["chm"]]),
+      if (!is.null(products[["dsm"]]))
+        file.path(dirname(products[["dsm"]]), "chm.tif")
+      else character(0)
+    ))
+    chm_candidates <- chm_candidates[file.exists(chm_candidates)]
+    for (chm_path in chm_candidates) {
       r <- tryCatch(terra::rast(chm_path), error = function(e) NULL)
       if (!is.null(r)) {
         names(r) <- "CHM_m"
         return(r)
       }
     }
+    # No chm.tif on disk. Build via the package helper (which writes
+    # one to the cache so the next call hits the fast path above).
+    dsm_path <- products[["dsm"]]
+    dtm_path <- products[["dtm"]]
+    if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
+      return(NULL)
+    }
     p <- tryCatch(project(), error = function(e) NULL)
     if (!is.null(p)) {
       written <- tryCatch(
-        build_chm_raster(p, force = !fresh_chm, cache_aware = TRUE),
+        build_chm_raster(p, force = FALSE, cache_aware = TRUE),
         error = function(e) NULL
       )
       if (!is.null(written) && file.exists(written)) {
@@ -9152,12 +9166,9 @@ server <- function(input, output, session) {
     build_chm_from_dsm_dtm(dsm_path, dtm_path)
   }) |>
     bindCache(
+      cached_products()[["chm"]] %||% "",
       cached_products()[["dsm"]] %||% "",
-      cached_products()[["dtm"]] %||% "",
-      tryCatch(as.character(file.info(cached_products()[["dsm"]] %||% "")$mtime),
-               error = function(e) ""),
-      tryCatch(as.character(file.info(cached_products()[["dtm"]] %||% "")$mtime),
-               error = function(e) "")
+      cached_products()[["dtm"]] %||% ""
     )
 
   dsm_raster <- reactive({
