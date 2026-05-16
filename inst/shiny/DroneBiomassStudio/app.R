@@ -6361,14 +6361,18 @@ server <- function(input, output, session) {
 
   # ---- Spectral pipeline stepper ----------------------------------
   # Mini horizontal stepper just above the spectral workspace cards.
-  # Tracks pipeline progression based on whether mosaic / reflectance
-  # / indices / application_map / exported files are available. Same
-  # visual language as the top-level workflow stepper.
+  # Keep this status UI cheap. Calling mosaic(), reflectance(),
+  # all_indices(), or application_map() here forces the expensive raster
+  # pipeline just to decide which chip is green; because this output
+  # invalidates frequently while the page is active, that made Spectral
+  # recompute reflectance and throw "[+] interrupted" before plots could
+  # finish. Use input/event state only.
   output$spectral_pipeline_stepper <- renderUI({
-    mos_ok   <- !is.null(tryCatch(mosaic(),       error = function(e) NULL))
-    refl_ok  <- !is.null(tryCatch(reflectance(),  error = function(e) NULL))
-    ix_ok    <- !is.null(tryCatch(all_indices(),  error = function(e) NULL))
-    app_ok   <- !is.null(tryCatch(application_map(), error = function(e) NULL))
+    load_clicked <- isTRUE((input$load_mosaic %||% 0L) > 0L)
+    mos_ok   <- load_clicked
+    refl_ok  <- load_clicked
+    ix_ok    <- load_clicked
+    app_ok   <- load_clicked && !is.null(input$application_index)
     exp_ok   <- isTRUE(length(input$export_products) > 0L) ||
                   file.exists(file.path(input$output_dir %||% "",
                                         "reflectance_summary.csv"))
@@ -6506,9 +6510,10 @@ server <- function(input, output, session) {
   # every slider tweak forced a full-resolution `terra::plot()` or
   # `terra::values()` over the entire scene.
   #
-  # `reflectance_preview()` downsamples reflectance to ~160k cells
-  # (the same target mosaic_plot uses). Indices computed on it inherit
-  # the small grid, so every downstream plot/table is sub-second.
+  # `reflectance_preview()` downsamples the loaded mosaic bands to
+  # ~160k cells before radiometric scaling, panel calibration, and
+  # preprocessing. Indices computed on it inherit the small grid, so
+  # every downstream plot/table stays interactive.
   # Full-resolution `reflectance()` / `all_indices()` are reserved for
   # the explicit Export / Run-QA / Compute-tree-metrics buttons.
   #
@@ -6518,8 +6523,25 @@ server <- function(input, output, session) {
   # the real Load event. The downsample itself is cheap once reflectance()
   # exists, so direct reactivity is safer here.
   reflectance_preview <- reactive({
-    req(reflectance())
-    downsample_raster(reflectance(), size = 160000)
+    req(mosaic())
+    preview_bands <- downsample_raster(mosaic()$bands, size = 160000)
+    preview_refl <- scale_radiometric_bands(
+      preview_bands,
+      input$radiometric_scale_mode %||% "Auto detect"
+    )
+    preview_calibrated <- apply_panel_calibration(
+      preview_refl,
+      panel_coefficients()
+    )
+    preprocess_reflectance(
+      preview_calibrated,
+      remove_invalid = isTRUE(input$remove_physical_invalid),
+      median_size = as.integer(input$median_filter_size %||% 0),
+      clean_mask = isTRUE(input$clean_valid_mask),
+      mask_size = 3,
+      downsample_factor = as.integer(input$downsample_factor %||% 1),
+      downsample_method = input$downsample_method %||% "None"
+    )
   })
 
   indices_preview <- reactive({
@@ -8817,8 +8839,8 @@ server <- function(input, output, session) {
   }, digits = 2)
 
   output$mosaic_plot <- renderPlot({
-    req(reflectance())
-    x <- downsample_raster(reflectance(), size = 160000)
+    req(reflectance_preview())
+    x <- reflectance_preview()
     old_par <- par(no.readonly = TRUE)
     on.exit(par(old_par), add = TRUE)
     if (identical(input$preview_mode, "RGB")) {
