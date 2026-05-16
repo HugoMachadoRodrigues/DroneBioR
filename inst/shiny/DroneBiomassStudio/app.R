@@ -5086,16 +5086,31 @@ server <- function(input, output, session) {
         if (!is.na(alpha_idx)) {
           alpha <- ortho_r[[alpha_idx]]
           if (!terra::compareGeom(dsm, alpha, stopOnError = FALSE)) {
-            # terra::resample() only handles regrid (extent / resolution),
-            # NOT CRS reprojection. ODM sometimes writes DSM and ortho
-            # with the same projected CRS but a slightly different WKT
-            # string ("EPSG:32617" vs "WGS 84 / UTM zone 17N"), which
-            # makes compareGeom() return FALSE; resample then leaves the
-            # mismatched CRS in place, and the subsequent terra::mask()
-            # call prints "[mask] CRS do not match". Use terra::project()
-            # which DOES reproject + regrid in one go, then we know the
-            # mask is geometry-aligned and CRS-aligned.
-            alpha <- terra::project(alpha, dsm, method = "near")
+            # ODM commonly writes DSM and orthomosaic with the SAME
+            # effective CRS (same EPSG code) but slightly different
+            # WKT strings, which makes compareGeom() return FALSE
+            # purely on textual grounds. Detect that case and just
+            # relabel alpha's CRS to match the DSM's WKT before doing
+            # a cheap regrid via terra::resample(). A full
+            # terra::project() reproject is reserved for the
+            # genuinely-different-CRS case, since on a 22k x 20k
+            # ortho alpha band it costs tens of seconds and blocks
+            # the Shiny event loop.
+            same_epsg <- tryCatch({
+              a <- terra::crs(alpha, describe = TRUE)
+              d <- terra::crs(dsm,   describe = TRUE)
+              isTRUE(!is.null(a$code) && !is.null(d$code) &&
+                     nzchar(a$code) && nzchar(d$code) &&
+                     identical(a$code, d$code))
+            }, error = function(e) FALSE)
+            if (same_epsg) {
+              terra::crs(alpha) <- terra::crs(dsm)
+              alpha <- terra::resample(alpha, dsm, method = "near")
+            } else if (identical(terra::crs(alpha), terra::crs(dsm))) {
+              alpha <- terra::resample(alpha, dsm, method = "near")
+            } else {
+              alpha <- terra::project(alpha, dsm, method = "near")
+            }
           }
           dsm <- terra::mask(dsm, alpha >= 200, maskvalues = 0, updatevalue = NA)
         }
@@ -9234,8 +9249,14 @@ server <- function(input, output, session) {
   })
 
   output$point_cloud_viewer <- renderUI({
-    basemap <- viewer_basemap()
     scene_loaded <- point_cloud_event() > 0
+    # Defer the basemap texture build (full orthomosaic read +
+    # plotRGB to PNG) until the user actually loads a 3D scene.
+    # Previously this fired at app startup because the output had
+    # suspendWhenHidden = FALSE, which on a OneDrive Files-On-Demand
+    # project meant minutes of blocking I/O before any tab became
+    # responsive - including the GIS map render.
+    basemap <- if (isTRUE(scene_loaded)) viewer_basemap() else NULL
     if (isTRUE(scene_loaded)) {
       req(display_points())
       points <- display_points()
@@ -10256,7 +10277,16 @@ server <- function(input, output, session) {
   # redraws from a different plane." The viewer is cheap to keep mounted
   # because three.js's animate loop pauses naturally when the canvas is
   # not visible.
-  outputOptions(output, "point_cloud_viewer", suspendWhenHidden = FALSE)
+  # NOTE: point_cloud_viewer used to set suspendWhenHidden = FALSE so
+  # the three.js scene would persist across tab navigation. The cost
+  # was multi-minute blocking I/O at app startup on big projects
+  # (viewer_basemap reads the entire orthomosaic + writes a PNG
+  # texture even when the user hasn't asked for a 3D scene). We now
+  # let Shiny suspend the output when the 3D tab is hidden; the
+  # basemap is only built once point_cloud_event() > 0 (see renderUI
+  # above), so navigating to the 3D tab without loading a scene is
+  # free and only takes the user's "Load 3D scene" click costs the
+  # texture read.
 
   output$point_cloud_status <- renderText({
     if (point_cloud_event() == 0) {
@@ -11037,7 +11067,14 @@ server <- function(input, output, session) {
         ))
     }
     bounds <- raster_bounds_4326(ortho_for_context)
-    local_ortho <- context_orthomosaic()
+    # Same deferral as point_cloud_viewer: avoid kicking off a full
+    # orthomosaic RGB context build (read + percentile-clip per band)
+    # before the user has actually loaded a 3D scene. Without this
+    # guard, app startup on OneDrive Files-On-Demand projects blocks
+    # R for minutes - which manifests as "the GIS tab shows no map"
+    # and "tabs feel out of sync" because every input click queues
+    # behind the synchronous raster read.
+    local_ortho <- if (point_cloud_event() > 0) context_orthomosaic() else NULL
     if (!is.null(local_ortho)) {
       base <- base |>
         addRasterImage(
@@ -11070,7 +11107,11 @@ server <- function(input, output, session) {
         options = layersControlOptions(collapsed = TRUE)
       )
   })
-  outputOptions(output, "point_cloud_context_map", suspendWhenHidden = FALSE)
+  # See the point_cloud_viewer note above: suspendWhenHidden defaults
+  # to TRUE now so the context map's renderLeaflet (and especially
+  # the expensive context_orthomosaic() read it triggers) only fires
+  # when the user navigates to the 3D Modeling tab AND has loaded a
+  # scene.
 
   observeEvent(input$recenter_context_map, {
     fit_leaflet_to_orthomosaic("point_cloud_context_map", input$orthomosaic)
