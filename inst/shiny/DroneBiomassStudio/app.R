@@ -1666,18 +1666,20 @@ ui <- page_navbar(
             doneSet[msg.tabs[i]] = true;
           }
         }
+        // Keep the step NUMBER visible at all times (1, 2, 3, ...)
+        // so the user does not lose the sense of order when steps
+        // are completed. The `.done` class is enough to drive the
+        // green styling via CSS (.dronebio-step.done .step-num),
+        // so we no longer rewrite the number to a check glyph.
         document.querySelectorAll('.dronebio-step').forEach(function(el) {
           var t = el.getAttribute('data-step-tab');
           var isDone = doneSet[t] === true;
           el.classList.toggle('done', isDone);
+          // Backwards compatibility: if a previous app version had
+          // already swapped the number for the check glyph and left
+          // the original text in data-original-text, restore it.
           var num = el.querySelector('.step-num');
-          if (!num) return;
-          if (isDone) {
-            if (!num.dataset.originalText) {
-              num.dataset.originalText = num.textContent;
-            }
-            num.innerHTML = '✓';
-          } else if (num.dataset.originalText) {
+          if (num && num.dataset.originalText) {
             num.textContent = num.dataset.originalText;
             delete num.dataset.originalText;
           }
@@ -6070,8 +6072,10 @@ server <- function(input, output, session) {
                if (isTRUE(st$done)) "done")
       tags$div(
         class = paste(cls, collapse = " "),
-        tags$span(class = "step-num",
-                  if (isTRUE(st$done)) HTML("&#10003;") else as.character(st$n)),
+        # Keep the step number visible even when done so users do
+        # not lose the sense of order across the pipeline. The
+        # `.done` class drives the green tint via CSS.
+        tags$span(class = "step-num", as.character(st$n)),
         tags$span(st$label)
       )
     })
@@ -9268,22 +9272,46 @@ server <- function(input, output, session) {
   })
 
   output$point_cloud_viewer <- renderUI({
-    # We DO want the basemap texture even before a point cloud is
-    # loaded: it gives the user a visible orthomosaic-on-ground plane
-    # so they understand the 3D scene is alive while they decide
-    # what to load. The expensive read is already deferred by
-    # suspendWhenHidden = TRUE (set below), so this only fires when
-    # the user has actually navigated to the 3D Modeling tab.
-    basemap <- viewer_basemap()
     scene_loaded <- point_cloud_event() > 0
-    if (isTRUE(scene_loaded)) {
-      req(display_points())
-      points <- display_points()
-      trees <- if (nrow(points) > 0) tree_candidates() else data.frame()
-    } else {
-      points <- empty_classified_points()
-      trees <- data.frame()
+    # When no scene has been loaded yet, return a lightweight
+    # placeholder instead of building the three.js scene + basemap
+    # texture. Two reasons:
+    #   1. The basemap texture pull is a full orthomosaic read +
+    #      plotRGB to PNG; on a OneDrive Files-On-Demand project that
+    #      is multi-minute synchronous work. If the user clicks the
+    #      3D Modeling tab while the GIS overlays are still loading,
+    #      that 3D renderUI ends up queued behind the GIS work and
+    #      the WHOLE app appears frozen to the user.
+    #   2. Even with no point cloud, building three.js + a basemap
+    #      plane is wasted work the user has not asked for. Make the
+    #      Load 3D scene click the explicit trigger - matches how
+    #      the GIS tab waits for "Load selected overlays".
+    if (!isTRUE(scene_loaded)) {
+      return(tags$div(
+        id = "point-cloud-viewer",
+        style = paste(
+          "width:100%; height:100%; display:flex; flex-direction:column;",
+          "align-items:center; justify-content:center; gap:14px;",
+          "color:#475569; background:#f8fafc; border:1px dashed #cbd5e1;",
+          "border-radius:8px; padding:24px; text-align:center;"),
+        tags$div(style = "font-size:1.1rem; font-weight:600; color:#1f2937;",
+                 "3D scene not loaded yet"),
+        tags$div(style = "max-width:560px; line-height:1.4;",
+                 "Click ", tags$strong("Load 3D scene"),
+                 " in the toolbar above (or in the sidebar) when you are ",
+                 "ready. The first load reads the orthomosaic and the ",
+                 "point cloud from disk and can take 30 s–2 min on big ",
+                 "projects; the cached result is instant on later loads. ",
+                 "Until you click Load, switching to other tabs stays ",
+                 "fast.")
+      ))
     }
+    # From here on we know the user has clicked Load 3D scene. Build
+    # the full three.js viewer with basemap + points.
+    basemap <- viewer_basemap()
+    req(display_points())
+    points <- display_points()
+    trees <- if (nrow(points) > 0) tree_candidates() else data.frame()
 
     if (identical(input$point_color_mode, "Classification")) {
       points$display_color <- points$class_color
@@ -11086,15 +11114,15 @@ server <- function(input, output, session) {
         ))
     }
     bounds <- raster_bounds_4326(ortho_for_context)
-    # Build the local orthomosaic context unconditionally now that
-    # this renderLeaflet only fires when the user navigates to the
-    # 3D Modeling tab (suspendWhenHidden defaults to TRUE for this
-    # output - see the note further down). Hiding the local
-    # orthomosaic until point_cloud_event() > 0 left the tab looking
-    # empty when the user had not clicked Load 3D scene yet, even
-    # though the context map IS the orientation aid they need
-    # before clicking Load.
-    local_ortho <- context_orthomosaic()
+    # Gate the local orthomosaic context on the user having clicked
+    # Load 3D scene. The per-band percentile-clip + RGB build inside
+    # context_orthomosaic() is multi-second to minutes on a big
+    # OneDrive ortho; if we ran it unconditionally on tab nav, a
+    # user that clicked through to 3D while GIS overlays were still
+    # loading would freeze the whole app. The basemap satellite
+    # tiles + orthomosaic footprint rectangle below are still drawn
+    # so the user has spatial orientation while deciding to load.
+    local_ortho <- if (point_cloud_event() > 0) context_orthomosaic() else NULL
     if (!is.null(local_ortho)) {
       base <- base |>
         addRasterImage(
