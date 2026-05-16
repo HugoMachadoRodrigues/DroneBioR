@@ -9282,7 +9282,19 @@ server <- function(input, output, session) {
         nzchar(full_path) && file.exists(full_path)
 
       if (isTRUE(use_full_sample)) {
-        pts <- read_full_point_cloud(full_path, max_points = input$max_points)
+        # The preview_cache_dir argument turns the first LAZ / COPC
+        # read into a self-caching one: lidR decompresses the source
+        # once, we write a small PLY next to the project's local
+        # cache, and every subsequent Load 3D scene reads that PLY
+        # in ~100 ms instead of 10-15 s. Caller-only behaviour - the
+        # underlying R package keeps working without a cache dir.
+        preview_dir <- tryCatch(DroneBioR:::local_cache_dir(project()),
+                                error = function(e) NULL)
+        pts <- read_full_point_cloud(
+          full_path,
+          max_points        = input$max_points,
+          preview_cache_dir = preview_dir
+        )
         chm <- chm_raster()
         if (!is.null(chm)) {
           pts <- add_chm_heights(pts, chm)

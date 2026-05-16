@@ -454,6 +454,62 @@ read_with_optional_lidar_package <- function(path, roi_polygon = NULL,
   out
 }
 
+# Serialise a decimated point cloud as a binary_little_endian PLY whose
+# byte layout matches what read_ply_point_cloud expects (XYZ float32
+# followed by 4 uchars red/blue/green/views per vertex). Used to cache
+# a fast-to-reload preview after the first lidR / LAZ read, so a Load
+# 3D scene click on a project without an ODM-provided point_cloud.ply
+# does NOT pay the 10-20 s LASzip decompression more than once.
+write_preview_ply <- function(points, path) {
+  if (!is.data.frame(points) || nrow(points) == 0L) return(invisible(NULL))
+  required <- c("x", "y", "z")
+  if (!all(required %in% names(points))) {
+    stop("write_preview_ply needs x, y, z columns.", call. = FALSE)
+  }
+  n <- nrow(points)
+  # Decode the hex color string into 3 x N R, G, B uchars. Default
+  # mid-grey when the colour column is missing or invalid so the
+  # preview still has a sane palette.
+  rgb_mat <- tryCatch(
+    grDevices::col2rgb(points$color %||% "#94a3b8"),
+    error = function(e) matrix(148L, nrow = 3L, ncol = n)
+  )
+  if (ncol(rgb_mat) == 1L && n > 1L) {
+    rgb_mat <- matrix(rep(rgb_mat[, 1L], n), nrow = 3L)
+  }
+  header <- paste0(
+    "ply\n",
+    "format binary_little_endian 1.0\n",
+    "comment DroneBioR preview cache\n",
+    "element vertex ", n, "\n",
+    "property float x\n",
+    "property float y\n",
+    "property float z\n",
+    "property uchar red\n",
+    "property uchar blue\n",
+    "property uchar green\n",
+    "property uchar views\n",
+    "end_header\n"
+  )
+  # Vectorised byte interleave: build the 12-byte XYZ block and the
+  # 4-byte RGBV block separately, stack them as a 16 x N raw matrix,
+  # then flatten column-major (R's default) so the output is exactly
+  # vertex 1 (XYZ + RGBV) followed by vertex 2, etc.
+  xyz_raw <- writeBin(as.numeric(rbind(points$x, points$y, points$z)),
+                      raw(), size = 4L, endian = "little")
+  rgbv_int <- as.integer(rbind(rgb_mat[1L, ], rgb_mat[3L, ],
+                               rgb_mat[2L, ], rep(0L, n)))
+  rgbv_raw <- writeBin(rgbv_int, raw(), size = 1L)
+  xyz_mat  <- matrix(xyz_raw,  nrow = 12L)
+  rgbv_mat <- matrix(rgbv_raw, nrow =  4L)
+  buf      <- as.raw(rbind(xyz_mat, rgbv_mat))
+  con <- file(path, "wb")
+  on.exit(close(con), add = TRUE)
+  writeBin(charToRaw(header), con, useBytes = TRUE)
+  writeBin(buf, con, useBytes = TRUE)
+  invisible(path)
+}
+
 #' Read a full-resolution LAS/LAZ/COPC point cloud
 #'
 #' The function prefers an uncompressed LAS file because it can be read with the
@@ -465,6 +521,12 @@ read_with_optional_lidar_package <- function(path, roi_polygon = NULL,
 #' @param roi_polygon Optional polygon ROI with `x` and `y` columns.
 #' @param max_points Maximum number of points to return when no ROI is supplied.
 #' @param chunk_size Number of point records per scan chunk for LAS files.
+#' @param preview_cache_dir Optional writable directory used to cache a
+#'   decimated PLY preview of the source. When supplied and no ROI is
+#'   requested, the first successful read of a `.laz` / `.copc.laz`
+#'   writes a PLY there keyed on the source's (size, mtime); subsequent
+#'   reads of the same source consume the PLY directly, skipping the
+#'   LASzip decompression entirely.
 #' @return Data frame with full-resolution point coordinates inside the ROI.
 #' @examples
 #' \dontrun{
@@ -474,9 +536,45 @@ read_with_optional_lidar_package <- function(path, roi_polygon = NULL,
 read_full_point_cloud <- function(path,
                                   roi_polygon = NULL,
                                   max_points = Inf,
-                                  chunk_size = 100000) {
+                                  chunk_size = 100000,
+                                  preview_cache_dir = NULL) {
   if (!file.exists(path)) {
     stop("Point cloud file not found: ", path, call. = FALSE)
+  }
+
+  is_compressed <- grepl("\\.(laz|copc)$", path, ignore.case = TRUE) ||
+                   grepl("\\.copc\\.laz$", path, ignore.case = TRUE)
+
+  # Preview cache: avoids re-running LASzip / lidR on every Load 3D
+  # scene click when the project ships only a LAZ / COPC and no PLY.
+  # Cache key = source basename + size + mtime + max_points bucket, so
+  # a routine OneDrive resync that touches mtime correctly invalidates,
+  # and different max_points buckets get separate caches.
+  cache_path <- NULL
+  if (is_compressed && is.null(roi_polygon) &&
+      !is.null(preview_cache_dir) && nzchar(preview_cache_dir)) {
+    dir.create(preview_cache_dir, recursive = TRUE, showWarnings = FALSE)
+    info <- file.info(path)
+    mp_bucket <- if (is.finite(max_points)) as.integer(max_points) else 0L
+    cache_path <- file.path(
+      preview_cache_dir,
+      sprintf("%s_size%.0f_mt%.0f_mp%d.preview.ply",
+              tools::file_path_sans_ext(basename(path)),
+              as.numeric(info$size),
+              as.numeric(info$mtime),
+              mp_bucket)
+    )
+    if (file.exists(cache_path)) {
+      cached <- tryCatch(
+        read_ply_point_cloud(cache_path, max_points = max_points),
+        error = function(e) NULL
+      )
+      if (!is.null(cached) && nrow(cached) > 0L) {
+        attr(cached, "point_cloud_source") <- normalizePath(path, mustWork = FALSE)
+        attr(cached, "coordinate_source") <- "full_georeferenced"
+        return(cached)
+      }
+    }
   }
 
   if (grepl("\\.las$", path, ignore.case = TRUE)) {
@@ -508,6 +606,14 @@ read_full_point_cloud <- function(path,
       if (is.finite(max_points) && nrow(pts) > max_points) {
         set.seed(42)
         pts <- pts[sort(sample.int(nrow(pts), max_points)), , drop = FALSE]
+      }
+      # Persist the decoded preview so the next Load 3D scene click
+      # skips the LASzip decompression entirely. Only fires when no
+      # ROI was applied (a ROI subset would be wrong for a generic
+      # preview).
+      if (!is.null(cache_path) && nrow(pts) > 0L) {
+        tryCatch(write_preview_ply(pts, cache_path),
+                 error = function(e) NULL)
       }
       return(pts)
     }
