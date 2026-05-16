@@ -23,9 +23,9 @@ default_products <- odm_product_paths(default_project)
 
 default_full_cloud <- function(products) {
   candidates <- unname(c(
-    products[["point_cloud_las"]],
+    products[["point_cloud_copc"]],
     products[["point_cloud_laz"]],
-    products[["point_cloud_copc"]]
+    products[["point_cloud_las"]]
   ))
   existing <- candidates[file.exists(candidates)]
   if (length(existing) > 0) existing[[1]] else candidates[[1]]
@@ -9301,6 +9301,11 @@ server <- function(input, output, session) {
     DroneBioR:::cache_aware_path(raw, project())
   })
 
+  georeferenced_3d_layer_requested <- reactive({
+    isTRUE(input$show_orthomosaic_basemap) ||
+      isTRUE(input$show_draped_dsm)
+  })
+
   # When the resolved PLY path is still on a cloud-sync folder
   # (OneDrive / iCloud / Dropbox / Google Drive), copy it ONCE into
   # the project's local cache and use the local copy from then on.
@@ -9357,8 +9362,23 @@ server <- function(input, output, session) {
     with_error_toast("Load point cloud", {
       full_path <- resolved_full_cloud_path()
       ply_path  <- resolved_ply_path()
-      use_full_sample <- identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") &&
-        nzchar(full_path) && file.exists(full_path)
+      full_available <- nzchar(full_path) && file.exists(full_path)
+      force_full_for_georef <- isTRUE(georeferenced_3d_layer_requested()) &&
+        identical(input$viewer_cloud_source, "PLY preview fallback") &&
+        isTRUE(full_available)
+      use_full_sample <- (identical(input$viewer_cloud_source, "Full georeferenced LAS/LAZ/COPC sample") ||
+                            force_full_for_georef) &&
+        isTRUE(full_available)
+
+      if (isTRUE(force_full_for_georef)) {
+        updateSelectInput(session, "viewer_cloud_source",
+                          selected = "Full georeferenced LAS/LAZ/COPC sample")
+        showNotification(
+          paste0("Orthomosaic basemap / DSM drape needs projected coordinates; ",
+                 "loading ", basename(full_path), " instead of the local PLY preview."),
+          type = "message", duration = 8
+        )
+      }
 
       if (isTRUE(use_full_sample)) {
         # The preview_cache_dir argument turns the first LAZ / COPC
@@ -9409,9 +9429,29 @@ server <- function(input, output, session) {
       input$viewer_cloud_source,
       resolved_full_cloud_path(),
       resolved_ply_path(),
-      input$max_points
+      input$max_points,
+      georeferenced_3d_layer_requested()
     ) |>
     bindEvent(point_cloud_event())
+
+  observeEvent(georeferenced_3d_layer_requested(), {
+    if (!isTRUE(georeferenced_3d_layer_requested())) return()
+    if (!identical(input$viewer_cloud_source, "PLY preview fallback")) return()
+    full_path <- resolved_full_cloud_path()
+    if (!nzchar(full_path) || !file.exists(full_path)) return()
+
+    updateSelectInput(session, "viewer_cloud_source",
+                      selected = "Full georeferenced LAS/LAZ/COPC sample")
+    msg <- if (point_cloud_event() > 0) {
+      paste0("Switched 3D source to ", basename(full_path),
+             ". Click Load 3D scene again so the orthomosaic / DSM uses the ",
+             "georeferenced point cloud.")
+    } else {
+      paste0("Switched 3D source to ", basename(full_path),
+             " so the orthomosaic / DSM uses projected coordinates.")
+    }
+    showNotification(msg, type = "message", duration = 8)
+  }, ignoreInit = TRUE)
 
   observeEvent(input$selected_point_ids, {
     ids <- input$selected_point_ids %||% integer()
@@ -9801,7 +9841,13 @@ server <- function(input, output, session) {
     # gated on input$show_orthomosaic_basemap so users on OneDrive
     # can skip the full-ortho read at Load time when they only want
     # the point cloud.
-    basemap <- if (isTRUE(input$show_orthomosaic_basemap %||% TRUE))
+    loaded_cloud <- point_cloud()
+    local_preview_georef_conflict <- isTRUE(georeferenced_3d_layer_requested()) &&
+      !points_are_georeferenced(loaded_cloud) &&
+      nzchar(resolved_full_cloud_path()) &&
+      file.exists(resolved_full_cloud_path())
+    basemap <- if (isTRUE(input$show_orthomosaic_basemap %||% TRUE) &&
+                   !isTRUE(local_preview_georef_conflict))
       viewer_basemap() else NULL
     req(display_points())
     points <- display_points()
@@ -9889,7 +9935,11 @@ server <- function(input, output, session) {
     # Draped DSM heightfield comes from the cached reactive (see
     # draped_dsm_heightmap above) so re-renders triggered by
     # selection / tool / height-filter changes do NOT rebuild it.
-    draped_dsm <- draped_dsm_heightmap()
+    draped_dsm <- if (isTRUE(local_preview_georef_conflict)) {
+      NULL
+    } else {
+      draped_dsm_heightmap()
+    }
     draped_dsm_json <- jsonlite::toJSON(draped_dsm %||% list(),
                                         auto_unbox = TRUE, null = "null", na = "null")
 
