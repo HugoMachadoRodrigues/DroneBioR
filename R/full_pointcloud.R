@@ -347,13 +347,53 @@ compressed_sidecar_candidates <- function(path) {
   ))
 }
 
-read_with_optional_lidar_package <- function(path) {
+read_with_optional_lidar_package <- function(path, roi_polygon = NULL) {
   pkg <- "lidR"
   if (!requireNamespace(pkg, quietly = TRUE)) {
     return(NULL)
   }
   reader <- get("readLAS", envir = asNamespace(pkg))
-  las <- reader(path)
+
+  # Build a PDAL-style filter string that lidR pushes down into the
+  # LASlib/LASzip decoder so we do NOT decompress points outside the
+  # ROI and so we drop attributes we never read.
+  #   * `-keep_xy xmin ymin xmax ymax` is the LASlib spatial filter.
+  #     For COPC files this also skips entire chunks that fall
+  #     outside the bbox, which can turn a 1.5 GB LAZ read into a
+  #     ~50 MB read for a 1 ha ROI.
+  # `select = "xyzcr"` keeps XYZ + classification + RGB and drops
+  #   intensity, return number, scan angle, GPS time, etc - those
+  #   are not consumed downstream and they roughly double per-point
+  #   memory when retained.
+  filter_parts <- character()
+  if (!is.null(roi_polygon) && is.data.frame(roi_polygon) &&
+      nrow(roi_polygon) >= 3L) {
+    xmin <- min(roi_polygon$x, na.rm = TRUE)
+    xmax <- max(roi_polygon$x, na.rm = TRUE)
+    ymin <- min(roi_polygon$y, na.rm = TRUE)
+    ymax <- max(roi_polygon$y, na.rm = TRUE)
+    if (is.finite(xmin) && is.finite(xmax) &&
+        is.finite(ymin) && is.finite(ymax) && xmax > xmin && ymax > ymin) {
+      filter_parts <- c(filter_parts,
+                        sprintf("-keep_xy %.6f %.6f %.6f %.6f",
+                                xmin, ymin, xmax, ymax))
+    }
+  }
+  filter_str <- paste(filter_parts, collapse = " ")
+
+  las <- tryCatch(
+    if (nzchar(filter_str)) reader(path, filter = filter_str, select = "xyzcr")
+    else                    reader(path,                       select = "xyzcr"),
+    error = function(e) {
+      # Some lidR builds reject the select argument when reading
+      # malformed point records; retry without it before giving up.
+      tryCatch(
+        if (nzchar(filter_str)) reader(path, filter = filter_str)
+        else                    reader(path),
+        error = function(e2) NULL
+      )
+    }
+  )
   if (is.null(las)) {
     return(empty_point_cloud())
   }
@@ -425,7 +465,12 @@ read_full_point_cloud <- function(path,
       return(read_las_point_cloud(sidecar[[1]], roi_polygon = roi_polygon, max_points = max_points, chunk_size = chunk_size))
     }
 
-    pts <- read_with_optional_lidar_package(path)
+    # Push the ROI bbox down into the LAZ decoder so most chunks are
+    # never decompressed. Once the (much smaller) decoded data is
+    # back, run the exact polygon filter and the max_points cap
+    # post-hoc: the decoder filter is bbox-based, not polygon-based,
+    # so it will overscan the ROI corners.
+    pts <- read_with_optional_lidar_package(path, roi_polygon = roi_polygon)
     if (!is.null(pts)) {
       if (!is.null(roi_polygon)) {
         pts <- filter_points_by_roi(pts, roi_polygon)

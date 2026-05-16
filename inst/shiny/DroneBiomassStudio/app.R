@@ -3460,9 +3460,23 @@ ui <- page_navbar(
               "viewer_cloud_source", "3D viewer source",
               choices = c("Full georeferenced LAS/LAZ/COPC sample",
                           "PLY preview fallback"),
-              selected = if (file.exists(default_full_cloud(default_products)))
-                           "Full georeferenced LAS/LAZ/COPC sample"
-                         else "PLY preview fallback"
+              # Prefer the PLY preview by default when it exists. The
+              # PLY ships with the ODM run as an already-decimated
+              # preview (tens of MB, hundreds of K points) whereas the
+              # LAS / LAZ / COPC sample is the full-resolution cloud
+              # (often GBs and many M points) - loading it on every
+              # Load 3D scene click was a multi-minute hit on
+              # OneDrive Files-On-Demand projects. Users that need
+              # full-res for ROI metrics switch to LAS/LAZ/COPC
+              # explicitly, or use the "Compute full-resolution ROI
+              # metrics" button in the 3D sidebar.
+              selected = {
+                ply_default <- default_products[["point_cloud_ply"]] %||% ""
+                full_default <- default_full_cloud(default_products)
+                if (file.exists(ply_default)) "PLY preview fallback"
+                else if (file.exists(full_default)) "Full georeferenced LAS/LAZ/COPC sample"
+                else "PLY preview fallback"
+              }
             ),
             textInput("full_cloud_path",
                       "Full-resolution point cloud (LAS/LAZ/COPC)",
@@ -4381,6 +4395,11 @@ server <- function(input, output, session) {
         updateSelectInput(session, "odm_project_pick",
                           selected = prefs$odm_project_pick)
       }
+      if (!is.null(prefs$viewer_cloud_source) &&
+          nzchar(prefs$viewer_cloud_source)) {
+        updateSelectInput(session, "viewer_cloud_source",
+                          selected = prefs$viewer_cloud_source)
+      }
       studio_prefs(prefs)
       studio_prefs_loaded(TRUE)
     })
@@ -4394,10 +4413,11 @@ server <- function(input, output, session) {
     pd <- input$project_dir %||% ""
     if (!nzchar(pd) || !dir.exists(pd)) return()
     new_prefs <- list(
-      camera_type      = input$camera_type      %||% "multispectral",
-      images_dir       = input$images_dir       %||% "",
-      output_dir       = input$output_dir       %||% "",
-      odm_project_pick = input$odm_project_pick %||% ""
+      camera_type         = input$camera_type         %||% "multispectral",
+      images_dir          = input$images_dir          %||% "",
+      output_dir          = input$output_dir          %||% "",
+      odm_project_pick    = input$odm_project_pick    %||% "",
+      viewer_cloud_source = input$viewer_cloud_source %||% ""
     )
     cur <- studio_prefs()
     if (identical(new_prefs, cur)) return()
