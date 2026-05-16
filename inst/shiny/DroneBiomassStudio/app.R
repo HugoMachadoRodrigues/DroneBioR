@@ -6441,6 +6441,19 @@ server <- function(input, output, session) {
   gis_stack <- reactive({
     with_error_toast("Load GIS stack", {
       validate(need(file.exists(input$orthomosaic), paste("Orthomosaic not found:", input$orthomosaic)))
+
+      # Snapshot the user's overlay selection at Load time. We use it
+      # to skip biomass-proxy / CHM work when nothing biomass-related
+      # is asked for. Without this gate, gis_stack used to build
+      # every biomass surface AND read the CHM (which on first run
+      # calls build_chm_raster() -> terra::writeRaster of a ~1.7 GB
+      # GeoTIFF over OneDrive), so the user's "load GIS with just
+      # NDVI checked" still paid the full price.
+      selected_snapshot  <- isolate(selected_overlay_layers())
+      wants_biomass_chm  <- any(grepl("_x_CHM$", selected_snapshot))
+      wants_biomass_spec <- "Biomass_Index_Proxy" %in% selected_snapshot
+      wants_biomass      <- wants_biomass_chm || wants_biomass_spec
+
       withProgress(message = "Loading GIS stack", value = 0, {
         incProgress(0.1, detail = "Reading orthomosaic header")
         ortho <- read_multispectral_orthomosaic(input$orthomosaic, use_alpha = input$use_alpha)
@@ -6471,28 +6484,33 @@ server <- function(input, output, session) {
         } else bands_for_display
 
         incProgress(0.15, detail = "Computing spectral indices")
+        # compute_spectral_indices builds 22 lazy SpatRaster ops; the
+        # actual pixel scan only happens when a downstream consumer
+        # reads values for one of them (per selected overlay in
+        # render_gis_overlays). Cheap to include here unconditionally.
         idx <- compute_spectral_indices(refl)
 
-        # Biomass proxies. compute_biomass_proxies() returns the legacy
-        # Biomass_Spectral surface (mean of NDVI/SAVI/NDRE, or VARI on
-        # RGB-only orthos) plus a family of greenness x CHM layers when
-        # a CHM is available. The CHM is cheap to read - already cached
-        # by chm_raster() - so we always offer the multiplicative proxies
-        # when the project has DSM + DTM. Skips silently otherwise.
-        incProgress(0.15, detail = "Building biomass proxies")
-        proxy_stack <- tryCatch({
-          ch <- tryCatch(chm_raster(), error = function(e) NULL)
-          compute_biomass_proxies(idx, chm = ch)
-        }, error = function(e) NULL)
-
-        # Keep backwards compatibility: the historical Biomass_Index_Proxy
-        # layer name is still emitted alongside the new Biomass_Spectral
-        # one. Downstream code (legend mapping, time-series, product
-        # metadata) keys on the old name in places, and renaming would
-        # silently break those callers.
+        # Biomass proxies - only when the user has actually ticked
+        # one of the Biomass_* overlays at Load time. compute_biomass_
+        # proxies AND compute_biomass_proxy both force values for the
+        # underlying indices (NDVI/SAVI/NDRE etc), and the _x_CHM
+        # family also triggers chm_raster() which on a fresh project
+        # writes the multi-GB chm.tif. Skipping makes Load with just
+        # bands or indices selected near-instant.
+        proxy_stack  <- NULL
         legacy_proxy <- NULL
-        if (all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
-          legacy_proxy <- compute_biomass_proxy(idx)
+        if (wants_biomass) {
+          incProgress(0.15, detail = "Building biomass proxies")
+          if (wants_biomass_chm) {
+            proxy_stack <- tryCatch({
+              ch <- tryCatch(chm_raster(), error = function(e) NULL)
+              compute_biomass_proxies(idx, chm = ch)
+            }, error = function(e) NULL)
+          }
+          if (wants_biomass_spec &&
+              all(c("NDVI", "SAVI", "NDRE") %in% names(idx))) {
+            legacy_proxy <- compute_biomass_proxy(idx)
+          }
         }
 
         incProgress(0.2, detail = "Stacking final layers")
@@ -6504,7 +6522,11 @@ server <- function(input, output, session) {
       })
     })
   }) |>
-    bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance) |>
+    bindCache(input$orthomosaic, input$use_alpha, input$scale_reflectance,
+              # Include the selection signature so a different overlay
+              # set forces a rebuild (e.g. user adds Biomass_NDVI_x_CHM
+              # after a first Load without biomass).
+              paste(sort(isolate(selected_overlay_layers())), collapse = "|")) |>
     bindEvent(input$load_gis)
 
   # Hillshade is derived from the DSM, independently of the gis_stack. We
