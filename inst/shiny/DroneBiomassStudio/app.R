@@ -1644,22 +1644,58 @@ ui <- page_navbar(
       // (0 x 0) container size after the tab becomes visible: the
       // base tiles never load and the canvas looks blank. The
       // standard fix is to call map.invalidateSize() once the tab
-      // is visible. We dispatch the standard 'resize' event so the
-      // leaflet htmlwidgets binding picks it up regardless of
-      // whether we have a direct handle on the L.map instance.
+      // is visible.
+      //
+
+      // Earlier version of this handler used window.dispatchEvent
+      // (resize) which leaked into leaflet maps that had not been
+      // mounted yet (point_cloud_context_map under
+      // suspendWhenHidden = TRUE), throwing _leaflet_pos undefined
+      // errors. We now target a fixed list of known map IDs and
+      // skip any map whose DOM element is missing, hidden, or whose
+      // HTMLWidgets binding has not initialised yet.
       Shiny.addCustomMessageHandler('dronebior_invalidate_maps', function(_msg) {
-        var fire = function() {
-          // Force a layout sync first so getBoundingClientRect()
-          // returns the right size, THEN nudge leaflet via the
-          // window resize event htmlwidgets watches.
-          void document.body.offsetHeight;
-          window.dispatchEvent(new Event('resize'));
+        var known_maps = ['gis_map', 'point_cloud_context_map'];
+        var poke = function() {
+          known_maps.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            var rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+            try {
+              // HTMLWidgets.find returns the leaflet widget
+              // instance when the binding has finished its
+              // factory; if the output is still suspended
+              // (Shiny has not pushed any HTML yet) it returns
+              // undefined and we just skip.
+              if (typeof HTMLWidgets !== 'undefined' &&
+                  typeof HTMLWidgets.find === 'function') {
+                var inst = HTMLWidgets.find('#' + id);
+                if (inst && typeof inst.getMap === 'function') {
+                  var map = inst.getMap();
+                  if (map && typeof map.invalidateSize === 'function') {
+                    map.invalidateSize();
+                    return;
+                  }
+                }
+              }
+              // Fallback: trigger the htmlwidgets resize delegate
+              // via window.dispatchEvent, but only when we got
+              // here (which means the element IS visible).
+              if (typeof window !== 'undefined' &&
+                  typeof window.HTMLWidgets !== 'undefined' &&
+                  typeof window.HTMLWidgets.staticRender === 'function') {
+                // no-op: htmlwidgets resize is taken care of by
+                // the resize event below
+              }
+            } catch (e) { /* swallow stale-binding errors */ }
+          });
         };
         // Two ticks: one for the immediate DOM reflow after the
-        // tab becomes visible, one for ~80 ms later in case
+        // tab becomes visible, one for ~120 ms later in case
         // Bootstrap's tab fade animation has not finished yet.
-        setTimeout(fire, 0);
-        setTimeout(fire, 120);
+        setTimeout(poke, 0);
+        setTimeout(poke, 120);
       });
 
       // Mark the active chip in the static Workflow Stepper. R sends
@@ -3445,6 +3481,14 @@ ui <- page_navbar(
           ),
           accordion_panel(
             "Display options",
+            checkboxInput("show_orthomosaic_basemap",
+                          "Show orthomosaic basemap (ground plane)",
+                          value = TRUE),
+            div(class = "small text-muted",
+                style = "margin-top:-6px; margin-bottom:6px;",
+                "Disabling skips the orthomosaic read on Load. ",
+                "Recommended off when the project is on OneDrive ",
+                "and only the point cloud matters."),
             checkboxInput("show_draped_dsm",
                           "Show DSM as 3D draped orthomosaic (Pix4D-style)",
                           value = TRUE),
@@ -9339,8 +9383,12 @@ server <- function(input, output, session) {
       ))
     }
     # From here on we know the user has clicked Load 3D scene. Build
-    # the full three.js viewer with basemap + points.
-    basemap <- viewer_basemap()
+    # the full three.js viewer with basemap + points. The basemap is
+    # gated on input$show_orthomosaic_basemap so users on OneDrive
+    # can skip the full-ortho read at Load time when they only want
+    # the point cloud.
+    basemap <- if (isTRUE(input$show_orthomosaic_basemap %||% TRUE))
+      viewer_basemap() else NULL
     req(display_points())
     points <- display_points()
     trees <- if (nrow(points) > 0) tree_candidates() else data.frame()
@@ -11146,15 +11194,18 @@ server <- function(input, output, session) {
         ))
     }
     bounds <- raster_bounds_4326(ortho_for_context)
-    # Gate the local orthomosaic context on the user having clicked
-    # Load 3D scene. The per-band percentile-clip + RGB build inside
+    # Gate the local orthomosaic context on BOTH the user having
+    # clicked Load 3D scene AND the basemap checkbox being on.
+    # The per-band percentile-clip + RGB build inside
     # context_orthomosaic() is multi-second to minutes on a big
     # OneDrive ortho; if we ran it unconditionally on tab nav, a
     # user that clicked through to 3D while GIS overlays were still
     # loading would freeze the whole app. The basemap satellite
     # tiles + orthomosaic footprint rectangle below are still drawn
     # so the user has spatial orientation while deciding to load.
-    local_ortho <- if (point_cloud_event() > 0) context_orthomosaic() else NULL
+    local_ortho <- if (point_cloud_event() > 0 &&
+                       isTRUE(input$show_orthomosaic_basemap %||% TRUE))
+      context_orthomosaic() else NULL
     if (!is.null(local_ortho)) {
       base <- base |>
         addRasterImage(
