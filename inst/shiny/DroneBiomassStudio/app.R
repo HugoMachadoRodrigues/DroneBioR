@@ -3323,27 +3323,14 @@ ui <- page_navbar(
           span(class = "viewer-status",
                textOutput("gis_toolbar_status", inline = TRUE))
         ),
-        # Layer Manager: live list of what is currently rendered on
-        # the map. Mirrors the sidebar overlay checkboxes but in a
-        # more legible format (one card with type / CRS / opacity
-        # per layer). Shows an empty state when nothing has been
-        # loaded yet so the user knows what to do next.
-        card(
-          card_header(div(class = "map-card-header",
-                          tags$span("Layer Manager"),
-                          tags$span(class = "viewer-status",
-                                    textOutput("layer_manager_summary",
-                                               inline = TRUE)))),
-          uiOutput("layer_manager_panel")
-        ),
-        # Project actions card. Used to repeat all the project
-        # metadata (path, image count, product checkmarks) that now
-        # lives in the Project Control Center at the top of the page;
-        # now it only carries actions: Build CHM and Refine DTM +
-        # CHM via CSF (lidR). Renders an empty-state line when
-        # neither action is available.
-        card(card_header("Project actions"),
-             uiOutput("project_status_quick")),
+        # Map sits IMMEDIATELY below the toolbar so the toolbar
+        # actions stay visible next to the canvas they operate on.
+        # The Layer Manager and Project actions cards used to live
+        # between the toolbar and the map; as the user ticked more
+        # overlays, the Layer Manager card grew (one row per layer)
+        # and pushed the map far below the toolbar - the user had to
+        # scroll down every time they wanted to draw a polygon. The
+        # post-map cards stay where they were.
         div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
         # Cross-tab handoff: once the user has drawn an ROI, picked
         # layers, or just opened a project, these buttons jump
@@ -3360,6 +3347,24 @@ ui <- page_navbar(
           actionButton("gis_cta_ts", "Add to Time Series -->",
                        class = "btn-outline-secondary")
         ),
+        # Layer Manager: live list of what is currently rendered on
+        # the map. Mirrors the sidebar overlay checkboxes but in a
+        # more legible format (one card with type / CRS / opacity
+        # per layer). Below the map so it doesn't push the canvas
+        # away from the toolbar as more overlays are loaded.
+        card(
+          card_header(div(class = "map-card-header",
+                          tags$span("Layer Manager"),
+                          tags$span(class = "viewer-status",
+                                    textOutput("layer_manager_summary",
+                                               inline = TRUE)))),
+          uiOutput("layer_manager_panel")
+        ),
+        # Project actions card: only carries actions (Build CHM,
+        # Refine DTM + CHM via CSF). Renders an empty-state line
+        # when neither action is available.
+        card(card_header("Project actions"),
+             uiOutput("project_status_quick")),
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
         card(card_header("Available processing products"), tableOutput("product_table"))
@@ -7013,10 +7018,24 @@ server <- function(input, output, session) {
     )
     roi_collection(existing)
     showNotification(
-      paste0("Saved ROI '", name, "' with ", nrow(pts), " vertices."),
+      paste0("Saved ROI '", name, "' with ", nrow(pts), " vertices. ",
+             "Click 'Draw new ROI' (or just start clicking the map) ",
+             "to start the next one."),
       type     = "message",
-      duration = 4
+      duration = 5
     )
+    # Reset drawing state so the next polygon starts fresh. Without
+    # this, the previous polygon's vertices stayed in
+    # `gis_measure_points()` and the next click extended that polygon
+    # AND a second Save kept the same `input$roi_name`, so the user
+    # ended up overwriting roi_1 every time they tried to create
+    # roi_2. We also clear the on-map "Measurement" group so the
+    # finished ROI stops looking like the active polygon, and bump
+    # the suggested ROI name to roi_<N+1>.
+    gis_measure_points(data.frame(lng = numeric(), lat = numeric()))
+    leafletProxy("gis_map") |> clearGroup("Measurement")
+    next_name <- paste0("roi_", length(existing) + 1L)
+    updateTextInput(session, "roi_name", value = next_name)
   })
 
   observeEvent(input$clear_rois, {
