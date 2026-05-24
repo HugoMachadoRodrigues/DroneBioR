@@ -1,5 +1,19 @@
 # DroneBioR (development version)
 
+## Documentation
+
+* **New vignette `app-reference`.** End-to-end reference for every
+  tab and box in `run_drone_biomass_studio()`: purpose, inputs,
+  outputs, science, accuracy / precision and the external data
+  source behind each number. Includes the full spectral-index
+  citation table, the biomass-proxy formulas, the survey-volume
+  base-reference options (DTM / min Z / mean Z / quantile /
+  user plane / perimeter TIN) and an honest "to be measured"
+  note where local validation data does not yet exist
+  (tree detection sensitivity, application-map thresholds).
+  Registered under Topics in `_pkgdown.yml` so it ships on the
+  pkgdown site.
+
 UX redesign of Drone Biomass Studio plus the GIS Workspace / 3D
 Modeling stabilization pass. The Studio now feels like a guided
 workflow tool rather than a wall of inputs: a sticky Project
