@@ -95,6 +95,10 @@ run_one_dji_band <- function(project,
     extra_args      = if (is_rgb) rgb_extra_args else ms_extra_args
   )
 
+  # Heal any orphan OpenSfM state from a previous interrupted run
+  # before invoking docker — see clean_incomplete_odm_state() for the
+  # failure mode this protects against.
+  clean_incomplete_odm_state(band_proj)
   status <- run_docker_with_progress(
     args        = args,
     project_dir = band_proj,

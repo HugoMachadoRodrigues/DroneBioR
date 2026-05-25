@@ -1,3 +1,58 @@
+#' Clean an incomplete ODM project directory before re-launching
+#'
+#' ODM's stage runner has aggressive resume detection: when it sees an
+#' existing `opensfm/features/` directory it skips feature extraction.
+#' If the previous run was interrupted between extraction and matching
+#' (a crash, Ctrl-C, processx misuse, OOM, etc.), `features/` exists
+#' but is missing one or more `*.features.npz` files. The next run
+#' then crashes deep inside OpenSfM's joblib worker with
+#'
+#'   FileNotFoundError: '/datasets/.../features/...features.npz'
+#'
+#' This helper detects that state — `opensfm/features/` exists but the
+#' completion marker `opensfm/reconstruction.json` does not — and wipes
+#' the partial `opensfm/` directory together with every downstream
+#' stage directory. The next ODM invocation then starts OpenSfM
+#' cleanly. `images/` is left untouched.
+#'
+#' Called automatically by [run_odm_project()] and the per-band DJI
+#' Mavic 3M orchestrator before they invoke docker; users typically
+#' do not need to call it directly.
+#'
+#' @param project_dir ODM project root (the folder containing
+#'   `images/`, `opensfm/`, `odm_dem/`, ...).
+#' @return Invisibly returns `TRUE` when a clean-up actually happened,
+#'   `FALSE` otherwise.
+#' @noRd
+clean_incomplete_odm_state <- function(project_dir) {
+  if (!dir.exists(project_dir)) return(invisible(FALSE))
+  opensfm_dir   <- file.path(project_dir, "opensfm")
+  features_dir  <- file.path(opensfm_dir, "features")
+  recon_marker  <- file.path(opensfm_dir, "reconstruction.json")
+  if (!dir.exists(features_dir) || file.exists(recon_marker)) {
+    return(invisible(FALSE))
+  }
+  message(sprintf(
+    "[clean] Incomplete OpenSfM state detected at %s (features/ present, reconstruction.json missing). Removing partial state so ODM can start fresh.",
+    opensfm_dir
+  ))
+  unlink(opensfm_dir, recursive = TRUE, force = TRUE)
+  # Downstream stages cannot be valid without a clean OpenSfM, so wipe
+  # them too. Anything outside this list (e.g., `images/`,
+  # `cameras.json`, `geo.txt`, the ODM CLI logs) is preserved.
+  downstream_stages <- c(
+    "odm_filterpoints", "odm_meshing",
+    "mvs_texturing", "odm_texturing", "odm_texturing_25d",
+    "odm_georeferencing", "odm_dem", "odm_orthophoto",
+    "odm_report", "odm_postprocess", "3d_tiles"
+  )
+  for (s in downstream_stages) {
+    p <- file.path(project_dir, s)
+    if (dir.exists(p)) unlink(p, recursive = TRUE, force = TRUE)
+  }
+  invisible(TRUE)
+}
+
 #' Build an ODM Docker command
 #'
 #' @param dataset_dir Host folder mounted to `/datasets`.
@@ -262,6 +317,10 @@ run_odm_project <- function(project,
     stop("Docker was not found. Install/start Docker or run an external engine first.", call. = FALSE)
   }
 
+  # Heal any orphan OpenSfM state from a previous interrupted run
+  # before invoking docker — see clean_incomplete_odm_state() for the
+  # failure mode this protects against.
+  clean_incomplete_odm_state(project$odm_project_dir)
   status <- run_docker_with_progress(
     args         = args,
     project_dir  = project$odm_project_dir,
