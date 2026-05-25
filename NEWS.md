@@ -1,5 +1,21 @@
 # DroneBioR (development version)
 
+## Breaking changes
+
+* **`default_dji_mavic_3m_band_map()` no longer exposes Blue.** The
+  Mavic 3M does not capture a calibrated Blue MS band; the only blue
+  available is the uncalibrated RGB JPG channel. Mixing it with the
+  calibrated MS bands inside EVI / VARI / ExG / GLI / TGI / RGBVI
+  produces a hybrid number that is not comparable to literature
+  values and silently misleads downstream analysis. The default map
+  now returns four entries — `Green`, `Red`, `RedEdge`, `NIR` — and
+  `compute_spectral_indices()` automatically skips the six
+  Blue-dependent indices, returning the 16 indices that the
+  calibrated MS bands can support honestly. Users who specifically
+  want the RGB JPG visible-band indices can pass an explicit
+  `band_map = c(Blue = 3, Green = 2, Red = 1)` to
+  `read_multispectral_orthomosaic()`.
+
 ## New features
 
 * **Live ODM progress: stage, elapsed, ETA, percent.** ODM Docker
