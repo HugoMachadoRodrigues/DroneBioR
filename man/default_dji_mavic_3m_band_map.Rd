@@ -7,16 +7,27 @@
 default_dji_mavic_3m_band_map()
 }
 \value{
-Named integer vector with \code{Blue}, \code{Green}, \code{Red}, \code{RedEdge},
-\code{NIR}.
+Named integer vector with \code{Green}, \code{Red}, \code{RedEdge}, \code{NIR}.
 }
 \description{
 \code{\link[=run_odm_dji_mavic_3m]{run_odm_dji_mavic_3m()}} stacks five separate ODM outputs into a
 single GeoTIFF with band order Red, Green, Blue (from the RGB run)
 followed by MS_G, MS_R, MS_RE, MS_NIR (from the four per-band MS
 runs). For spectral-index computation we want the \emph{radiometrically
-calibrated} MS bands wherever a band has both an RGB and an MS
-counterpart, so this band map points Green/Red/RedEdge/NIR at the
-MS bands (layers 4-7) and keeps Blue on the RGB JPG channel
-(layer 3) — the Mavic 3M does not capture a calibrated blue MS band.
+calibrated} MS bands and nothing else: this band map points
+Green/Red/RedEdge/NIR at the MS layers (4-7) and \strong{drops the Blue
+channel entirely} because the Mavic 3M does not capture a
+calibrated blue MS band — the only Blue available is the
+uncalibrated RGB JPG channel, and mixing it with calibrated MS
+bands inside EVI / VARI / ExG / GLI / TGI / RGBVI produces a
+hybrid number that is not comparable to the values in the
+literature. With Blue absent, \code{\link[=compute_spectral_indices]{compute_spectral_indices()}}
+automatically skips the six Blue-dependent indices and returns
+the 16 indices the MS bands can support honestly.
+}
+\details{
+Users who specifically want the visible-band indices on the RGB
+JPG channels can override the band map manually with
+\code{c(Blue = 3, Green = 2, Red = 1)} and pass it to
+\code{\link[=read_multispectral_orthomosaic]{read_multispectral_orthomosaic()}}.
 }

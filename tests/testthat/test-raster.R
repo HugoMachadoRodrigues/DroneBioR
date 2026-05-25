@@ -35,19 +35,21 @@ test_that("read_multispectral_orthomosaic auto-detects RGB orthos (3 layers)", {
   expect_null(out$alpha)
 })
 
-test_that("default_dji_mavic_3m_band_map returns expected mapping", {
+test_that("default_dji_mavic_3m_band_map returns the calibrated-only mapping", {
   bm <- default_dji_mavic_3m_band_map()
-  expect_setequal(names(bm), c("Blue", "Green", "Red", "RedEdge", "NIR"))
-  # Blue stays on the RGB JPG layer (3); Green/Red/RedEdge/NIR point at
-  # the calibrated MS layers (4-7).
-  expect_equal(unname(bm[c("Blue", "Green", "Red", "RedEdge", "NIR")]),
-               c(3L, 4L, 5L, 6L, 7L))
+  # Blue is deliberately absent: the Mavic 3M does not capture a
+  # calibrated blue MS band, and the RGB JPG blue channel is not
+  # comparable to the radiometrically-corrected MS bands.
+  expect_setequal(names(bm), c("Green", "Red", "RedEdge", "NIR"))
+  expect_false("Blue" %in% names(bm))
+  expect_equal(unname(bm[c("Green", "Red", "RedEdge", "NIR")]),
+               c(4L, 5L, 6L, 7L))
 })
 
 test_that("read_multispectral_orthomosaic auto-detects DJI Mavic 3M orthos (7 layers)", {
   # Synthetic 7-band stacked DJI Mavic 3M ortho (R, G, B, MS_G, MS_R,
   # MS_RE, MS_NIR), no alpha. Auto-detect must route to the DJI band
-  # map so Blue=3, Green=4 (MS_G), Red=5 (MS_R), etc.
+  # map and expose only the four calibrated MS bands.
   r <- terra::rast(nrows = 4, ncols = 4)
   terra::values(r) <- 1  # constant base so per-layer values are exact
   stacked <- c(r * 0.30, r * 0.20, r * 0.10,             # R, G, B
@@ -57,11 +59,37 @@ test_that("read_multispectral_orthomosaic auto-detects DJI Mavic 3M orthos (7 la
   terra::writeRaster(stacked, tmp, datatype = "FLT4S")
   out <- read_multispectral_orthomosaic(tmp)
   expect_equal(out$n_layers, 7L)
-  expect_equal(names(out$bands), c("Blue", "Green", "Red", "RedEdge", "NIR"))
+  expect_equal(names(out$bands), c("Green", "Red", "RedEdge", "NIR"))
+  expect_false("Blue" %in% names(out$bands))
   # Green should be the calibrated MS_G (layer 4 = 0.22), not
   # the RGB JPG green (layer 2 = 0.20).
   green_value <- terra::values(out$bands[["Green"]])[1L]
   expect_equal(green_value, 0.22, tolerance = 1e-4)
+})
+
+test_that("DJI Mavic 3M pipeline produces only the 16 non-Blue indices", {
+  # End-to-end: synthetic 7-band stacked DJI ortho -> read with the
+  # DJI band map -> compute_spectral_indices. The six Blue-dependent
+  # indices (EVI, VARI, ExG, GLI, TGI, RGBVI) must be absent and the
+  # remaining 16 must all be present.
+  r <- terra::rast(nrows = 4, ncols = 4)
+  terra::values(r) <- 1
+  stacked <- c(r * 0.30, r * 0.20, r * 0.10,             # R, G, B
+               r * 0.22, r * 0.32, r * 0.42, r * 0.72)   # MS_G, MS_R, MS_RE, MS_NIR
+  tmp <- tempfile(fileext = ".tif")
+  terra::writeRaster(stacked, tmp, datatype = "FLT4S")
+  ortho <- read_multispectral_orthomosaic(tmp)
+  refl  <- scale_to_reflectance(ortho$bands)
+  ix    <- compute_spectral_indices(refl)
+  expect_setequal(
+    names(ix),
+    c("NDVI", "NDRE", "SAVI", "OSAVI", "MSAVI2", "NDWI", "GNDVI",
+      "CIrededge", "GCI", "RVI", "DVI", "WDRVI", "TVI", "MCARI",
+      "PSRI", "MGRVI")
+  )
+  for (skipped in c("EVI", "VARI", "ExG", "GLI", "TGI", "RGBVI")) {
+    expect_false(skipped %in% names(ix), info = skipped)
+  }
 })
 
 test_that("scale_to_reflectance clamps integer-scale values into 0-1", {

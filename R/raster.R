@@ -16,16 +16,26 @@ default_rgb_band_map <- function() {
 #' single GeoTIFF with band order Red, Green, Blue (from the RGB run)
 #' followed by MS_G, MS_R, MS_RE, MS_NIR (from the four per-band MS
 #' runs). For spectral-index computation we want the *radiometrically
-#' calibrated* MS bands wherever a band has both an RGB and an MS
-#' counterpart, so this band map points Green/Red/RedEdge/NIR at the
-#' MS bands (layers 4-7) and keeps Blue on the RGB JPG channel
-#' (layer 3) — the Mavic 3M does not capture a calibrated blue MS band.
+#' calibrated* MS bands and nothing else: this band map points
+#' Green/Red/RedEdge/NIR at the MS layers (4-7) and **drops the Blue
+#' channel entirely** because the Mavic 3M does not capture a
+#' calibrated blue MS band — the only Blue available is the
+#' uncalibrated RGB JPG channel, and mixing it with calibrated MS
+#' bands inside EVI / VARI / ExG / GLI / TGI / RGBVI produces a
+#' hybrid number that is not comparable to the values in the
+#' literature. With Blue absent, [compute_spectral_indices()]
+#' automatically skips the six Blue-dependent indices and returns
+#' the 16 indices the MS bands can support honestly.
 #'
-#' @return Named integer vector with `Blue`, `Green`, `Red`, `RedEdge`,
-#'   `NIR`.
+#' Users who specifically want the visible-band indices on the RGB
+#' JPG channels can override the band map manually with
+#' `c(Blue = 3, Green = 2, Red = 1)` and pass it to
+#' [read_multispectral_orthomosaic()].
+#'
+#' @return Named integer vector with `Green`, `Red`, `RedEdge`, `NIR`.
 #' @export
 default_dji_mavic_3m_band_map <- function() {
-  c(Blue = 3, Green = 4, Red = 5, RedEdge = 6, NIR = 7)
+  c(Green = 4, Red = 5, RedEdge = 6, NIR = 7)
 }
 
 #' Read a multispectral or RGB orthomosaic
