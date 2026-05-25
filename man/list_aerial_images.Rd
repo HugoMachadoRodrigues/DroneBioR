@@ -23,6 +23,17 @@ consume it transparently, but without enforcing the
 \verb{^(.+)_([0-9]+)\\.[A-Za-z0-9]+$} capture/band filename pattern. Accepts
 \code{.jpg}, \code{.jpeg}, \code{.png}, \code{.tif} and \code{.tiff} (case-insensitive).
 }
+\details{
+\strong{DJI Mavic 3M datasets} drop their multispectral \verb{_MS_\{G,R,RE,NIR\}.TIF}
+siblings from the returned manifest when at least one matching \verb{_D.JPG}
+is also present. This keeps the existing \code{run_odm_project()} flow
+viable (ODM only sees the RGB JPGs for SfM, which is what it can
+actually handle), and the returned data frame gets an attribute
+\code{dji_visible_multispectral = TRUE} so callers know the MS TIFs were
+filtered out. For full DJI Mavic 3M processing — including the four
+MS bands — use \code{\link[=list_dji_mavic_3m_images]{list_dji_mavic_3m_images()}} and
+\code{\link[=run_odm_dji_mavic_3m]{run_odm_dji_mavic_3m()}}.
+}
 \examples{
 tmp <- tempfile("aerial-"); dir.create(tmp)
 for (i in 1:3) file.create(file.path(tmp, paste0("DJI_", sprintf("\%04d", i), ".JPG")))

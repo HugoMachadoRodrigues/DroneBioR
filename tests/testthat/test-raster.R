@@ -35,6 +35,35 @@ test_that("read_multispectral_orthomosaic auto-detects RGB orthos (3 layers)", {
   expect_null(out$alpha)
 })
 
+test_that("default_dji_mavic_3m_band_map returns expected mapping", {
+  bm <- default_dji_mavic_3m_band_map()
+  expect_setequal(names(bm), c("Blue", "Green", "Red", "RedEdge", "NIR"))
+  # Blue stays on the RGB JPG layer (3); Green/Red/RedEdge/NIR point at
+  # the calibrated MS layers (4-7).
+  expect_equal(unname(bm[c("Blue", "Green", "Red", "RedEdge", "NIR")]),
+               c(3L, 4L, 5L, 6L, 7L))
+})
+
+test_that("read_multispectral_orthomosaic auto-detects DJI Mavic 3M orthos (7 layers)", {
+  # Synthetic 7-band stacked DJI Mavic 3M ortho (R, G, B, MS_G, MS_R,
+  # MS_RE, MS_NIR), no alpha. Auto-detect must route to the DJI band
+  # map so Blue=3, Green=4 (MS_G), Red=5 (MS_R), etc.
+  r <- terra::rast(nrows = 4, ncols = 4)
+  terra::values(r) <- 1  # constant base so per-layer values are exact
+  stacked <- c(r * 0.30, r * 0.20, r * 0.10,             # R, G, B
+               r * 0.22, r * 0.32, r * 0.42, r * 0.72)   # MS_G, MS_R, MS_RE, MS_NIR
+  names(stacked) <- paste0("b", 1:7)
+  tmp <- tempfile(fileext = ".tif")
+  terra::writeRaster(stacked, tmp, datatype = "FLT4S")
+  out <- read_multispectral_orthomosaic(tmp)
+  expect_equal(out$n_layers, 7L)
+  expect_equal(names(out$bands), c("Blue", "Green", "Red", "RedEdge", "NIR"))
+  # Green should be the calibrated MS_G (layer 4 = 0.22), not
+  # the RGB JPG green (layer 2 = 0.20).
+  green_value <- terra::values(out$bands[["Green"]])[1L]
+  expect_equal(green_value, 0.22, tolerance = 1e-4)
+})
+
 test_that("scale_to_reflectance clamps integer-scale values into 0-1", {
   ortho <- read_multispectral_orthomosaic(ortho_fixture())
   refl <- scale_to_reflectance(ortho$bands)

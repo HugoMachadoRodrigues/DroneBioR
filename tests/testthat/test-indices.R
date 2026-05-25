@@ -43,6 +43,45 @@ test_that("compute_spectral_indices errors on missing band names", {
   expect_error(compute_spectral_indices(r), "missing")
 })
 
+test_that("DJI Mavic 3M (no Blue) yields all non-Blue-dependent indices", {
+  # DJI Mavic 3M has Green + Red + RedEdge + NIR but no calibrated Blue.
+  # The function should skip EVI, VARI, ExG, GLI, TGI, RGBVI (which need
+  # Blue) and still return the rest including MGRVI (Green + Red only).
+  r <- terra::rast(nrows = 2, ncols = 2, xmin = 0, xmax = 2, ymin = 0, ymax = 2)
+  terra::values(r) <- 1
+  bands <- c(r * 0.20, r * 0.30, r * 0.40, r * 0.70)
+  names(bands) <- c("Green", "Red", "RedEdge", "NIR")
+  indices <- compute_spectral_indices(bands)
+  # NIR + RedEdge + Green + Red unlock NDVI, NDRE, SAVI, OSAVI, MSAVI2,
+  # NDWI, GNDVI, CIrededge, GCI, RVI, DVI, WDRVI, TVI, MCARI, PSRI,
+  # MGRVI - but not the six Blue-dependent ones.
+  expect_setequal(
+    names(indices),
+    c("NDVI", "NDRE", "SAVI", "OSAVI", "MSAVI2", "NDWI", "GNDVI",
+      "CIrededge", "GCI", "RVI", "DVI", "WDRVI", "TVI", "MCARI",
+      "PSRI", "MGRVI")
+  )
+  expect_false("EVI"   %in% names(indices))
+  expect_false("VARI"  %in% names(indices))
+  expect_false("ExG"   %in% names(indices))
+  expect_false("RGBVI" %in% names(indices))
+})
+
+test_that("compute_spectral_indices errors when even Green is missing", {
+  r <- terra::rast(nrows = 2, ncols = 2)
+  terra::values(r) <- 0.5
+  names(r) <- "Red"
+  expect_error(compute_spectral_indices(r), "Green")
+})
+
+test_that("strict = TRUE still requires Blue for backward compatibility", {
+  r <- terra::rast(nrows = 2, ncols = 2)
+  terra::values(r) <- 1
+  bands <- c(r * 0.20, r * 0.30, r * 0.40, r * 0.70)
+  names(bands) <- c("Green", "Red", "RedEdge", "NIR")
+  expect_error(compute_spectral_indices(bands, strict = TRUE), "Blue")
+})
+
 test_that("compute_biomass_proxy returns a single named layer in [-1, 1]", {
   indices <- compute_spectral_indices(make_reflectance())
   proxy <- compute_biomass_proxy(indices)

@@ -1,5 +1,46 @@
 # DroneBioR (development version)
 
+## New features
+
+* **DJI Mavic 3M support — full multispectral pipeline.** New exported
+  `run_odm_dji_mavic_3m()` orchestrates five per-band ODM runs (RGB
+  JPGs for SfM + DSM + DTM + point cloud, then `--fast-orthophoto`
+  reflectance runs on each of `_MS_G`, `_MS_R`, `_MS_RE`, `_MS_NIR`)
+  and stacks the five orthomosaics into a single 7-band GeoTIFF
+  (`Red, Green, Blue, MS_G, MS_R, MS_RE, MS_NIR`). Helper
+  `list_dji_mavic_3m_images()` returns one manifest per camera band
+  and `default_dji_mavic_3m_band_map()` exposes Blue (from the RGB
+  JPG) plus the four calibrated MS bands to downstream index code.
+  `read_multispectral_orthomosaic()` auto-detects the 7-layer stack
+  and applies the DJI band map.
+* **`list_aerial_images()` DJI Mavic 3M filtering.** When both
+  `_D.JPG` (RGB visible) and `_MS_*.TIF` (multispectral) DJI Mavic 3M
+  images are present in a folder, the function now drops the MS TIFs
+  and tags the returned manifest with
+  `attr(.,"dji_visible_multispectral") = TRUE`, so the existing
+  `run_odm_project(camera_type = "rgb")` path stays viable for users
+  who only want the RGB orthomosaic. For the full MS pipeline use the
+  new `run_odm_dji_mavic_3m()`.
+
+## Changes
+
+* **`compute_spectral_indices()` now treats Blue as optional.** Strict
+  minimum is Green + Red; Blue, RedEdge and NIR each unlock their own
+  indices when present. DJI Mavic 3M (4-band MS, no calibrated Blue)
+  now produces the full NDVI / NDRE / SAVI / OSAVI / MSAVI2 / NDWI /
+  GNDVI / CIrededge / GCI / RVI / DVI / WDRVI / TVI / MCARI / PSRI /
+  MGRVI stack without erroring; EVI, VARI, ExG, GLI, TGI and RGBVI
+  are silently skipped because they require a Blue band. Pass
+  `strict = TRUE` to keep the legacy "error when Blue is missing"
+  behavior.
+* **Reflectance output renamed.** `write_dronebio_rasters()` now writes
+  the reflectance stack to `reflectance_bands.tif` (was
+  `micasense_reflectance_bands.tif`). The filename is now camera-agnostic
+  — DroneBioR runs on DJI Mavic 3M, Sony / DJI RGB and other
+  non-MicaSense rigs, and the output name now reflects that. Downstream
+  code that reads the path via `result$output_paths[["reflectance"]]`
+  is unaffected.
+
 ## Documentation
 
 * **New vignette `app-reference`.** End-to-end reference for every

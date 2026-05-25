@@ -8,7 +8,8 @@ read_full_point_cloud(
   path,
   roi_polygon = NULL,
   max_points = Inf,
-  chunk_size = 1e+05
+  chunk_size = 1e+05,
+  preview_cache_dir = NULL
 )
 }
 \arguments{
@@ -19,6 +20,13 @@ read_full_point_cloud(
 \item{max_points}{Maximum number of points to return when no ROI is supplied.}
 
 \item{chunk_size}{Number of point records per scan chunk for LAS files.}
+
+\item{preview_cache_dir}{Optional writable directory used to cache a
+decimated PLY preview of the source. When supplied and no ROI is
+requested, the first successful read of a \code{.laz} / \code{.copc.laz}
+writes a PLY there keyed on the source's (size, mtime); subsequent
+reads of the same source consume the PLY directly, skipping the
+LASzip decompression entirely.}
 }
 \value{
 Data frame with full-resolution point coordinates inside the ROI.
