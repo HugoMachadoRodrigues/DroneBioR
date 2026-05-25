@@ -262,7 +262,12 @@ run_odm_project <- function(project,
     stop("Docker was not found. Install/start Docker or run an external engine first.", call. = FALSE)
   }
 
-  status <- system2("docker", args = args)
+  status <- run_docker_with_progress(
+    args         = args,
+    project_dir  = project$odm_project_dir,
+    image_count  = nrow(manifest),
+    band_label   = NULL
+  )
   if (!identical(status, 0L) && !file.exists(project$odm_orthomosaic)) {
     converted <- convert_undistorted_tiffs_for_texturing(project$odm_project_dir)
     if (converted > 0) {
@@ -273,7 +278,12 @@ run_odm_project <- function(project,
         rerun_from = "mvs_texturing",
         ...
       )
-      status <- system2("docker", args = retry_args)
+      status <- run_docker_with_progress(
+        args        = retry_args,
+        project_dir = project$odm_project_dir,
+        image_count = nrow(manifest),
+        band_label  = "retry"
+      )
     }
   }
 

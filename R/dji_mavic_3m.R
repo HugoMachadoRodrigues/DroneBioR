@@ -95,8 +95,12 @@ run_one_dji_band <- function(project,
     extra_args      = if (is_rgb) rgb_extra_args else ms_extra_args
   )
 
-  message(sprintf("[%s] running ODM (this is the slow step)...", band))
-  status <- system2("docker", args = args)
+  status <- run_docker_with_progress(
+    args        = args,
+    project_dir = band_proj,
+    image_count = nrow(images_manifest),
+    band_label  = band
+  )
   if (!identical(status, 0L) && !file.exists(ortho_path)) {
     # The MVS-Texturing float-tiff workaround pattern that lives in
     # run_odm_project() is also relevant here when the per-band TIF
@@ -117,7 +121,12 @@ run_one_dji_band <- function(project,
         pc_las                   = is_rgb,
         rerun_from               = "mvs_texturing"
       )
-      status <- system2("docker", args = retry_args)
+      status <- run_docker_with_progress(
+        args        = retry_args,
+        project_dir = band_proj,
+        image_count = nrow(images_manifest),
+        band_label  = paste0(band, "/retry")
+      )
     }
   }
   # ODM sometimes exits non-zero even after writing the orthomosaic —
@@ -272,14 +281,54 @@ run_odm_dji_mavic_3m <- function(project,
     list(band = "MS_RE",  label = "ms_re",  manifest = manifests[["MS_RE"]]),
     list(band = "MS_NIR", label = "ms_nir", manifest = manifests[["MS_NIR"]])
   )
+  # Use historical per-stage durations to estimate the up-front total.
+  # MS runs use --fast-orthophoto so they only execute the stages up to
+  # odm_orthophoto; the RGB run executes the full pipeline. We sum
+  # estimate_remaining_seconds() with no active stage (i.e., from scratch)
+  # for each band to seed the batch ETA.
+  full_stages <- odm_stage_order()
+  fast_stages <- full_stages[seq_len(which(full_stages == "odm_orthophoto"))]
+  est_per_band <- vapply(run_specs, function(spec) {
+    if (is.null(spec$manifest)) return(0)
+    stages <- if (identical(spec$band, "RGB")) full_stages else fast_stages
+    estimate_remaining_seconds(
+      active_stage           = NULL,
+      pending_stages         = stages,
+      active_elapsed_seconds = 0,
+      image_count            = nrow(spec$manifest)
+    )
+  }, numeric(1))
+  total_estimate_secs <- sum(est_per_band)
+  message(sprintf(
+    "Pipeline estimate: %d bands, total ~%s based on stage history",
+    sum(!vapply(run_specs, function(s) is.null(s$manifest), logical(1))),
+    format_seconds_human(total_estimate_secs)
+  ))
+
   ortho_paths <- list()
   t0 <- Sys.time()
-  for (spec in run_specs) {
+  bands_done <- 0L
+  for (idx in seq_along(run_specs)) {
+    spec <- run_specs[[idx]]
     if (is.null(spec$manifest)) {
       message(sprintf("[%s] no images present in the dataset, skipping.",
                       spec$band))
       next
     }
+    elapsed_so_far <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+    remaining_bands_est <- sum(est_per_band[idx:length(est_per_band)])
+    batch_pct <- if (total_estimate_secs > 0) {
+      min(99, 100 * elapsed_so_far / total_estimate_secs)
+    } else 0
+    message(sprintf(
+      ">>> Band %d/%d (%s): %d images, est ~%s | batch %d%% done, ETA ~%s",
+      idx, length(run_specs), spec$band, nrow(spec$manifest),
+      format_seconds_human(est_per_band[idx]),
+      as.integer(round(batch_pct)),
+      format_seconds_human(remaining_bands_est)
+    ))
+    band_t0 <- Sys.time()
+
     ortho_paths[[spec$band]] <- run_one_dji_band(
       project          = project,
       band             = spec$band,
@@ -292,6 +341,26 @@ run_odm_dji_mavic_3m <- function(project,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency  = max_concurrency
     )
+
+    band_secs <- as.numeric(difftime(Sys.time(), band_t0, units = "secs"))
+    bands_done <- bands_done + 1L
+    # Recompute remaining: bands after this one carry their original
+    # estimate; the just-finished band's actual swap-in shifts the
+    # total. This is intentionally coarse but enough to see when a
+    # band ran faster / slower than the historical baseline.
+    est_per_band[idx] <- band_secs
+    elapsed_after <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+    remaining_after <- if (idx < length(run_specs)) {
+      sum(est_per_band[(idx + 1L):length(est_per_band)])
+    } else 0
+    message(sprintf(
+      "<<< Band %d/%d (%s) done in %s | batch %d%% done, ETA ~%s",
+      idx, length(run_specs), spec$band,
+      format_seconds_human(band_secs),
+      as.integer(round(min(100, 100 * elapsed_after /
+                             max(elapsed_after + remaining_after, 1)))),
+      format_seconds_human(remaining_after)
+    ))
   }
 
   # The RGB run owns the geometric products. Because we ran it under

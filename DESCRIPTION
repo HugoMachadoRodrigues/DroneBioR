@@ -43,6 +43,7 @@ Suggests:
     leaflet,
     leafem,
     lidR,
+    processx,
     promises,
     rmarkdown,
     shiny,
