@@ -135,22 +135,26 @@ make_odm_stage_poller <- function(project_dir,
 #' @param poll_interval_secs How often to emit a status line. 15 s is
 #'   slow enough to avoid spamming the console and fast enough that a
 #'   stalled run shows up.
-#' @return Integer exit status from docker.
+#' @param command Subprocess command to invoke. Defaults to
+#'   `"docker"`; exposed so tests can swap in a benign command (e.g.,
+#'   `"sleep"`) without needing the docker daemon.
+#' @return Integer exit status from the subprocess.
 #' @noRd
 run_docker_with_progress <- function(args,
                                      project_dir,
                                      image_count = NA_integer_,
                                      band_label = NULL,
-                                     poll_interval_secs = 15) {
+                                     poll_interval_secs = 15,
+                                     command = "docker") {
   if (!requireNamespace("processx", quietly = TRUE)) {
-    # Without processx we cannot read docker's stdout while it runs,
-    # so emit a single banner and fall back to the blocking call.
+    # Without processx we cannot poll while the subprocess runs, so
+    # emit a single banner and fall back to the blocking call.
     message(sprintf(
       "%s[%s] Running ODM (install `processx` to get live progress)...",
       if (!is.null(band_label)) sprintf("[%s] ", band_label) else "",
       format(Sys.time(), "%H:%M:%S")
     ))
-    return(system2("docker", args = args))
+    return(system2(command, args = args))
   }
 
   poller <- make_odm_stage_poller(
@@ -160,33 +164,31 @@ run_docker_with_progress <- function(args,
   )
 
   message(sprintf(
-    "%s[%s] Starting ODM run (polling every %ds for stage progress)...",
+    "%s[%s] Starting ODM run (polling every %ss for stage progress)...",
     if (!is.null(band_label)) sprintf("[%s] ", band_label) else "",
     format(Sys.time(), "%H:%M:%S"),
-    poll_interval_secs
+    format(poll_interval_secs)
   ))
 
+  # stdout = "" / stderr = "" makes processx inherit the parent R
+  # process's stdout/stderr, so the subprocess output appears in the
+  # user's console exactly the way system2() did before this helper
+  # existed. We only need processx for non-blocking wait — `proc$wait`
+  # accepts a timeout (ms) and returns early if the process exits,
+  # so we can interleave wait() + poller() on a fixed cadence without
+  # ever touching the subprocess's output buffer.
   proc <- processx::process$new(
-    "docker", args,
-    stdout = "|", stderr = "2>&1",
+    command, args,
+    stdout  = "",
+    stderr  = "",
     cleanup = TRUE
   )
 
-  last_poll_at <- Sys.time()
-  # Drain output and poll on a wall-clock cadence.
   while (proc$is_alive()) {
-    out <- proc$read_output(timeout = 1000L)  # up to 1 s
-    if (nzchar(out)) cat(out)
-    now <- Sys.time()
-    if (as.numeric(difftime(now, last_poll_at, units = "secs")) >= poll_interval_secs) {
-      tryCatch(poller(), error = function(e) NULL)
-      last_poll_at <- now
-    }
+    proc$wait(timeout = as.integer(poll_interval_secs * 1000L))
+    tryCatch(poller(), error = function(e) NULL)
   }
-  # Final drain after exit.
-  remaining <- proc$read_all_output()
-  if (nzchar(remaining)) cat(remaining)
-  # One last status line so the user sees the final state.
+  # One last status line so the user sees the final on-disk state.
   tryCatch(poller(), error = function(e) NULL)
 
   status <- proc$get_exit_status()

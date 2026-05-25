@@ -68,14 +68,60 @@ test_that("make_odm_stage_poller status line includes ETA and percent fields", {
   expect_match(joined, "%")
 })
 
-test_that("run_docker_with_progress falls back gracefully when processx is missing", {
-  # We cannot reliably uninstall processx mid-test; instead, just check
-  # that the helper exists and exposes the expected signature so the
-  # fallback branch is reachable.
+test_that("run_docker_with_progress exposes the expected signature", {
   fn <- DroneBioR:::run_docker_with_progress
   expect_true(is.function(fn))
   expect_setequal(
     names(formals(fn)),
-    c("args", "project_dir", "image_count", "band_label", "poll_interval_secs")
+    c("args", "project_dir", "image_count", "band_label",
+      "poll_interval_secs", "command")
   )
+})
+
+test_that("run_docker_with_progress drives a real subprocess to clean exit", {
+  # Integration test that actually exercises the processx machinery
+  # end-to-end. The previous suite only checked the signature, which
+  # let an API-shape bug (passing `timeout` to `read_output`) reach
+  # main. Swap docker for the POSIX `sleep` binary so we don't need
+  # the docker daemon, then verify (a) the helper returns 0, (b) at
+  # least one progress poll fires, and (c) the wall time matches the
+  # sleep duration (subprocess actually ran, was not skipped).
+  skip_if_not_installed("processx")
+  if (!nzchar(Sys.which("sleep"))) skip("`sleep` binary not on PATH")
+
+  project_dir <- tempfile("progress-int-")
+  dir.create(project_dir)
+
+  t0 <- Sys.time()
+  out <- testthat::capture_messages(
+    status <- DroneBioR:::run_docker_with_progress(
+      args               = c("1"),
+      project_dir        = project_dir,
+      image_count        = 10L,
+      band_label         = "TEST",
+      poll_interval_secs = 0.3,   # 300 ms -> ~3 polls during the 1 s sleep
+      command            = "sleep"
+    )
+  )
+  elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+
+  expect_equal(status, 0L)
+  expect_gte(elapsed, 0.9)        # the subprocess really ran ~1 s
+  expect_true(any(grepl("Starting ODM run", out)))
+  # The poller emits a status line on each tick; with 300 ms cadence
+  # over ~1 s we should see at least 2 lines (start + ~3 polls).
+  poll_lines <- grep("stages", out, value = TRUE)
+  expect_gte(length(poll_lines), 2L)
+})
+
+test_that("run_docker_with_progress fallback path is structurally reachable", {
+  # We cannot uninstall processx mid-test, so we cannot exercise the
+  # fallback branch end-to-end. Instead grep the function body to
+  # confirm it still calls system2() in the !requireNamespace branch
+  # — a regression guard against silently dropping the fallback the
+  # next time the helper is refactored.
+  body_str <- paste(deparse(body(DroneBioR:::run_docker_with_progress)),
+                    collapse = "\n")
+  expect_match(body_str, "requireNamespace\\(\"processx\"")
+  expect_match(body_str, "system2\\(command, args = args\\)")
 })
