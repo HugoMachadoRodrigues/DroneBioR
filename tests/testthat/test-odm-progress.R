@@ -55,6 +55,47 @@ test_that("make_odm_stage_poller detects new stages once and reports active stag
   expect_match(joined_announcements, "`odm_orthophoto` started")
 })
 
+test_that("make_odm_stage_poller ignores stale stage dirs from previous runs", {
+  # Regression for the case where a previous failed ODM run left a
+  # downstream stage directory (e.g. odm_georeferencing) on disk.
+  # Without the mtime filter the poller would canonically pick that
+  # stale dir as the active stage, producing wildly-wrong ETAs (e.g.
+  # ~10 min remaining while opensfm has another ~30 min to go).
+  project_dir <- tempfile("odm-stale-")
+  dir.create(project_dir)
+
+  # Stale downstream dir from a previous run, mtime in the past.
+  dir.create(file.path(project_dir, "odm_georeferencing"))
+  Sys.setFileTime(file.path(project_dir, "odm_georeferencing"),
+                  Sys.time() - 3600 * 24)  # 1 day old
+
+  # Wait a beat so the poller's `started_at` is strictly later than
+  # the stale dir's mtime even on filesystems with second-level mtime
+  # resolution.
+  Sys.sleep(1)
+
+  poller <- DroneBioR:::make_odm_stage_poller(
+    project_dir = project_dir,
+    image_count = 100L,
+    band_label  = "TEST"
+  )
+
+  # First poll — only the stale dir exists. Active must NOT be the
+  # stale dir; it should be NA (the run hasn't created anything yet).
+  state1 <- poller()
+  expect_true(is.na(state1$active_stage))
+  expect_match(state1$status, "starting")
+
+  # Now ODM creates a fresh upstream stage (`opensfm`). The poller
+  # must report that as active, not the older stale downstream dir.
+  dir.create(file.path(project_dir, "opensfm"))
+  state2 <- poller()
+  expect_equal(state2$active_stage, "opensfm")
+  expect_equal(state2$stages_done, 1)
+  expect_length(state2$announcements, 1L)
+  expect_match(state2$announcements[1L], "`opensfm` started")
+})
+
 test_that("make_odm_stage_poller status line includes ETA and percent fields", {
   project_dir <- tempfile("odm-poll-")
   dir.create(project_dir)
