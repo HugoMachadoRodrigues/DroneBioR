@@ -61,7 +61,10 @@ run_one_dji_band <- function(project,
                              rgb_extra_args = character(),
                              ms_extra_args  = character(),
                              orthophoto_resolution_cm = 5,
-                             max_concurrency = 4) {
+                             max_concurrency = 4,
+                             pc_las       = FALSE,
+                             skip_3dmodel = TRUE,
+                             skip_report  = TRUE) {
   proj_name <- dji_band_project_name(project, band_label)
   band_proj <- dji_band_dataset_subdir(project, band_label)  # dataset_dir/project_name
   band_imgs <- file.path(band_proj, "images")
@@ -85,13 +88,22 @@ run_one_dji_band <- function(project,
     radiometric_calibration  = if (is_rgb) NULL else "camera+sun",
     orthophoto_resolution_cm = orthophoto_resolution_cm,
     max_concurrency          = max_concurrency,
-    # RGB run: full pipeline (we need DSM + DTM + point cloud).
-    # MS runs: fast-orthophoto — the geometric products already exist
-    # from the RGB run, here we only want a calibrated radiance ortho.
+    # RGB run: full pipeline for DSM + DTM.
+    # MS runs: fast-orthophoto — they only contribute their calibrated
+    # radiance band; the geometric products already exist from the
+    # RGB run.
     fast_orthophoto = !is_rgb,
     build_dsm       = is_rgb,
     build_dtm       = is_rgb,
-    pc_las          = is_rgb,
+    # By default skip everything that DroneBioR's downstream pipeline
+    # does not need (textured 3D model, PDF report, LAS point cloud).
+    # Users who want the LAS for `improve_dtm_csf()` or the 3D model
+    # for visualization can opt back in via the run_odm_dji_mavic_3m()
+    # parameters. MS runs always skip the 3D model and LAS export
+    # because they have no geometric output to contribute.
+    pc_las          = is_rgb && isTRUE(pc_las),
+    skip_3dmodel    = isTRUE(skip_3dmodel),
+    skip_report     = isTRUE(skip_report),
     extra_args      = if (is_rgb) rgb_extra_args else ms_extra_args
   )
 
@@ -122,7 +134,9 @@ run_one_dji_band <- function(project,
         fast_orthophoto          = !is_rgb,
         build_dsm                = is_rgb,
         build_dtm                = is_rgb,
-        pc_las                   = is_rgb,
+        pc_las                   = is_rgb && isTRUE(pc_las),
+        skip_3dmodel             = isTRUE(skip_3dmodel),
+        skip_report              = isTRUE(skip_report),
         rerun_from               = "mvs_texturing"
       )
       status <- run_docker_with_progress(
@@ -241,6 +255,21 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #' @param odm_image Docker image tag for the ODM container.
 #' @param orthophoto_resolution_cm Orthophoto ground sampling distance.
 #' @param max_concurrency Concurrent ODM workers per band.
+#' @param pc_las Logical. When `TRUE`, export the dense point cloud
+#'   from the RGB run as a `.las` file (~640 MB for a 300-image
+#'   flight). Default `FALSE` — DroneBioR's DSM/DTM/CHM pipeline
+#'   does not need the LAS. Set to `TRUE` if you plan to run
+#'   `improve_dtm_csf()` afterwards (which reads the LAS).
+#' @param skip_3dmodel Logical. Default `TRUE`. Adds `--skip-3dmodel`
+#'   to every ODM invocation so the `odm_meshing` and `mvs_texturing`
+#'   stages — which together cost 10-30 min per flight and only
+#'   produce a textured `.obj` / `.glb` 3D model that DroneBioR's
+#'   spectral pipeline never reads — are skipped. Set to `FALSE` if
+#'   you want the textured 3D model for visualization.
+#' @param skip_report Logical. Default `TRUE`. Adds `--skip-report`
+#'   so ODM does not generate its PDF run report. Saves ~1-2 min
+#'   per band and avoids the well-known `gdal_translate` / numpy
+#'   ABI crash inside some `opendronemap/odm` Docker images.
 #' @param rgb_extra_args Extra arguments appended to the **RGB** ODM
 #'   run (`build_odm_args(..., extra_args = ...)`).
 #' @param ms_extra_args Extra arguments appended to **each MS** ODM
@@ -263,6 +292,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  odm_image = "opendronemap/odm",
                                  orthophoto_resolution_cm = 5,
                                  max_concurrency = 4,
+                                 pc_las       = FALSE,
+                                 skip_3dmodel = TRUE,
+                                 skip_report  = TRUE,
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
   if (!nzchar(Sys.which("docker"))) {
@@ -343,7 +375,10 @@ run_odm_dji_mavic_3m <- function(project,
       rgb_extra_args   = rgb_extra_args,
       ms_extra_args    = ms_extra_args,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
-      max_concurrency  = max_concurrency
+      max_concurrency  = max_concurrency,
+      pc_las           = pc_las,
+      skip_3dmodel     = skip_3dmodel,
+      skip_report      = skip_report
     )
 
     band_secs <- as.numeric(difftime(Sys.time(), band_t0, units = "secs"))

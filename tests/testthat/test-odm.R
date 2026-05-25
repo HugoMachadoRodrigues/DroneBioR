@@ -12,6 +12,24 @@ test_that("ODM command includes project and core options", {
   expect_equal(tail(args, 1), "micasense")
 })
 
+test_that("build_odm_args wires --skip-3dmodel and --skip-report flags", {
+  args_off <- build_odm_args(
+    dataset_dir  = tempfile(),
+    project_name = "p"
+  )
+  expect_false("--skip-3dmodel" %in% args_off)
+  expect_false("--skip-report" %in% args_off)
+
+  args_on <- build_odm_args(
+    dataset_dir  = tempfile(),
+    project_name = "p",
+    skip_3dmodel = TRUE,
+    skip_report  = TRUE
+  )
+  expect_true("--skip-3dmodel" %in% args_on)
+  expect_true("--skip-report" %in% args_on)
+})
+
 # --- clean_incomplete_odm_state -------------------------------------------
 
 make_partial_opensfm_project <- function() {

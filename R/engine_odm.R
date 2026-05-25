@@ -76,6 +76,15 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' @param tiles Logical. Export web map tiles.
 #' @param three_d_tiles Logical. Export 3D tiles.
 #' @param gltf Logical. Export glTF model.
+#' @param skip_3dmodel Logical. Add `--skip-3dmodel` to skip the
+#'   ODM `odm_meshing` and `mvs_texturing` stages. Saves 10-30 min
+#'   on a typical 300-image flight when the consumer only needs
+#'   DSM / DTM / orthomosaic. The skipped artifacts are the textured
+#'   3D `.obj` / `.glb` files.
+#' @param skip_report Logical. Add `--skip-report` to skip ODM's
+#'   PDF report generation stage. Saves ~1-2 min and avoids the
+#'   known `gdal_translate` / numpy ABI crash inside some
+#'   `opendronemap/odm` Docker images.
 #' @param rerun_from Optional ODM stage.
 #' @param end_with Optional ODM end stage.
 #' @param extra_args Additional ODM arguments.
@@ -114,6 +123,8 @@ build_odm_args <- function(dataset_dir,
                            tiles = FALSE,
                            three_d_tiles = FALSE,
                            gltf = FALSE,
+                           skip_3dmodel = FALSE,
+                           skip_report = FALSE,
                            rerun_from = NULL,
                            end_with = NULL,
                            extra_args = character()) {
@@ -162,6 +173,19 @@ build_odm_args <- function(dataset_dir,
   }
   if (isTRUE(gltf)) {
     odm_args <- c(odm_args, "--gltf")
+  }
+  # --skip-3dmodel skips the odm_meshing + mvs_texturing stages, which
+  # together can take 10-30 min on a 300-image flight and produce only
+  # the textured 3D model (.obj / .glb) — irrelevant when the
+  # downstream consumer needs DSM/DTM/CHM/Ortho and spectral indices.
+  if (isTRUE(skip_3dmodel)) {
+    odm_args <- c(odm_args, "--skip-3dmodel")
+  }
+  # --skip-report skips the PDF report stage. Saves a minute or two
+  # and dodges the well-known gdal_translate / numpy ABI mismatch
+  # crash in some opendronemap/odm builds.
+  if (isTRUE(skip_report)) {
+    odm_args <- c(odm_args, "--skip-report")
   }
   if (!is.null(rerun_from) && nzchar(rerun_from)) {
     odm_args <- c(odm_args, "--rerun-from", rerun_from)
