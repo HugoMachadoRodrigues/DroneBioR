@@ -145,9 +145,15 @@ classify_ground_csf <- function(las_path,
 #' 2. Runs CSF via [classify_ground_csf()].
 #' 3. Rasterises the ground points to a new DTM at the requested
 #'    resolution.
-#' 4. Writes the DTM into the project's cache directory (or, when no
-#'    cache is set up, alongside the original DTM).
-#' 5. Optionally regenerates the CHM via [build_chm_raster()].
+#' 4. Writes the CSF DTM **alongside** the original (as `dtm_csf.tif`
+#'    by default) — the SMRF DTM produced by ODM is preserved so users
+#'    can compare both methods.
+#' 5. Optionally builds a CHM from DSM + CSF DTM and writes it next to
+#'    the new DTM (`chm_csf.tif` by default), again preserving the
+#'    original `chm.tif`.
+#'
+#' Both new files are exposed by [odm_product_paths()] under the keys
+#' `dtm_csf` and `chm_csf` so downstream code can discover them.
 #'
 #' @param project A `dronebio_project` object.
 #' @param resolution DTM grid spacing in metres. Default 0.5 m, plenty
@@ -156,16 +162,23 @@ classify_ground_csf <- function(las_path,
 #'   through to [classify_ground_csf()]. Defaults are sensible for
 #'   moderate-to-dense canopy; lower `class_threshold` (0.1-0.3) and
 #'   smaller `cloth_resolution` (0.3) for sparser vegetation.
-#' @param rebuild_chm Logical. Run [build_chm_raster()] after writing
-#'   the new DTM so the canopy height model picks up the improvement.
-#' @param dtm_filename Output filename. Default `"dtm.tif"` replaces
-#'   the existing cached DTM in place.
-#' @return Absolute path to the new DTM (invisibly returns
-#'   `list(dtm = ..., chm = ...)` when `rebuild_chm = TRUE`).
+#' @param rebuild_chm Logical. Build a new CHM from DSM minus the CSF
+#'   DTM and write it to `chm_filename` (without touching the original
+#'   `chm.tif`).
+#' @param dtm_filename Output filename for the CSF DTM. Default
+#'   `"dtm_csf.tif"`. Pass `"dtm.tif"` to overwrite the SMRF DTM in
+#'   place (legacy behaviour from <= 0.4.0).
+#' @param chm_filename Output filename for the CSF CHM. Default
+#'   `"chm_csf.tif"`. Pass `"chm.tif"` to overwrite the SMRF CHM
+#'   in place.
+#' @return Invisibly returns the absolute path to the new DTM, or a
+#'   `list(dtm = ..., chm = ...)` when `rebuild_chm = TRUE`.
 #' @examples
 #' \dontrun{
 #'   project <- dronebio_project("~/aerial_geoscan_project")
 #'   improve_dtm_csf(project, resolution = 0.5, rebuild_chm = TRUE)
+#'   # Original dtm.tif / chm.tif are preserved; new files at
+#'   # dtm_csf.tif / chm_csf.tif in the same directory.
 #' }
 #' @export
 improve_dtm_csf <- function(project,
@@ -174,7 +187,8 @@ improve_dtm_csf <- function(project,
                             cloth_resolution = 0.5,
                             rigidness        = 1L,
                             rebuild_chm      = TRUE,
-                            dtm_filename     = "dtm.tif") {
+                            dtm_filename     = "dtm_csf.tif",
+                            chm_filename     = "chm_csf.tif") {
   if (!requireNamespace("lidR", quietly = TRUE)) {
     stop("The 'lidR' package is required. install.packages('lidR').",
          call. = FALSE)
@@ -232,7 +246,34 @@ improve_dtm_csf <- function(project,
   message("[DroneBioR] DTM written: ", out_path)
 
   if (isTRUE(rebuild_chm)) {
-    chm_path <- build_chm_raster(project, force = TRUE, cache_aware = TRUE)
+    # Build the CSF CHM directly from the DSM + the just-written CSF
+    # DTM, then write it to `chm_filename` (default `chm_csf.tif`)
+    # **alongside** the new DTM. We do not call build_chm_raster() here
+    # because that helper reads from `paths[["dtm"]]` (the SMRF DTM)
+    # and writes to the canonical `chm.tif`, which would silently
+    # overwrite the SMRF CHM and ignore our just-improved DTM.
+    dsm_candidates <- character()
+    if (cache_exists) {
+      dsm_candidates <- c(dsm_candidates,
+                          file.path(cache, basename(paths[["dsm"]])))
+    }
+    dsm_candidates <- c(dsm_candidates, unname(paths[["dsm"]]))
+    dsm_path <- NULL
+    for (p in dsm_candidates) {
+      if (file.exists(p)) { dsm_path <- p; break }
+    }
+    if (is.null(dsm_path)) {
+      stop("CSF CHM needs the DSM (looked in: ",
+           paste(dsm_candidates, collapse = ", "), ")", call. = FALSE)
+    }
+    chm <- build_chm_from_dsm_dtm(dsm_path, out_path)
+    chm_path <- file.path(dirname(out_path), chm_filename)
+    terra::writeRaster(
+      chm, chm_path,
+      overwrite = TRUE, datatype = "FLT4S",
+      gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER")
+    )
+    message("[DroneBioR] CHM written: ", chm_path)
     return(invisible(list(dtm = out_path, chm = chm_path)))
   }
   invisible(out_path)

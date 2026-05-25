@@ -1,5 +1,18 @@
 # DroneBioR (development version)
 
+## Breaking changes
+
+* **`improve_dtm_csf()` no longer overwrites `dtm.tif` / `chm.tif`.**
+  The function used to default to `dtm_filename = "dtm.tif"` and call
+  `build_chm_raster(force = TRUE)`, which silently clobbered the ODM
+  SMRF DTM and CHM in place — preventing any side-by-side comparison
+  of SMRF vs CSF terrain. New defaults are `dtm_filename =
+  "dtm_csf.tif"` and `chm_filename = "chm_csf.tif"`, both written
+  alongside the SMRF originals so users can compare both methods.
+  `odm_product_paths()` exposes the new files under the keys
+  `dtm_csf` and `chm_csf`. Pass the old filenames explicitly to
+  restore the pre-existing overwrite behaviour.
+
 ## Bug fixes
 
 * **`run_odm_project()` and `run_odm_dji_mavic_3m()` no longer abort on

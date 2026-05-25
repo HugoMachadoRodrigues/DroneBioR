@@ -21,13 +21,28 @@ test_that("dronebio_project honors custom subdirs", {
 test_that("odm_product_paths returns all expected products", {
   p <- dronebio_project(project_dir = tempdir())
   paths <- odm_product_paths(p)
-  expected <- c("orthomosaic", "dsm", "dtm", "point_cloud_las",
+  expected <- c("orthomosaic", "dsm", "dtm", "chm",
+                "dtm_csf", "chm_csf",
+                "point_cloud_las",
                 "point_cloud_laz", "point_cloud_copc",
                 "point_cloud_ply", "mesh_ply",
                 "textured_obj", "textured_obj_25d",
                 "textured_glb", "textured_glb_25d",
                 "tiles_3d", "map_tiles_dir", "report")
   expect_true(all(expected %in% names(paths)))
+})
+
+test_that("odm_product_paths exposes CSF DTM/CHM next to the SMRF originals", {
+  p <- dronebio_project(project_dir = tempdir())
+  paths <- odm_product_paths(p)
+  # The CSF variants must live in the same directory as the SMRF
+  # originals (otherwise build_chm_from_dsm_dtm can't find both with
+  # one path lookup), and the filenames must differ so improve_dtm_csf
+  # cannot accidentally clobber dtm.tif / chm.tif.
+  expect_equal(dirname(paths[["dtm_csf"]]), dirname(paths[["dtm"]]))
+  expect_equal(dirname(paths[["chm_csf"]]), dirname(paths[["chm"]]))
+  expect_false(basename(paths[["dtm_csf"]]) == basename(paths[["dtm"]]))
+  expect_false(basename(paths[["chm_csf"]]) == basename(paths[["chm"]]))
 })
 
 test_that("pick_best_textured_obj prefers 3D over 2.5D when present", {
