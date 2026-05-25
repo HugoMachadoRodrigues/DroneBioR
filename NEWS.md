@@ -1,5 +1,18 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **`run_odm_project()` and `run_odm_dji_mavic_3m()` no longer abort on
+  report-stage failures.** ODM occasionally exits non-zero after
+  writing the orthomosaic / DSM / DTM / point cloud — the most common
+  cause is the `odm_report` stage's `gdal_translate` call failing on a
+  numpy ABI mismatch inside the container (`ImportError: numpy.core.
+  multiarray failed to import`). The PDF report dies, every
+  geospatial product is intact. Both engines now check for the
+  orthomosaic on disk after a non-zero exit and treat its presence
+  as success-with-warning, so batch scripts (and the per-band DJI
+  orchestrator) can keep processing the next band / next flight.
+
 ## New features
 
 * **DJI Mavic 3M support — full multispectral pipeline.** New exported

@@ -277,6 +277,25 @@ run_odm_project <- function(project,
     }
   }
 
+  # ODM sometimes exits non-zero even after writing the orthomosaic and
+  # every other geospatial product — the most common cause is the
+  # `odm_report` stage failing on a `gdal_translate` invocation because
+  # the `gdal_array` Python binding inside the Docker image hits a numpy
+  # ABI mismatch. The PDF report dies, the rest of the pipeline is fine.
+  # Treat "ortho on disk" as success-with-warning instead of erroring,
+  # so downstream callers (run_odm_dji_mavic_3m, batch scripts) can
+  # continue to the next band / next flight.
+  if (!identical(status, 0L) && file.exists(project$odm_orthomosaic)) {
+    warning(sprintf(
+      "ODM exited with status %s but %s is present. This usually means a ",
+      "post-processing stage (PDF report, hillshade preview) failed; the ",
+      "orthomosaic, DSM/DTM and point cloud should still be valid. ",
+      "Treating as success.",
+      status, basename(project$odm_orthomosaic)
+    ), call. = FALSE)
+    status <- 0L
+  }
+
   if (!identical(status, 0L)) {
     stop("ODM failed with exit status ", status, call. = FALSE)
   }
