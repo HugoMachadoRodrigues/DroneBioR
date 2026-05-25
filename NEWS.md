@@ -1,5 +1,19 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **`run_docker_with_progress()` no longer errors with
+  `unused argument (timeout = 1000)`.** The previous implementation
+  called `processx::process$read_output(timeout = 1000)`, but
+  `read_output()` does not accept a `timeout` argument (that
+  parameter belongs to `poll_io()`). The helper now relies on
+  `proc$wait(timeout = ms)` for non-blocking cadence and lets the
+  subprocess inherit the parent R process's stdout/stderr, so the
+  ODM output appears in the console exactly as it did with
+  `system2()`. A real end-to-end test now drives the helper through
+  a benign `sleep` subprocess so this class of API-shape regression
+  fails the build before reaching main.
+
 ## Breaking changes
 
 * **`default_dji_mavic_3m_band_map()` no longer exposes Blue.** The
