@@ -120,6 +120,22 @@ run_one_dji_band <- function(project,
       status <- system2("docker", args = retry_args)
     }
   }
+  # ODM sometimes exits non-zero even after writing the orthomosaic —
+  # most commonly when the `odm_report` stage's `gdal_translate` call
+  # trips over a numpy ABI mismatch in the container's `gdal_array`
+  # Python binding. The PDF report dies, every geospatial product
+  # (ortho, DSM, DTM, point cloud) is intact. Treat "ortho on disk"
+  # as success so the orchestrator can move on to the next band.
+  if (!identical(status, 0L) && file.exists(ortho_path)) {
+    warning(sprintf(
+      "ODM exited with status %s on band %s but the orthomosaic is on disk. ",
+      "This usually means a post-processing stage (PDF report, hillshade ",
+      "preview) failed; the orthomosaic, DSM/DTM and point cloud should ",
+      "still be valid. Treating as success.",
+      status, band
+    ), call. = FALSE)
+    status <- 0L
+  }
   if (!identical(status, 0L)) {
     stop(sprintf("ODM failed on band %s (exit status %s).", band, status),
          call. = FALSE)
