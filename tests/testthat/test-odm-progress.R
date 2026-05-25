@@ -20,37 +20,39 @@ test_that("make_odm_stage_poller detects new stages once and reports active stag
     band_label  = "TEST"
   )
 
-  # First poll: no stage dirs exist yet, status should still print
-  # without erroring and reflect "starting".
-  out <- testthat::capture_messages(state1 <- poller())
-  expect_true(any(grepl("starting", out)))
+  # First poll: no stage dirs exist yet, status should reflect "starting".
+  state1 <- poller()
+  expect_length(state1$announcements, 0L)
+  expect_match(state1$status, "starting")
   expect_true(is.na(state1$active_stage))
   expect_equal(state1$stages_done, 0)
 
   # Simulate ODM creating the first stage directory.
   dir.create(file.path(project_dir, "dataset"))
-  out2 <- testthat::capture_messages(state2 <- poller())
-  expect_true(any(grepl("`dataset` started", out2)))
-  expect_true(any(grepl("stage `dataset`", out2)))
+  state2 <- poller()
+  expect_length(state2$announcements, 1L)
+  expect_match(state2$announcements[1L], "`dataset` started")
+  expect_match(state2$status, "stage `dataset`")
   expect_equal(state2$active_stage, "dataset")
   expect_equal(state2$stages_done, 1)
 
-  # Second poll on same state: should NOT re-announce the stage start,
-  # but should still emit the periodic status line.
-  out3 <- testthat::capture_messages(poller())
-  expect_false(any(grepl("`dataset` started", out3)))
-  expect_true(any(grepl("stage `dataset`", out3)))
+  # Second poll on same state: NO new announcements, status still
+  # reports the active stage.
+  state3 <- poller()
+  expect_length(state3$announcements, 0L)
+  expect_match(state3$status, "stage `dataset`")
 
-  # Two more stages appear: active should track the latest canonical
-  # one, even if directories were created in odd order.
+  # Two more stages appear: active tracks the latest canonical one
+  # regardless of directory creation order.
   dir.create(file.path(project_dir, "odm_orthophoto"))
   dir.create(file.path(project_dir, "opensfm"))
-  out4 <- testthat::capture_messages(state4 <- poller())
+  state4 <- poller()
+  expect_length(state4$announcements, 2L)
   expect_equal(state4$active_stage, "odm_orthophoto")
   expect_equal(state4$stages_done, 3)
-  # Both new stages should have been announced once.
-  expect_true(any(grepl("`opensfm` started", out4)))
-  expect_true(any(grepl("`odm_orthophoto` started", out4)))
+  joined_announcements <- paste(state4$announcements, collapse = "\n")
+  expect_match(joined_announcements, "`opensfm` started")
+  expect_match(joined_announcements, "`odm_orthophoto` started")
 })
 
 test_that("make_odm_stage_poller status line includes ETA and percent fields", {
@@ -60,12 +62,11 @@ test_that("make_odm_stage_poller status line includes ETA and percent fields", {
     project_dir = project_dir,
     image_count = 100L
   )
-  out <- testthat::capture_messages(poller())
-  joined <- paste(out, collapse = "\n")
-  expect_match(joined, "remaining")
-  expect_match(joined, "elapsed")
-  expect_match(joined, "stages")
-  expect_match(joined, "%")
+  state <- poller()
+  expect_match(state$status, "remaining")
+  expect_match(state$status, "elapsed")
+  expect_match(state$status, "stages")
+  expect_match(state$status, "%")
 })
 
 test_that("run_docker_with_progress exposes the expected signature", {
@@ -93,25 +94,30 @@ test_that("run_docker_with_progress drives a real subprocess to clean exit", {
   dir.create(project_dir)
 
   t0 <- Sys.time()
-  out <- testthat::capture_messages(
-    status <- DroneBioR:::run_docker_with_progress(
-      args               = c("1"),
-      project_dir        = project_dir,
-      image_count        = 10L,
-      band_label         = "TEST",
-      poll_interval_secs = 0.3,   # 300 ms -> ~3 polls during the 1 s sleep
-      command            = "sleep"
+  # Banner is emitted via message() (stderr); sticky status via cat()
+  # (stdout). Capture both so we can verify both channels.
+  captured_out <- testthat::capture_output(
+    captured_msg <- testthat::capture_messages(
+      status <- DroneBioR:::run_docker_with_progress(
+        args               = c("1"),
+        project_dir        = project_dir,
+        image_count        = 10L,
+        band_label         = "TEST",
+        poll_interval_secs = 0.3,
+        command            = "sleep"
+      )
     )
   )
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
 
   expect_equal(status, 0L)
   expect_gte(elapsed, 0.9)        # the subprocess really ran ~1 s
-  expect_true(any(grepl("Starting ODM run", out)))
-  # The poller emits a status line on each tick; with 300 ms cadence
-  # over ~1 s we should see at least 2 lines (start + ~3 polls).
-  poll_lines <- grep("stages", out, value = TRUE)
-  expect_gte(length(poll_lines), 2L)
+  expect_true(any(grepl("Starting ODM run", captured_msg)))
+  # Sticky status uses \r so capture_output captures it as a single
+  # blob with carriage returns. At minimum it must contain "stages".
+  expect_match(captured_out, "stages")
+  # Docker output is redirected to a log file inside project_dir.
+  expect_true(file.exists(file.path(project_dir, "dronebior_odm.log")))
 })
 
 test_that("run_docker_with_progress fallback path is structurally reachable", {

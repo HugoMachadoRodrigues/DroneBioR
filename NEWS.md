@@ -1,5 +1,19 @@
 # DroneBioR (development version)
 
+## Changes
+
+* **Sticky one-line progress bar during ODM runs.** Previously
+  `run_docker_with_progress()` emitted every poll as a fresh
+  `message()` line and let docker's verbose stdout flow into the
+  same console, so the status scrolled up and was lost between
+  ODM's own log lines within seconds. The helper now redirects
+  docker stdout / stderr to `<project_dir>/dronebior_odm.log`
+  (`tail -f` it in another terminal if you want the raw output)
+  and renders a single sticky status line that updates in place
+  via `\r`. Stage-transition events (`-> stage 'opensfm' started`)
+  still appear as ordinary lines above the sticky status, so the
+  scrollback shows the milestones without burying the live ETA.
+
 ## Bug fixes
 
 * **Auto-clean orphan OpenSfM state before re-launching ODM.** When a
