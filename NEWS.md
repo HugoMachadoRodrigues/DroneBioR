@@ -1,5 +1,26 @@
 # DroneBioR (development version)
 
+## New features
+
+* **Live ODM progress: stage, elapsed, ETA, percent.** ODM Docker
+  runs can take 30-90 min per band and previously emitted only raw
+  per-line log output, so users could not tell at a glance whether
+  a run was progressing or hung. The CLI / batch path now runs
+  docker under `processx` (a new Suggests dependency) and polls the
+  ODM project directory every 15 s, printing a one-line status that
+  combines:
+    - the current ODM stage (e.g., `opensfm`, `openmvs`, `odm_dem`),
+    - elapsed wall time in the run,
+    - estimated time remaining (drawn from
+      `~/.dronebior/odm_stage_history.csv`),
+    - and a stage-count percentage.
+  `run_odm_dji_mavic_3m()` additionally prints a banner before each
+  of the 5 per-band runs with the up-front estimate and the batch's
+  cumulative percent / ETA, plus a closing line with the band's
+  actual duration. Without `processx` installed the helpers fall
+  back to the existing blocking `system2()` call with a single
+  pre-run banner.
+
 ## Breaking changes
 
 * **`improve_dtm_csf()` no longer overwrites `dtm.tif` / `chm.tif`.**
