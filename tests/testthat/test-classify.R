@@ -57,3 +57,14 @@ test_that("classify_ground_csf errors on missing LAS file", {
     "not found"
   )
 })
+
+test_that("improve_dtm_csf defaults to non-destructive output filenames", {
+  # Regression guard: in 0.4.0 the function defaulted to dtm.tif /
+  # chm.tif and overwrote the SMRF originals when rebuild_chm = TRUE.
+  # Defaults are now the _csf-suffixed variants so the originals are
+  # preserved. Anyone wanting legacy behaviour passes "dtm.tif" /
+  # "chm.tif" explicitly.
+  args <- formals(improve_dtm_csf)
+  expect_equal(eval(args$dtm_filename), "dtm_csf.tif")
+  expect_equal(eval(args$chm_filename), "chm_csf.tif")
+})

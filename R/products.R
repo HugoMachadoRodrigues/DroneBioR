@@ -18,6 +18,11 @@ odm_product_paths <- function(project) {
     dsm                = file.path(d, "odm_dem", "dsm.tif"),
     dtm                = file.path(d, "odm_dem", "dtm.tif"),
     chm                = file.path(d, "odm_dem", "chm.tif"),
+    # CSF-refined terrain products produced by improve_dtm_csf().
+    # Kept side-by-side with the ODM SMRF DTM/CHM so users can
+    # compare both methods without losing either.
+    dtm_csf            = file.path(d, "odm_dem", "dtm_csf.tif"),
+    chm_csf            = file.path(d, "odm_dem", "chm_csf.tif"),
     point_cloud_las    = file.path(d, "odm_georeferencing", "odm_georeferenced_model.las"),
     point_cloud_laz    = file.path(d, "odm_georeferencing", "odm_georeferenced_model.laz"),
     point_cloud_copc   = file.path(d, "odm_georeferencing", "odm_georeferenced_model.copc.laz"),

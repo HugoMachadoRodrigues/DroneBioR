@@ -11,7 +11,8 @@ improve_dtm_csf(
   cloth_resolution = 0.5,
   rigidness = 1L,
   rebuild_chm = TRUE,
-  dtm_filename = "dtm.tif"
+  dtm_filename = "dtm_csf.tif",
+  chm_filename = "chm_csf.tif"
 )
 }
 \arguments{
@@ -25,15 +26,21 @@ through to \code{\link[=classify_ground_csf]{classify_ground_csf()}}. Defaults a
 moderate-to-dense canopy; lower \code{class_threshold} (0.1-0.3) and
 smaller \code{cloth_resolution} (0.3) for sparser vegetation.}
 
-\item{rebuild_chm}{Logical. Run \code{\link[=build_chm_raster]{build_chm_raster()}} after writing
-the new DTM so the canopy height model picks up the improvement.}
+\item{rebuild_chm}{Logical. Build a new CHM from DSM minus the CSF
+DTM and write it to \code{chm_filename} (without touching the original
+\code{chm.tif}).}
 
-\item{dtm_filename}{Output filename. Default \code{"dtm.tif"} replaces
-the existing cached DTM in place.}
+\item{dtm_filename}{Output filename for the CSF DTM. Default
+\code{"dtm_csf.tif"}. Pass \code{"dtm.tif"} to overwrite the SMRF DTM in
+place (legacy behaviour from <= 0.4.0).}
+
+\item{chm_filename}{Output filename for the CSF CHM. Default
+\code{"chm_csf.tif"}. Pass \code{"chm.tif"} to overwrite the SMRF CHM
+in place.}
 }
 \value{
-Absolute path to the new DTM (invisibly returns
-\code{list(dtm = ..., chm = ...)} when \code{rebuild_chm = TRUE}).
+Invisibly returns the absolute path to the new DTM, or a
+\code{list(dtm = ..., chm = ...)} when \code{rebuild_chm = TRUE}.
 }
 \description{
 ODM's default SMRF ground classification with \verb{--smrf-threshold 0.5}
@@ -49,14 +56,22 @@ migration has run).
 \item Runs CSF via \code{\link[=classify_ground_csf]{classify_ground_csf()}}.
 \item Rasterises the ground points to a new DTM at the requested
 resolution.
-\item Writes the DTM into the project's cache directory (or, when no
-cache is set up, alongside the original DTM).
-\item Optionally regenerates the CHM via \code{\link[=build_chm_raster]{build_chm_raster()}}.
+\item Writes the CSF DTM \strong{alongside} the original (as \code{dtm_csf.tif}
+by default) — the SMRF DTM produced by ODM is preserved so users
+can compare both methods.
+\item Optionally builds a CHM from DSM + CSF DTM and writes it next to
+the new DTM (\code{chm_csf.tif} by default), again preserving the
+original \code{chm.tif}.
 }
+
+Both new files are exposed by \code{\link[=odm_product_paths]{odm_product_paths()}} under the keys
+\code{dtm_csf} and \code{chm_csf} so downstream code can discover them.
 }
 \examples{
 \dontrun{
   project <- dronebio_project("~/aerial_geoscan_project")
   improve_dtm_csf(project, resolution = 0.5, rebuild_chm = TRUE)
+  # Original dtm.tif / chm.tif are preserved; new files at
+  # dtm_csf.tif / chm_csf.tif in the same directory.
 }
 }
