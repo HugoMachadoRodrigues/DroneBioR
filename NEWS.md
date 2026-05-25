@@ -1,5 +1,28 @@
 # DroneBioR (development version)
 
+## Performance
+
+* **`run_odm_dji_mavic_3m()` skips ODM stages DroneBioR does not
+  consume by default.** The DJI Mavic 3M pipeline now passes
+  `--skip-3dmodel --skip-report` to every ODM invocation and no
+  longer exports the dense LAS point cloud. The skipped artifacts
+  are the textured 3D model (`.obj` / `.glb`, produced by
+  `odm_meshing` + `mvs_texturing`, 10-30 min on a 300-image flight),
+  the PDF run report (~1-2 min, also the source of the known
+  `gdal_translate` / numpy crash inside some ODM Docker images),
+  and the LAS export (~10 s + ~640 MB on disk). The remaining
+  ODM stages — `dataset`, `split`, `merge`, `opensfm`, `openmvs`,
+  `odm_filterpoints`, `odm_georeferencing`, `odm_dem`,
+  `odm_orthophoto`, `odm_postprocess` — are exactly what the
+  pipeline needs to produce DSM, DTM, orthomosaic (and therefore
+  CHM and vegetation indices). Expect ~15-30 min saved per flight.
+  Users who want the textured 3D model or the LAS for
+  `improve_dtm_csf()` can opt back in via the new `skip_3dmodel`,
+  `skip_report` and `pc_las` arguments on `run_odm_dji_mavic_3m()`.
+* **`build_odm_args()` gains `skip_3dmodel` and `skip_report`
+  parameters** for the same flags, defaulting to `FALSE` to keep
+  the existing `run_odm_project()` behaviour unchanged.
+
 ## Bug fixes
 
 * **Stage poller no longer mis-identifies stale stage dirs as active.**

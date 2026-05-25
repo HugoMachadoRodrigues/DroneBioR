@@ -10,6 +10,9 @@ run_odm_dji_mavic_3m(
   odm_image = "opendronemap/odm",
   orthophoto_resolution_cm = 5,
   max_concurrency = 4,
+  pc_las = FALSE,
+  skip_3dmodel = TRUE,
+  skip_report = TRUE,
   rgb_extra_args = character(),
   ms_extra_args = character()
 )
@@ -26,6 +29,24 @@ exist. Useful after changing camera or radiometric parameters.}
 \item{orthophoto_resolution_cm}{Orthophoto ground sampling distance.}
 
 \item{max_concurrency}{Concurrent ODM workers per band.}
+
+\item{pc_las}{Logical. When \code{TRUE}, export the dense point cloud
+from the RGB run as a \code{.las} file (~640 MB for a 300-image
+flight). Default \code{FALSE} — DroneBioR's DSM/DTM/CHM pipeline
+does not need the LAS. Set to \code{TRUE} if you plan to run
+\code{improve_dtm_csf()} afterwards (which reads the LAS).}
+
+\item{skip_3dmodel}{Logical. Default \code{TRUE}. Adds \verb{--skip-3dmodel}
+to every ODM invocation so the \code{odm_meshing} and \code{mvs_texturing}
+stages — which together cost 10-30 min per flight and only
+produce a textured \code{.obj} / \code{.glb} 3D model that DroneBioR's
+spectral pipeline never reads — are skipped. Set to \code{FALSE} if
+you want the textured 3D model for visualization.}
+
+\item{skip_report}{Logical. Default \code{TRUE}. Adds \code{--skip-report}
+so ODM does not generate its PDF run report. Saves ~1-2 min
+per band and avoids the well-known \code{gdal_translate} / numpy
+ABI crash inside some \code{opendronemap/odm} Docker images.}
 
 \item{rgb_extra_args}{Extra arguments appended to the \strong{RGB} ODM
 run (\code{build_odm_args(..., extra_args = ...)}).}

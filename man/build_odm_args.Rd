@@ -21,6 +21,8 @@ build_odm_args(
   tiles = FALSE,
   three_d_tiles = FALSE,
   gltf = FALSE,
+  skip_3dmodel = FALSE,
+  skip_report = FALSE,
   rerun_from = NULL,
   end_with = NULL,
   extra_args = character()
@@ -63,6 +65,17 @@ multispectral, omitted for RGB. Set to \code{"none"} to skip explicitly.}
 \item{three_d_tiles}{Logical. Export 3D tiles.}
 
 \item{gltf}{Logical. Export glTF model.}
+
+\item{skip_3dmodel}{Logical. Add \verb{--skip-3dmodel} to skip the
+ODM \code{odm_meshing} and \code{mvs_texturing} stages. Saves 10-30 min
+on a typical 300-image flight when the consumer only needs
+DSM / DTM / orthomosaic. The skipped artifacts are the textured
+3D \code{.obj} / \code{.glb} files.}
+
+\item{skip_report}{Logical. Add \code{--skip-report} to skip ODM's
+PDF report generation stage. Saves ~1-2 min and avoids the
+known \code{gdal_translate} / numpy ABI crash inside some
+\code{opendronemap/odm} Docker images.}
 
 \item{rerun_from}{Optional ODM stage.}
 
