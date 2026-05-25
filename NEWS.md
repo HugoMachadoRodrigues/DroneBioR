@@ -1,5 +1,18 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **Stage poller no longer mis-identifies stale stage dirs as active.**
+  Previous failed ODM runs leave downstream stage directories on disk
+  (e.g. `odm_georeferencing/`). The poller picked the latest-by-
+  canonical-order directory as the active stage, so even when the
+  current run was actually grinding through `opensfm`, it would
+  report "stage `odm_georeferencing` ... ~10 min remaining" — a
+  wildly wrong ETA that made users think the run was wedged. The
+  poller now compares each stage directory's mtime against the
+  poller's start time and ignores anything older, so only stages
+  actually touched by the current run count.
+
 ## Changes
 
 * **Sticky one-line progress bar during ODM runs.** Previously

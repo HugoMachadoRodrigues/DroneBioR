@@ -65,9 +65,22 @@ make_odm_stage_poller <- function(project_dir,
   function() {
     now <- Sys.time()
     existing <- list.dirs(project_dir, recursive = FALSE, full.names = FALSE)
-    # Stages already started, in canonical order.
-    started_stages <- intersect(expected_stages, existing)
-    # Active stage = the latest canonical stage that exists on disk.
+    # Stages whose directory is present on disk AND was touched during
+    # the current run. The mtime filter is critical: stale stage
+    # directories from a previous failed/cancelled run still exist on
+    # disk; without the filter the canonical-order tie-breaker below
+    # would pick a downstream stale dir (e.g. odm_georeferencing) as
+    # "active" even when the current run is actually still grinding
+    # through opensfm, and the ETA would be wildly wrong.
+    candidate_stages <- intersect(expected_stages, existing)
+    started_stages <- character()
+    if (length(candidate_stages)) {
+      mtimes <- file.info(file.path(project_dir, candidate_stages))$mtime
+      fresh <- !is.na(mtimes) & mtimes >= started_at
+      started_stages <- candidate_stages[fresh]
+    }
+    # Active stage = the latest canonical stage that is both on disk
+    # and was modified during this run.
     active <- if (length(started_stages)) {
       ord_idx <- max(match(started_stages, expected_stages))
       expected_stages[ord_idx]
