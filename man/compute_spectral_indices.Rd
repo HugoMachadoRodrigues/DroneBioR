@@ -8,8 +8,8 @@ compute_spectral_indices(reflectance, eps = 1e-06, strict = FALSE)
 }
 \arguments{
 \item{reflectance}{A reflectance-scale \code{terra::SpatRaster}. Must
-contain at least Blue, Green, Red; RedEdge and NIR enable the
-remaining indices.}
+contain at least Green and Red; Blue, RedEdge and NIR each unlock
+additional indices when present.}
 
 \item{eps}{Small denominator threshold.}
 
@@ -21,12 +21,16 @@ A \code{terra::SpatRaster} with whatever indices the bands
 support.
 }
 \description{
-Computes the subset of indices the input bands actually support.
-Multispectral input (Blue + Green + Red + RedEdge + NIR) yields the
-full set; RGB-only input still gets the visible-band indices
-(VARI, ExG, GLI, TGI, MGRVI, RGBVI). All formulas are referenced
-below; see the \verb{?<index>} modal in the Shiny UI for the citation
-next to each one.
+Computes the subset of indices the input bands actually support. The
+strict minimum is \strong{Green + Red}; Blue, RedEdge and NIR each unlock
+additional indices when present. A 5-band MicaSense reflectance
+(Blue + Green + Red + RedEdge + NIR) yields the full set; a 4-band
+DJI Mavic 3M reflectance (Green + Red + RedEdge + NIR, no calibrated
+Blue) yields every index except the five Blue-dependent ones (EVI,
+VARI, ExG, GLI, TGI, RGBVI); an RGB-only image still gets the
+visible-band indices (VARI, ExG, GLI, TGI, MGRVI, RGBVI). All formulas
+are referenced below; see the \verb{?<index>} modal in the Shiny UI for
+the citation next to each one.
 }
 \details{
 Indices computed when \strong{NIR} is present:
@@ -58,9 +62,9 @@ MGRVI   Bendig 2015         (Green^2 - Red^2) / (Green^2 + Red^2)
 RGBVI   Bendig 2015         (Green^2 - Red\emph{Blue) / (Green^2 + Red}Blue)
 
 Pass \code{strict = TRUE} to keep the legacy behaviour where missing
-RedEdge / NIR raises an error; the default is to silently compute
-whatever is possible, which is what Drone Biomass Studio needs to
-degrade gracefully for RGB datasets.
+Blue / RedEdge / NIR raises an error; the default is to silently
+compute whatever is possible, which is what Drone Biomass Studio
+needs to degrade gracefully for RGB-only and MS-only datasets.
 }
 \examples{
 ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")

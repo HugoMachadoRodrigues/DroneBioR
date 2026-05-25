@@ -10,6 +10,24 @@ default_rgb_band_map <- function() {
   c(Red = 1, Green = 2, Blue = 3)
 }
 
+#' Default band map for the DJI Mavic 3M 7-band stacked orthomosaic
+#'
+#' [run_odm_dji_mavic_3m()] stacks five separate ODM outputs into a
+#' single GeoTIFF with band order Red, Green, Blue (from the RGB run)
+#' followed by MS_G, MS_R, MS_RE, MS_NIR (from the four per-band MS
+#' runs). For spectral-index computation we want the *radiometrically
+#' calibrated* MS bands wherever a band has both an RGB and an MS
+#' counterpart, so this band map points Green/Red/RedEdge/NIR at the
+#' MS bands (layers 4-7) and keeps Blue on the RGB JPG channel
+#' (layer 3) — the Mavic 3M does not capture a calibrated blue MS band.
+#'
+#' @return Named integer vector with `Blue`, `Green`, `Red`, `RedEdge`,
+#'   `NIR`.
+#' @export
+default_dji_mavic_3m_band_map <- function() {
+  c(Blue = 3, Green = 4, Red = 5, RedEdge = 6, NIR = 7)
+}
+
 #' Read a multispectral or RGB orthomosaic
 #'
 #' Reads an orthomosaic produced by OpenDroneMap / WebODM / Pix4Dmapper /
@@ -52,7 +70,13 @@ read_multispectral_orthomosaic <- function(orthomosaic,
   n_layers <- terra::nlyr(raw)
 
   if (is.null(band_map)) {
-    band_map <- if (n_layers >= 5L) default_micasense_band_map() else default_rgb_band_map()
+    band_map <- if (n_layers >= 7L) {
+      default_dji_mavic_3m_band_map()
+    } else if (n_layers >= 5L) {
+      default_micasense_band_map()
+    } else {
+      default_rgb_band_map()
+    }
   }
 
   required <- names(band_map)
@@ -204,7 +228,7 @@ write_dronebio_rasters <- function(output_dir,
                                    valid_mask = NULL) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   paths <- c(
-    reflectance = file.path(output_dir, "micasense_reflectance_bands.tif"),
+    reflectance = file.path(output_dir, "reflectance_bands.tif"),
     indices = file.path(output_dir, "spectral_indices.tif"),
     biomass_proxy = file.path(output_dir, "biomass_index_proxy.tif")
   )

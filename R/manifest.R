@@ -61,6 +61,16 @@ list_micasense_images <- function(images_dir) {
 #' `^(.+)_([0-9]+)\.[A-Za-z0-9]+$` capture/band filename pattern. Accepts
 #' `.jpg`, `.jpeg`, `.png`, `.tif` and `.tiff` (case-insensitive).
 #'
+#' **DJI Mavic 3M datasets** drop their multispectral `_MS_{G,R,RE,NIR}.TIF`
+#' siblings from the returned manifest when at least one matching `_D.JPG`
+#' is also present. This keeps the existing `run_odm_project()` flow
+#' viable (ODM only sees the RGB JPGs for SfM, which is what it can
+#' actually handle), and the returned data frame gets an attribute
+#' `dji_visible_multispectral = TRUE` so callers know the MS TIFs were
+#' filtered out. For full DJI Mavic 3M processing — including the four
+#' MS bands — use [list_dji_mavic_3m_images()] and
+#' [run_odm_dji_mavic_3m()].
+#'
 #' @param images_dir Folder containing raw image files.
 #' @return A data frame with the same columns as
 #'   [list_micasense_images()]: `file`, `filename`, `capture_id`, `band_id`,
@@ -85,7 +95,25 @@ list_aerial_images <- function(images_dir) {
     stop("No image files found in: ", images_dir, call. = FALSE)
   }
   names_only <- basename(files)
-  data.frame(
+
+  # DJI Mavic 3M datasets ship 1 RGB JPG + 4 single-band MS TIFFs per
+  # capture. ODM cannot reconstruct from the 5-image bursts directly, so
+  # when we detect the DJI Mavic 3M filename pattern we keep only the
+  # RGB JPGs and tag the manifest with `dji_visible_multispectral = TRUE`
+  # so downstream callers know the MS TIFs were filtered out. The
+  # MS-band orchestrator [run_odm_dji_mavic_3m()] runs ODM per band on
+  # the dropped TIFs separately and stitches the four MS orthos onto
+  # the RGB ortho grid.
+  dji_visible <- grepl("^DJI_[0-9]+_[0-9]+_D\\.(jpe?g)$", names_only,
+                       ignore.case = TRUE)
+  dji_ms      <- grepl("^DJI_[0-9]+_[0-9]+_MS_(G|R|RE|NIR)\\.tiff?$",
+                       names_only, ignore.case = TRUE)
+  if (any(dji_visible) && any(dji_ms)) {
+    files <- files[dji_visible]
+    names_only <- names_only[dji_visible]
+  }
+
+  out <- data.frame(
     file         = files,
     filename     = names_only,
     capture_id   = tools::file_path_sans_ext(names_only),
@@ -93,6 +121,88 @@ list_aerial_images <- function(images_dir) {
     file_size_mb = round(file.info(files)$size / 1024^2, 3),
     stringsAsFactors = FALSE
   )
+  attr(out, "dji_visible_multispectral") <- any(dji_visible) && any(dji_ms)
+  out
+}
+
+#' List DJI Mavic 3M images grouped by camera band
+#'
+#' Splits a folder of DJI Mavic 3M raw images into the five camera
+#' streams the platform produces per capture: the RGB visible (`D`,
+#' `.JPG`) plus the four single-band multispectral TIFFs (`MS_G`,
+#' `MS_R`, `MS_RE`, `MS_NIR`). Each stream is returned as a
+#' [list_aerial_images()]-style manifest so [copy_images_for_odm()] /
+#' [run_odm_project()] can consume it transparently in a per-band ODM
+#' workflow (see [run_odm_dji_mavic_3m()]).
+#'
+#' Files that do not match the DJI Mavic 3M naming convention are
+#' ignored. A folder that contains zero `_D.JPG` *and* zero `_MS_*.TIF`
+#' is treated as an error.
+#'
+#' @param images_dir Folder containing raw DJI Mavic 3M images.
+#' @return A named list with up to five elements - `D`, `MS_G`, `MS_R`,
+#'   `MS_RE`, `MS_NIR` - each a data frame in the
+#'   [list_aerial_images()] shape. Bands that have no matching images
+#'   are omitted from the list.
+#' @examples
+#' tmp <- tempfile("djim3m-"); dir.create(tmp)
+#' for (i in 1:3) {
+#'   stem <- sprintf("DJI_20260501132033_%04d", i)
+#'   file.create(file.path(tmp, paste0(stem, "_D.JPG")))
+#'   for (b in c("G", "R", "RE", "NIR"))
+#'     file.create(file.path(tmp, paste0(stem, "_MS_", b, ".TIF")))
+#' }
+#' names(list_dji_mavic_3m_images(tmp))
+#' @export
+list_dji_mavic_3m_images <- function(images_dir) {
+  if (!dir.exists(images_dir)) {
+    stop("Image directory not found: ", images_dir, call. = FALSE)
+  }
+  files <- list.files(
+    images_dir,
+    pattern = "\\.(jpe?g|tiff?)$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  if (length(files) == 0L) {
+    stop("No image files found in: ", images_dir, call. = FALSE)
+  }
+  names_only <- basename(files)
+
+  band_patterns <- list(
+    D      = "^DJI_[0-9]+_[0-9]+_D\\.(jpe?g)$",
+    MS_G   = "^DJI_[0-9]+_[0-9]+_MS_G\\.tiff?$",
+    MS_R   = "^DJI_[0-9]+_[0-9]+_MS_R\\.tiff?$",
+    MS_RE  = "^DJI_[0-9]+_[0-9]+_MS_RE\\.tiff?$",
+    MS_NIR = "^DJI_[0-9]+_[0-9]+_MS_NIR\\.tiff?$"
+  )
+
+  manifest_for <- function(sel) {
+    if (!any(sel)) return(NULL)
+    data.frame(
+      file         = files[sel],
+      filename     = names_only[sel],
+      capture_id   = tools::file_path_sans_ext(names_only[sel]),
+      band_id      = 1L,
+      file_size_mb = round(file.info(files[sel])$size / 1024^2, 3),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  out <- lapply(band_patterns, function(p) {
+    manifest_for(grepl(p, names_only, ignore.case = TRUE))
+  })
+  out <- Filter(Negate(is.null), out)
+
+  if (length(out) == 0L) {
+    stop(
+      "No DJI Mavic 3M images found in: ", images_dir,
+      "\nExpected filenames like DJI_<dt>_<idx>_D.JPG and ",
+      "DJI_<dt>_<idx>_MS_{G,R,RE,NIR}.TIF.",
+      call. = FALSE
+    )
+  }
+  out
 }
 
 #' Copy images into an ODM project folder

@@ -4,12 +4,16 @@ safe_ratio <- function(numerator, denominator, eps = 1e-6) {
 
 #' Compute spectral vegetation indices
 #'
-#' Computes the subset of indices the input bands actually support.
-#' Multispectral input (Blue + Green + Red + RedEdge + NIR) yields the
-#' full set; RGB-only input still gets the visible-band indices
-#' (VARI, ExG, GLI, TGI, MGRVI, RGBVI). All formulas are referenced
-#' below; see the `?<index>` modal in the Shiny UI for the citation
-#' next to each one.
+#' Computes the subset of indices the input bands actually support. The
+#' strict minimum is **Green + Red**; Blue, RedEdge and NIR each unlock
+#' additional indices when present. A 5-band MicaSense reflectance
+#' (Blue + Green + Red + RedEdge + NIR) yields the full set; a 4-band
+#' DJI Mavic 3M reflectance (Green + Red + RedEdge + NIR, no calibrated
+#' Blue) yields every index except the five Blue-dependent ones (EVI,
+#' VARI, ExG, GLI, TGI, RGBVI); an RGB-only image still gets the
+#' visible-band indices (VARI, ExG, GLI, TGI, MGRVI, RGBVI). All formulas
+#' are referenced below; see the `?<index>` modal in the Shiny UI for
+#' the citation next to each one.
 #'
 #' Indices computed when **NIR** is present:
 #'   NDVI    Rouse et al. 1974   (NIR - Red) / (NIR + Red)
@@ -40,13 +44,13 @@ safe_ratio <- function(numerator, denominator, eps = 1e-6) {
 #'   RGBVI   Bendig 2015         (Green^2 - Red*Blue) / (Green^2 + Red*Blue)
 #'
 #' Pass `strict = TRUE` to keep the legacy behaviour where missing
-#' RedEdge / NIR raises an error; the default is to silently compute
-#' whatever is possible, which is what Drone Biomass Studio needs to
-#' degrade gracefully for RGB datasets.
+#' Blue / RedEdge / NIR raises an error; the default is to silently
+#' compute whatever is possible, which is what Drone Biomass Studio
+#' needs to degrade gracefully for RGB-only and MS-only datasets.
 #'
 #' @param reflectance A reflectance-scale `terra::SpatRaster`. Must
-#'   contain at least Blue, Green, Red; RedEdge and NIR enable the
-#'   remaining indices.
+#'   contain at least Green and Red; Blue, RedEdge and NIR each unlock
+#'   additional indices when present.
 #' @param eps Small denominator threshold.
 #' @param strict Logical. When `TRUE`, error if RedEdge / NIR are
 #'   missing instead of returning the partial index stack.
@@ -59,17 +63,24 @@ safe_ratio <- function(numerator, denominator, eps = 1e-6) {
 #' names(ix)
 #' @export
 compute_spectral_indices <- function(reflectance, eps = 1e-6, strict = FALSE) {
-  rgb_required <- c("Blue", "Green", "Red")
-  rgb_missing <- setdiff(rgb_required, names(reflectance))
-  if (length(rgb_missing) > 0) {
-    stop("Reflectance raster is missing: ", paste(rgb_missing, collapse = ", "),
+  # Green + Red are the strict minimum (every supported index uses at
+  # least one of them, and the visible-band indices need both). Blue is
+  # optional: the DJI Mavic 3M and similar 4-band MS rigs do not capture
+  # a calibrated blue. When Blue is absent we skip the Blue-dependent
+  # indices (EVI, VARI, ExG, GLI, TGI, RGBVI) rather than erroring, so
+  # MS-only datasets still produce a full NDVI / NDRE / SAVI / ... stack.
+  minimum_required <- c("Green", "Red")
+  min_missing <- setdiff(minimum_required, names(reflectance))
+  if (length(min_missing) > 0) {
+    stop("Reflectance raster is missing: ", paste(min_missing, collapse = ", "),
          call. = FALSE)
   }
+  has_blue    <- "Blue" %in% names(reflectance)
   has_nir     <- "NIR" %in% names(reflectance)
   has_rededge <- "RedEdge" %in% names(reflectance)
 
   if (isTRUE(strict)) {
-    needed_for_full <- c("RedEdge", "NIR")
+    needed_for_full <- c("Blue", "RedEdge", "NIR")
     full_missing <- setdiff(needed_for_full, names(reflectance))
     if (length(full_missing) > 0) {
       stop("Reflectance raster is missing: ", paste(full_missing, collapse = ", "),
@@ -77,17 +88,15 @@ compute_spectral_indices <- function(reflectance, eps = 1e-6, strict = FALSE) {
     }
   }
 
-  blue  <- reflectance[["Blue"]]
-  green <- reflectance[["Green"]]
-  red   <- reflectance[["Red"]]
+  blue    <- if (has_blue)    reflectance[["Blue"]]    else NULL
+  green   <- reflectance[["Green"]]
+  red     <- reflectance[["Red"]]
   rededge <- if (has_rededge) reflectance[["RedEdge"]] else NULL
   nir     <- if (has_nir)     reflectance[["NIR"]]     else NULL
 
   indices <- list()
   if (has_nir) {
     ndvi <- safe_ratio(nir - red, nir + red, eps); names(ndvi) <- "NDVI"
-    evi  <- 2.5 * safe_ratio(nir - red, nir + 6 * red - 7.5 * blue + 1, eps)
-    names(evi) <- "EVI"
     savi <- 1.5 * safe_ratio(nir - red, nir + red + 0.5, eps); names(savi) <- "SAVI"
     osavi <- safe_ratio(nir - red, nir + red + 0.16, eps); names(osavi) <- "OSAVI"
     ndwi <- safe_ratio(green - nir, green + nir, eps); names(ndwi) <- "NDWI"
@@ -101,7 +110,6 @@ compute_spectral_indices <- function(reflectance, eps = 1e-6, strict = FALSE) {
     wdrvi <- safe_ratio(0.2 * nir - red, 0.2 * nir + red, eps); names(wdrvi) <- "WDRVI"
     tvi   <- 0.5 * (120 * (nir - green) - 200 * (red - green)); names(tvi) <- "TVI"
     indices$NDVI   <- ndvi
-    indices$EVI    <- evi
     indices$SAVI   <- savi
     indices$OSAVI  <- osavi
     indices$NDWI   <- ndwi
@@ -112,6 +120,12 @@ compute_spectral_indices <- function(reflectance, eps = 1e-6, strict = FALSE) {
     indices$DVI    <- dvi
     indices$WDRVI  <- wdrvi
     indices$TVI    <- tvi
+    # EVI uses Blue; skip when no Blue band is available.
+    if (has_blue) {
+      evi <- 2.5 * safe_ratio(nir - red, nir + 6 * red - 7.5 * blue + 1, eps)
+      names(evi) <- "EVI"
+      indices$EVI <- evi
+    }
   }
   if (has_nir && has_rededge) {
     ndre <- safe_ratio(nir - rededge, nir + rededge, eps); names(ndre) <- "NDRE"
@@ -124,19 +138,22 @@ compute_spectral_indices <- function(reflectance, eps = 1e-6, strict = FALSE) {
     indices$MCARI     <- mcari
     indices$PSRI      <- psri
   }
-  # RGB-only indices: always computable when Blue/Green/Red are present.
-  vari <- safe_ratio(green - red, green + red - blue, eps); names(vari) <- "VARI"
-  exg  <- 2 * green - red - blue; names(exg) <- "ExG"
-  gli  <- safe_ratio(2 * green - red - blue, 2 * green + red + blue, eps); names(gli) <- "GLI"
-  tgi  <- -0.5 * (190 * (red - green) - 120 * (red - blue)); names(tgi) <- "TGI"
+  # Visible-band indices: MGRVI works on Green + Red alone; the rest
+  # need Blue and are skipped when it is missing.
   mgrvi <- safe_ratio(green^2 - red^2, green^2 + red^2, eps); names(mgrvi) <- "MGRVI"
-  rgbvi <- safe_ratio(green^2 - red * blue, green^2 + red * blue, eps); names(rgbvi) <- "RGBVI"
-  indices$VARI  <- vari
-  indices$ExG   <- exg
-  indices$GLI   <- gli
-  indices$TGI   <- tgi
   indices$MGRVI <- mgrvi
-  indices$RGBVI <- rgbvi
+  if (has_blue) {
+    vari <- safe_ratio(green - red, green + red - blue, eps); names(vari) <- "VARI"
+    exg  <- 2 * green - red - blue; names(exg) <- "ExG"
+    gli  <- safe_ratio(2 * green - red - blue, 2 * green + red + blue, eps); names(gli) <- "GLI"
+    tgi  <- -0.5 * (190 * (red - green) - 120 * (red - blue)); names(tgi) <- "TGI"
+    rgbvi <- safe_ratio(green^2 - red * blue, green^2 + red * blue, eps); names(rgbvi) <- "RGBVI"
+    indices$VARI  <- vari
+    indices$ExG   <- exg
+    indices$GLI   <- gli
+    indices$TGI   <- tgi
+    indices$RGBVI <- rgbvi
+  }
 
   # Preserve the canonical output order so downstream code that expects
   # a fixed index ordering keeps working when the bands are full.
