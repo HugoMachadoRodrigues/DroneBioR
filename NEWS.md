@@ -2,6 +2,27 @@
 
 ## Bug fixes
 
+* **Auto-clean orphan OpenSfM state before re-launching ODM.** When a
+  previous ODM run was interrupted between feature extraction and
+  feature matching (Ctrl-C, crash, OOM, the `read_output(timeout=...)`
+  bug fixed in the prior release, etc.) the project directory was
+  left in a state where `opensfm/features/` existed but was missing
+  some `*.features.npz` files. ODM's resume detection saw the
+  features directory and skipped extraction, then crashed deep
+  inside the joblib worker with
+
+      FileNotFoundError: '/datasets/.../features/...features.npz'
+
+  `run_odm_project()` and `run_one_dji_band()` now call a new
+  internal helper `clean_incomplete_odm_state()` immediately before
+  invoking docker. The helper detects the partial state
+  (`opensfm/features/` present but `opensfm/reconstruction.json`
+  absent) and wipes both the `opensfm/` directory and every
+  downstream stage directory, so ODM starts cleanly. `images/` is
+  preserved so the hardlinks don't have to be rebuilt.
+
+
+
 * **`run_docker_with_progress()` no longer errors with
   `unused argument (timeout = 1000)`.** The previous implementation
   called `processx::process$read_output(timeout = 1000)`, but
