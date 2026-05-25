@@ -33,10 +33,24 @@ format_seconds_human <- function(seconds) {
 #' Build a stateful stage poller closure
 #'
 #' Given an ODM project directory and the expected stage order, returns
-#' a function that, called repeatedly, prints a one-line progress
-#' status reflecting the project's current on-disk state. The closure
-#' remembers which stages it has already seen so it only announces new
-#' transitions once.
+#' a function that, called repeatedly, reports the project's current
+#' on-disk state. The closure remembers which stages it has already
+#' seen so each new transition is reported only once.
+#'
+#' Unlike the previous iteration of this helper, the poller does not
+#' print anything itself. It returns a list with:
+#'
+#'   - `announcements`: a character vector of new-stage transition
+#'     lines (one per stage that became visible since the last poll);
+#'     callers should print these as ordinary "above the status bar"
+#'     lines.
+#'   - `status`: a single-line string with the current sticky status
+#'     (active stage, elapsed, ETA, percent); callers should render
+#'     this in-place using `\r` so the line stays put.
+#'
+#' Separating "render" from "report" lets [run_docker_with_progress()]
+#' use one carriage-return-updated status line while interleaving
+#' stage-transition lines above it without scrolling.
 #'
 #' @noRd
 make_odm_stage_poller <- function(project_dir,
@@ -63,12 +77,14 @@ make_odm_stage_poller <- function(project_dir,
       if (idx < total_stages) expected_stages[(idx + 1L):total_stages] else character()
     } else expected_stages
 
-    # Announce newly-seen stages once.
+    # Announce newly-seen stages once (return as strings; caller prints).
     new_stages <- setdiff(started_stages, seen_stages)
-    for (s in new_stages) {
-      message(sprintf("%s[%s] -> stage `%s` started",
-                      prefix, format(now, "%H:%M:%S"), s))
-    }
+    announcements <- if (length(new_stages)) {
+      vapply(new_stages, function(s) {
+        sprintf("%s[%s] -> stage `%s` started",
+                prefix, format(now, "%H:%M:%S"), s)
+      }, character(1), USE.NAMES = FALSE)
+    } else character()
     seen_stages <<- started_stages
 
     # Elapsed in active stage = now - mtime of that stage's directory.
@@ -86,17 +102,13 @@ make_odm_stage_poller <- function(project_dir,
       image_count            = image_count
     )
     elapsed_total <- as.numeric(difftime(now, started_at, units = "secs"))
-    total_estimate <- elapsed_total + remaining
-    pct_complete <- if (total_estimate > 0) {
-      min(99, 100 * elapsed_total / total_estimate)
-    } else 0
 
-    # Stage count is a coarser (but easier to grok) percent.
+    # Stage count is a coarse (but easy-to-grok) percent.
     stages_done_pct <- if (total_stages > 0) {
       100 * length(started_stages) / total_stages
     } else 0
 
-    message(sprintf(
+    status <- sprintf(
       "%s[%s] %s | elapsed %s | ~%s remaining | %d/%d stages (%d%%)",
       prefix,
       format(now, "%H:%M:%S"),
@@ -105,9 +117,11 @@ make_odm_stage_poller <- function(project_dir,
       format_seconds_human(remaining),
       length(started_stages), total_stages,
       as.integer(round(stages_done_pct))
-    ))
+    )
 
     invisible(list(
+      announcements  = announcements,
+      status         = status,
       active_stage   = active,
       elapsed_secs   = elapsed_total,
       remaining_secs = remaining,
@@ -163,33 +177,59 @@ run_docker_with_progress <- function(args,
     band_label  = band_label
   )
 
+  # Redirect docker's verbose stdout/stderr to a per-run log file so
+  # our progress line can stay put. Users who want the raw ODM output
+  # can `tail -f` the log in another terminal.
+  dir.create(project_dir, recursive = TRUE, showWarnings = FALSE)
+  log_path <- file.path(project_dir, "dronebior_odm.log")
+
   message(sprintf(
-    "%s[%s] Starting ODM run (polling every %ss for stage progress)...",
+    "%s[%s] Starting ODM run; raw docker log -> %s (tail -f to follow). Status updates in place every %ss.",
     if (!is.null(band_label)) sprintf("[%s] ", band_label) else "",
     format(Sys.time(), "%H:%M:%S"),
+    log_path,
     format(poll_interval_secs)
   ))
 
-  # stdout = "" / stderr = "" makes processx inherit the parent R
-  # process's stdout/stderr, so the subprocess output appears in the
-  # user's console exactly the way system2() did before this helper
-  # existed. We only need processx for non-blocking wait — `proc$wait`
-  # accepts a timeout (ms) and returns early if the process exits,
-  # so we can interleave wait() + poller() on a fixed cadence without
-  # ever touching the subprocess's output buffer.
   proc <- processx::process$new(
     command, args,
-    stdout  = "",
-    stderr  = "",
+    stdout  = log_path,
+    stderr  = "2>&1",
     cleanup = TRUE
   )
 
+  # Sticky-line renderer.
+  # `\r` returns the cursor to the start of the current terminal line,
+  # so the next write overwrites it. We pre-pad with spaces sized to
+  # the previous status so partial overwrites do not leave trailing
+  # characters from a longer previous line.
+  status_width <- 0L
+  render <- function(poll_result) {
+    if (is.null(poll_result)) return(invisible(NULL))
+    # New-stage transitions get a full line of their own ABOVE the
+    # sticky status: clear the current sticky line first, print each
+    # transition with \n, then re-print the sticky status.
+    if (length(poll_result$announcements)) {
+      cat("\r", strrep(" ", status_width), "\r", sep = "")
+      for (a in poll_result$announcements) cat(a, "\n", sep = "")
+    }
+    # Overwrite the previous sticky status. Pad the new status out so
+    # short status lines fully erase any leftover characters from a
+    # longer previous one.
+    new_status <- poll_result$status
+    pad <- max(0L, status_width - nchar(new_status))
+    cat("\r", new_status, strrep(" ", pad), sep = "")
+    flush.console()
+    status_width <<- nchar(new_status)
+  }
+
   while (proc$is_alive()) {
     proc$wait(timeout = as.integer(poll_interval_secs * 1000L))
-    tryCatch(poller(), error = function(e) NULL)
+    render(tryCatch(poller(), error = function(e) NULL))
   }
-  # One last status line so the user sees the final on-disk state.
-  tryCatch(poller(), error = function(e) NULL)
+  # Final render so the user sees the terminal on-disk state.
+  render(tryCatch(poller(), error = function(e) NULL))
+  cat("\n")  # commit the sticky line with a final newline
 
   status <- proc$get_exit_status()
   if (is.null(status)) status <- 1L
