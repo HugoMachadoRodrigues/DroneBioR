@@ -180,3 +180,52 @@ test_that("run_one_dji_band passes --geo to ODM when .MRK is present", {
   expect_match(body_str, '"--geo"')
   expect_match(body_str, "--gps-accuracy")
 })
+
+test_that("ppk_cli defaults to \"auto\" on both engines", {
+  expect_identical(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$ppk_cli), "auto")
+  expect_identical(eval(formals(DroneBioR:::run_one_dji_band)$ppk_cli),    "auto")
+})
+
+test_that("resolve_ppk_cli_auto returns NULL with a clear message when tools are missing", {
+  # Clear any environment override the user may have set, then point
+  # at a tempdir with no `base/` subfolder so the base-obs probe also
+  # fails. We expect a `message()` listing what is missing and a
+  # NULL return — the run_one_dji_band caller takes that as "use
+  # .MRK only".
+  withr::with_envvar(c(DRONEBIOR_PPK_BASE_OBS = ""), {
+    withr::with_options(list(dronebior.ppk_base_obs = NULL), {
+      tmp <- tempfile("ppk-auto-")
+      dir.create(tmp)
+      out <- testthat::capture_messages(
+        result <- DroneBioR:::resolve_ppk_cli_auto(tmp)
+      )
+      expect_null(result)
+      joined <- paste(out, collapse = "\n")
+      expect_match(joined, "auto-detection skipped")
+      expect_match(joined, "Base-station RINEX")
+      expect_match(joined, "Falling back to the .MRK")
+    })
+  })
+})
+
+test_that("resolve_ppk_base_obs reads DRONEBIOR_PPK_BASE_OBS env first", {
+  base <- tempfile(fileext = ".obs")
+  file.create(base)
+  withr::with_envvar(c(DRONEBIOR_PPK_BASE_OBS = base), {
+    found <- DroneBioR:::resolve_ppk_base_obs(tempfile("nope-"))
+    expect_equal(normalizePath(found), normalizePath(base))
+  })
+})
+
+test_that("resolve_ppk_base_obs falls back to <images_dir>/base/*.obs", {
+  images <- tempfile("withbase-")
+  dir.create(file.path(images, "base"), recursive = TRUE)
+  base <- file.path(images, "base", "cors_2026_05_01.obs")
+  file.create(base)
+  withr::with_envvar(c(DRONEBIOR_PPK_BASE_OBS = ""), {
+    withr::with_options(list(dronebior.ppk_base_obs = NULL), {
+      found <- DroneBioR:::resolve_ppk_base_obs(images)
+      expect_equal(normalizePath(found), normalizePath(base))
+    })
+  })
+})

@@ -16,7 +16,7 @@ run_odm_dji_mavic_3m(
   cleanup_intermediates = TRUE,
   use_ppk_mrk = TRUE,
   ppk_min_fix_quality = 4L,
-  ppk_cli = NULL,
+  ppk_cli = "auto",
   rgb_extra_args = character(),
   ms_extra_args = character()
 )
@@ -87,18 +87,34 @@ from the geo.txt — including them would let degraded positions
 destabilise the bundle adjustment. Set to \code{50} to demand
 RTK-Fixed-only, or \code{0} to keep everything.}
 
-\item{ppk_cli}{Optional function, \strong{the PPK CLI hook}. Called
-once before the band's ODM run when both \verb{_PPKRAW.bin} and
-\verb{_PPKNAV.nav} sidecars are present. Signature:
-\verb{function(images_dir, bin_paths, nav_paths, mrk_paths)}. The
-hook is expected to invoke a real PPK CLI (rtklib's
-\code{rnx2rtkp}, a DJI-to-RINEX converter, etc.) and rewrite the
-\verb{_Timestamp.MRK} files in place with the corrected positions.
-DroneBioR then re-reads the .MRK and writes geo.txt from the
-improved values. \code{\link[=ppk_cli_rtklib_dji]{ppk_cli_rtklib_dji()}} is a ready-made hook
-for users who have rtklib + a DJI .bin -> RINEX converter
-installed; pass \code{NULL} (default) to skip the CLI step and use
-the .MRK as it ships.}
+\item{ppk_cli}{Controls the \strong{PPK CLI step that runs before ODM}
+when the source folder ships the \code{.bin} / \code{.nav} rover files.
+Three forms are accepted:
+\describe{
+\item{\code{"auto"} (default)}{Probe the system for everything
+\code{ppk_cli_rtklib_dji()} needs: \code{rnx2rtkp} on PATH (e.g.
+\verb{brew install rtklib}), a DJI \code{.bin} -> RINEX converter
+on PATH (tried in order: \code{klauppk_dji_to_rinex},
+\code{klauppk}, \code{dji_to_rinex}, \code{djiparsekit},
+\code{djirinexconverter}, \code{convbin}), and a base-station
+RINEX observation file located via (a) the
+\code{DRONEBIOR_PPK_BASE_OBS} environment variable, (b) the
+\code{dronebior.ppk_base_obs} R option, or (c)
+\verb{<images_dir>/base/*.obs|*.YYo}. When every piece is in
+place, run full PPK before ODM. When anything is missing,
+emit a clear message naming what is missing and fall back
+to the .MRK-as-shipped path.}
+\item{\code{NULL} / \code{FALSE}}{Skip the CLI step. Use the .MRK as
+it ships from the drone (still better than EXIF GPS
+because the .MRK already holds RTK-quality positions when
+the drone had an RTK Fix in flight).}
+\item{A function}{Custom hook with signature
+\verb{function(images_dir, bin_paths, nav_paths, mrk_paths)}.
+Use \code{\link[=ppk_cli_rtklib_dji]{ppk_cli_rtklib_dji()}} to build one with explicit
+paths if the auto-detect probes need an override.}
+}
+In every case DroneBioR then reads the (possibly improved)
+.MRK and writes an ODM \code{geo.txt} consumed via \code{--geo}.}
 
 \item{rgb_extra_args}{Extra arguments appended to the \strong{RGB} ODM
 run (\code{build_odm_args(..., extra_args = ...)}).}
