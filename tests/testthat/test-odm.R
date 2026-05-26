@@ -149,6 +149,12 @@ test_that("run_one_dji_band has the OOM exit-137 retry path", {
   expect_match(body_str, "max_concurrency *= *1")
   expect_match(body_str, "feature-quality")
   expect_match(body_str, "oom-retry")
+  # Diagnostic message must name BOTH failure modes (SfM memory cap
+  # AND divergent reconstruction -> oversized orthophoto), not just
+  # the Docker memory cap.
+  expect_match(body_str, "diverged")
+  expect_match(body_str, "Model bounds")
+  expect_match(body_str, "gps-accuracy")
 })
 
 test_that("run_odm_project has the OOM exit-137 retry path", {
@@ -159,6 +165,8 @@ test_that("run_odm_project has the OOM exit-137 retry path", {
   expect_match(body_str, "137")
   expect_match(body_str, "max_concurrency *= *1")
   expect_match(body_str, "feature-quality")
+  expect_match(body_str, "diverged")
+  expect_match(body_str, "gps-accuracy")
 })
 
 test_that("keep_only_final_odm_products honours keep_extra allowlist", {
