@@ -1,5 +1,28 @@
 # DroneBioR (development version)
 
+## Documentation
+
+* **More honest diagnosis when ODM exits 137 twice.** The previous
+  release added an auto-retry for `exit status 137` (Docker OOM
+  kill) and an error message that named Docker Desktop's memory
+  cap as "almost always" the cause. Observed in the wild: a user
+  with 48 GB allocated to Docker Desktop still hit 137 — the
+  actual cause was the SfM bundle adjustment diverging on a
+  Mavic 3M flight with bad EXIF altitudes, which made `odm_orthophoto`
+  try to write a 17 km x 17 km orthomosaic at 5 cm resolution
+  (~460 GB of pixels) and OOM regardless of cap. The "twice in
+  a row" error message now names both failure modes explicitly:
+    1. Docker memory cap (raise via Docker Desktop -> Resources)
+    2. SfM divergence -> oversized orthophoto (check `log.json`
+       for `Model bounds` / `Model area`; remedy is to apply PPK
+       corrections to the EXIF GPS, or pass tighter SfM
+       constraints via `extra_args`:
+         `c("--gps-accuracy", "3",
+            "--matcher-neighbors", "8",
+            "--feature-quality", "medium")`).
+  The auto-retry behaviour itself is unchanged — only the diagnostic
+  copy.
+
 ## Bug fixes
 
 * **Auto-retry on `exit status 137` (Docker OOM kill).** ODM Docker
