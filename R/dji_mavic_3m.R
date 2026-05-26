@@ -11,6 +11,58 @@
 # downstream functions (read_multispectral_orthomosaic /
 # compute_spectral_indices) consume via default_dji_mavic_3m_band_map().
 
+#' Trim an ODM project directory down to its final products
+#'
+#' ODM emits a verbose project tree: `images/` (input), `opensfm/`,
+#' `openmvs/`, `odm_filterpoints/` (intermediates needed only during
+#' the run), `odm_georeferencing/` (georef info that gets baked into
+#' the final GeoTIFFs anyway), plus a stack of small JSON/TXT
+#' bookkeeping files. After a successful run none of that is read
+#' again — DroneBioR's downstream pipeline (CHM, indices, biomass
+#' proxy) only consumes `odm_dem/dsm.tif`, `odm_dem/dtm.tif` and
+#' `odm_orthophoto/odm_orthophoto.tif` (plus the 7-band stack we
+#' write into the same folder).
+#'
+#' This helper removes everything from `project_dir` except an
+#' explicit allowlist. The defaults preserve the DEM + orthomosaic
+#' folders and ODM's two log files (small, useful for forensic
+#' debugging of past runs). Pass `keep_extra = ...` to extend the
+#' allowlist.
+#'
+#' @param project_dir ODM project root.
+#' @param keep_extra Optional character vector of additional
+#'   top-level basenames to preserve.
+#' @return Invisibly, the character vector of basenames that were
+#'   removed.
+#' @noRd
+keep_only_final_odm_products <- function(project_dir, keep_extra = character()) {
+  if (!dir.exists(project_dir)) return(invisible(character()))
+  keep <- c(
+    "odm_dem",            # DSM / DTM (and CHM written later by build_chm_raster)
+    "odm_orthophoto",     # RGB ortho + DJI 7-band stack
+    "log.json",           # ODM's structured run log
+    "dronebior_odm.log",  # our redirected docker output
+    keep_extra
+  )
+  entries <- list.files(project_dir, include.dirs = TRUE,
+                        recursive = FALSE, all.files = FALSE,
+                        no.. = TRUE)
+  removed <- character()
+  for (entry in entries) {
+    if (entry %in% keep) next
+    p <- file.path(project_dir, entry)
+    unlink(p, recursive = TRUE, force = TRUE)
+    if (!file.exists(p) && !dir.exists(p)) removed <- c(removed, entry)
+  }
+  if (length(removed)) {
+    message(sprintf(
+      "[clean] Removed ODM intermediates from %s: %s",
+      project_dir, paste(removed, collapse = ", ")
+    ))
+  }
+  invisible(removed)
+}
+
 dji_band_project_name <- function(project, band_label) {
   # The RGB run lands at the project's canonical ODM project dir so
   # everything downstream (`odm_product_paths()`, `build_chm_raster()`,
@@ -270,13 +322,25 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'   so ODM does not generate its PDF run report. Saves ~1-2 min
 #'   per band and avoids the well-known `gdal_translate` / numpy
 #'   ABI crash inside some `opendronemap/odm` Docker images.
-#' @param cleanup_ms_workspaces Logical. Default `TRUE`. After the
-#'   7-band stacked orthomosaic is written, delete the per-MS-band
-#'   ODM project directories (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`,
-#'   `dji_ms_nir/`). They are pure intermediates whose only output —
-#'   the per-band orthos — is already included in the stack; nothing
-#'   downstream reads them again. Set `FALSE` if you want to inspect
-#'   the per-band SfM artefacts manually.
+#' @param cleanup_intermediates Logical. Default `TRUE`. After the
+#'   7-band stacked orthomosaic is written, perform two cleanups
+#'   so the user is left with only the products DroneBioR's
+#'   downstream pipeline actually consumes:
+#'   \itemize{
+#'     \item Delete the per-MS-band ODM project directories
+#'       (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`, `dji_ms_nir/`).
+#'       The per-band orthos already live in the 7-band stack.
+#'     \item Inside the canonical RGB project folder (`dji/`),
+#'       strip every directory and file except `odm_dem/`
+#'       (DSM/DTM, plus CHM later), `odm_orthophoto/` (RGB ortho
+#'       + 7-band DJI stack), `log.json` (ODM's log) and
+#'       `dronebior_odm.log` (our docker output). The discarded
+#'       intermediates — `images/`, `opensfm/`, `openmvs/`,
+#'       `odm_filterpoints/`, `odm_georeferencing/`,
+#'       `odm_postprocess/` and the small JSON/TXT bookkeeping
+#'       files — are never read by the downstream R pipeline.
+#'   }
+#'   Set `FALSE` to keep everything for debugging.
 #' @param rgb_extra_args Extra arguments appended to the **RGB** ODM
 #'   run (`build_odm_args(..., extra_args = ...)`).
 #' @param ms_extra_args Extra arguments appended to **each MS** ODM
@@ -302,7 +366,7 @@ run_odm_dji_mavic_3m <- function(project,
                                  pc_las       = FALSE,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
-                                 cleanup_ms_workspaces = TRUE,
+                                 cleanup_intermediates = TRUE,
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
   if (!nzchar(Sys.which("docker"))) {
@@ -431,29 +495,36 @@ run_odm_dji_mavic_3m <- function(project,
     out_path  = stacked_path
   )
 
-  # After the stack is on disk every band's contribution lives inside
-  # the canonical RGB project directory. The per-band MS workspaces
-  # (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`, `dji_ms_nir/`) are pure
-  # intermediates — they hold ODM's per-band SfM artefacts (opensfm/,
-  # filterpoints/, the single-band ortho that already lives in the
-  # stack, etc.) and never get read again by the pipeline. Delete them
-  # by default so the user is left with a single `dji/` folder that
-  # holds every product worth keeping.
-  if (isTRUE(cleanup_ms_workspaces)) {
-    removed <- character()
+  # Two-step post-stack cleanup, both gated by `cleanup_intermediates`:
+  #   1. The per-band MS workspaces (`dji_ms_g/`, `dji_ms_r/`,
+  #      `dji_ms_re/`, `dji_ms_nir/`) are pure intermediates whose
+  #      only useful output (the single-band ortho) is already in
+  #      the 7-band stack written to `dji/odm_orthophoto/`. Delete
+  #      them whole.
+  #   2. Inside the canonical RGB project folder (`dji/`), strip
+  #      everything that is not part of the final product set
+  #      (`odm_dem/`, `odm_orthophoto/`, the two log files). That
+  #      removes `images/`, `opensfm/`, `openmvs/`,
+  #      `odm_filterpoints/`, `odm_georeferencing/`,
+  #      `odm_postprocess/` and the small JSON / TXT bookkeeping
+  #      files — none of which the downstream R workflow ever reads
+  #      again.
+  if (isTRUE(cleanup_intermediates)) {
+    removed_workspaces <- character()
     for (band_label in c("ms_g", "ms_r", "ms_re", "ms_nir")) {
       ws <- dji_band_dataset_subdir(project, band_label)
       if (dir.exists(ws)) {
         unlink(ws, recursive = TRUE, force = TRUE)
-        if (!dir.exists(ws)) removed <- c(removed, basename(ws))
+        if (!dir.exists(ws)) removed_workspaces <- c(removed_workspaces, basename(ws))
       }
     }
-    if (length(removed)) {
+    if (length(removed_workspaces)) {
       message(sprintf(
         "Cleaned MS workspaces (intermediate, no longer needed): %s",
-        paste(removed, collapse = ", ")
+        paste(removed_workspaces, collapse = ", ")
       ))
     }
+    keep_only_final_odm_products(project$odm_project_dir)
   }
 
   message(sprintf("DJI Mavic 3M workflow done in %.1f min.",

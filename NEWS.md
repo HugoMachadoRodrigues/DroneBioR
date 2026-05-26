@@ -2,6 +2,23 @@
 
 ## Cleanup
 
+* **`run_odm_dji_mavic_3m()` strips the canonical `dji/` project to
+  its final products.** After the 7-band stack is on disk, the helper
+  removes every directory and file inside `dji/` except `odm_dem/`
+  (DSM/DTM/CHM), `odm_orthophoto/` (RGB ortho + 7-band stack),
+  `log.json` (ODM log) and `dronebior_odm.log` (our docker output).
+  Discarded: `images/` (input hardlinks), `opensfm/`, `openmvs/`,
+  `odm_filterpoints/`, `odm_georeferencing/`, `odm_postprocess/`,
+  `cameras.json`, `images.json`, `img_list.txt`, `benchmark.txt`.
+  None of these are read by the downstream R workflow — the
+  georeferencing information is already baked into the GeoTIFF
+  headers. The previous `cleanup_ms_workspaces` argument is renamed
+  to `cleanup_intermediates` and now controls both this RGB-project
+  cleanup and the per-band MS workspace removal added in the
+  previous release.
+
+
+
 * **`run_odm_dji_mavic_3m()` removes the per-band MS workspaces
   after stacking.** Each MS band needs its own ODM project
   workspace (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`, `dji_ms_nir/`)
