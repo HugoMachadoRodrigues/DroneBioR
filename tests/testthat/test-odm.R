@@ -136,6 +136,31 @@ test_that("keep_only_final_odm_products is a no-op on non-existent dir", {
   expect_length(out, 0L)
 })
 
+test_that("run_one_dji_band has the OOM exit-137 retry path", {
+  # Structural regression guard: a real OOM cannot be simulated
+  # without docker, but the retry branch should always be visible in
+  # the function body. If a future refactor drops it, this test
+  # surfaces the change.
+  body_str <- paste(
+    deparse(body(DroneBioR:::run_one_dji_band)),
+    collapse = "\n"
+  )
+  expect_match(body_str, "137")
+  expect_match(body_str, "max_concurrency *= *1")
+  expect_match(body_str, "feature-quality")
+  expect_match(body_str, "oom-retry")
+})
+
+test_that("run_odm_project has the OOM exit-137 retry path", {
+  body_str <- paste(
+    deparse(body(DroneBioR::run_odm_project)),
+    collapse = "\n"
+  )
+  expect_match(body_str, "137")
+  expect_match(body_str, "max_concurrency *= *1")
+  expect_match(body_str, "feature-quality")
+})
+
 test_that("keep_only_final_odm_products honours keep_extra allowlist", {
   proj <- make_complete_odm_project()
   removed <- DroneBioR:::keep_only_final_odm_products(

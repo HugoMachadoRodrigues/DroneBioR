@@ -169,6 +169,48 @@ run_one_dji_band <- function(project,
     image_count = nrow(images_manifest),
     band_label  = band
   )
+
+  # Exit 137 = 128 + SIGKILL(9): the Docker container was killed by
+  # the host OS. By far the most common cause is Docker Desktop's
+  # memory cap being lower than what ODM peaks at (OpenSfM feature
+  # matching and OpenMVS dense reconstruction both spike memory on
+  # 300+ image flights). Retry once with --max-concurrency 1 and
+  # --feature-quality medium, which together cut peak memory roughly
+  # in half. If even that does not fit, the user has to raise
+  # Docker's memory allocation manually.
+  if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
+    message(sprintf(
+      "[%s] ODM exit status 137 — the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
+      band
+    ))
+    clean_incomplete_odm_state(band_proj)
+    oom_retry_args <- build_odm_args(
+      dataset_dir              = project$odm_dataset_dir,
+      project_name             = proj_name,
+      image                    = odm_image,
+      camera_type              = "rgb",
+      radiometric_calibration  = if (is_rgb) NULL else "camera+sun",
+      orthophoto_resolution_cm = orthophoto_resolution_cm,
+      max_concurrency          = 1L,
+      fast_orthophoto          = !is_rgb,
+      build_dsm                = is_rgb,
+      build_dtm                = is_rgb,
+      pc_las                   = is_rgb && isTRUE(pc_las),
+      skip_3dmodel             = isTRUE(skip_3dmodel),
+      skip_report              = isTRUE(skip_report),
+      extra_args               = c(
+        if (is_rgb) rgb_extra_args else ms_extra_args,
+        "--feature-quality", "medium"
+      )
+    )
+    status <- run_docker_with_progress(
+      args        = oom_retry_args,
+      project_dir = band_proj,
+      image_count = nrow(images_manifest),
+      band_label  = paste0(band, "/oom-retry")
+    )
+  }
+
   if (!identical(status, 0L) && !file.exists(ortho_path)) {
     # The MVS-Texturing float-tiff workaround pattern that lives in
     # run_odm_project() is also relevant here when the per-band TIF
@@ -216,6 +258,12 @@ run_one_dji_band <- function(project,
     status <- 0L
   }
   if (!identical(status, 0L)) {
+    if (identical(as.integer(status), 137L)) {
+      stop(sprintf(
+        "ODM on band %s was killed by the OS twice in a row (exit status 137). This is almost always Docker Desktop's memory cap being lower than what OpenSfM / OpenMVS need on a 300+ image flight. Open Docker Desktop -> Settings -> Resources -> Memory and raise the allocation to at least 16 GB (32 GB if you can spare it), then re-run. The first failure already triggered an automatic retry with --max-concurrency 1 --feature-quality medium, so reducing concurrency further is not the remedy here.",
+        band
+      ), call. = FALSE)
+    }
     stop(sprintf("ODM failed on band %s (exit status %s).", band, status),
          call. = FALSE)
   }
