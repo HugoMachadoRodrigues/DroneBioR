@@ -1,5 +1,22 @@
 # DroneBioR (development version)
 
+## Changes
+
+* **`run_odm_dji_mavic_3m()` PPK CLI is now opt-OUT, not opt-IN.**
+  The `ppk_cli` argument now defaults to `"auto"`: on every run
+  DroneBioR probes the system for `rnx2rtkp`, a DJI `.bin` -> RINEX
+  converter (candidate command names: `klauppk_dji_to_rinex`,
+  `klauppk`, `dji_to_rinex`, `djiparsekit`, `djirinexconverter`,
+  `convbin`), and a base-station RINEX observation file located via
+  the `DRONEBIOR_PPK_BASE_OBS` environment variable, the
+  `dronebior.ppk_base_obs` R option, or `<images_dir>/base/*.obs`.
+  When every piece is in place, a full PPK cycle (`.bin` -> RINEX
+  -> rtklib `rnx2rtkp` -> .MRK rewrite) runs before ODM. When any
+  piece is missing, DroneBioR emits a single message naming what is
+  missing and falls back to the .MRK-as-shipped path. Pass `NULL` /
+  `FALSE` to disable the CLI step explicitly, or pass an explicit
+  [ppk_cli_rtklib_dji()] hook to override the auto-detect.
+
 ## New features
 
 * **Native PPK / RTK support for DJI Mavic 3M.** When the source

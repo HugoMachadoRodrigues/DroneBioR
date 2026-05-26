@@ -624,3 +624,120 @@ empty_pos_df <- function() {
     stringsAsFactors = FALSE
   )
 }
+
+#' Candidate command names for the DJI .bin -> RINEX converter
+#'
+#' rtklib's mainstream `convbin` does not handle DJI's proprietary
+#' Mavic 3M `.bin`; the user must install a Mavic 3M-compatible
+#' converter separately. Auto-detection probes these names in order.
+#' Override at the call site by passing an explicit `ppk_cli`.
+#' @noRd
+dji_bin_to_rinex_candidates <- function() {
+  c(
+    # KlauPPK ships several wrapper names depending on the install.
+    "klauppk_dji_to_rinex",
+    "klauppk",
+    # Community CLI ports — names users in the OpenDroneMap community
+    # tend to install.
+    "dji_to_rinex",
+    "djiparsekit",
+    "djirinexconverter",
+    # convbin with a DJI-aware fork (some rtklib forks add support).
+    "convbin"
+  )
+}
+
+#' Find the base-station RINEX observation file for an auto PPK run
+#'
+#' Searches, in order:
+#'   1. The `DRONEBIOR_PPK_BASE_OBS` environment variable.
+#'   2. The `dronebior.ppk_base_obs` R option.
+#'   3. Files matching `*.obs`, `*.YYo`, `*.??o` inside `<images_dir>/base/`.
+#'      Convention: the user drops the day's base RINEX next to the
+#'      flight images under `base/`.
+#'
+#' @return Absolute path to a base obs file, or `NA_character_` when
+#'   nothing is found.
+#' @noRd
+resolve_ppk_base_obs <- function(images_dir) {
+  env <- Sys.getenv("DRONEBIOR_PPK_BASE_OBS", unset = "")
+  if (nzchar(env) && file.exists(env)) {
+    return(normalizePath(env, mustWork = FALSE))
+  }
+  opt <- getOption("dronebior.ppk_base_obs", default = NULL)
+  if (is.character(opt) && length(opt) == 1L && file.exists(opt)) {
+    return(normalizePath(opt, mustWork = FALSE))
+  }
+  base_dir <- file.path(images_dir, "base")
+  if (dir.exists(base_dir)) {
+    # Common RINEX obs extensions: .obs, .25o (year-suffixed), .25O ...
+    candidates <- list.files(
+      base_dir,
+      pattern = "\\.(obs|[0-9]{2}[oO])$",
+      full.names = TRUE,
+      ignore.case = TRUE
+    )
+    if (length(candidates) > 0L) {
+      return(normalizePath(candidates[1L], mustWork = FALSE))
+    }
+  }
+  NA_character_
+}
+
+#' Resolve `ppk_cli = "auto"` into a real hook (or NULL)
+#'
+#' Looks for everything `ppk_cli_rtklib_dji()` needs (rnx2rtkp, a DJI
+#' converter command, a base obs file). If every piece is found,
+#' returns a configured `ppk_cli` function. Otherwise emits a single
+#' message naming what is missing and returns NULL, in which case
+#' the caller proceeds with the .MRK-as-shipped path.
+#'
+#' @noRd
+resolve_ppk_cli_auto <- function(images_dir) {
+  missing <- character()
+
+  if (!nzchar(Sys.which("rnx2rtkp"))) {
+    missing <- c(missing,
+                 "rnx2rtkp (install rtklib: `brew install rtklib`)")
+  }
+
+  dji_cmd <- NA_character_
+  for (cand in dji_bin_to_rinex_candidates()) {
+    if (nzchar(Sys.which(cand))) {
+      dji_cmd <- cand
+      break
+    }
+  }
+  if (is.na(dji_cmd)) {
+    missing <- c(missing, paste0(
+      "DJI .bin -> RINEX converter (tried: ",
+      paste(dji_bin_to_rinex_candidates(), collapse = ", "),
+      "; install KlauPPK or equivalent and put it on PATH)"
+    ))
+  }
+
+  base_obs <- resolve_ppk_base_obs(images_dir)
+  if (is.na(base_obs)) {
+    missing <- c(missing, paste0(
+      "Base-station RINEX observation file (looked at ",
+      "DRONEBIOR_PPK_BASE_OBS env, dronebior.ppk_base_obs option, ",
+      "and ", file.path(images_dir, "base"), "/*.obs|*.YYo)"
+    ))
+  }
+
+  if (length(missing)) {
+    message("[PPK] CLI auto-detection skipped because:\n  - ",
+            paste(missing, collapse = "\n  - "),
+            "\n  Falling back to the .MRK-as-shipped path. Set the missing pieces to enable the full PPK CLI on the next run.")
+    return(NULL)
+  }
+
+  message(sprintf(
+    "[PPK] CLI auto-detection ok:\n  - rnx2rtkp -> %s\n  - DJI converter -> %s\n  - base obs -> %s\n  The .MRK files will be refined via PPK before being read.",
+    Sys.which("rnx2rtkp"), Sys.which(dji_cmd), base_obs
+  ))
+  ppk_cli_rtklib_dji(
+    base_obs_path        = base_obs,
+    dji_bin_to_rinex_cmd = dji_cmd
+  )
+}

@@ -119,7 +119,7 @@ run_one_dji_band <- function(project,
                              skip_report  = TRUE,
                              use_ppk_mrk  = TRUE,
                              ppk_min_fix_quality = 4L,
-                             ppk_cli      = NULL) {
+                             ppk_cli      = "auto") {
   proj_name <- dji_band_project_name(project, band_label)
   band_proj <- dji_band_dataset_subdir(project, band_label)  # dataset_dir/project_name
   band_imgs <- file.path(band_proj, "images")
@@ -147,6 +147,17 @@ run_one_dji_band <- function(project,
   ppk_geo_args <- character()
   if (isTRUE(use_ppk_mrk)) {
     ppk_files <- detect_djim3m_ppk_files(project$images_dir)
+    # `ppk_cli = "auto"` (the default) probes the system for rtklib +
+    # a DJI .bin converter + a base RINEX in standard locations. If
+    # every piece is on disk we get a ready hook; otherwise NULL and
+    # we proceed with the .MRK-as-shipped path. Passing NULL / FALSE
+    # disables PPK CLI explicitly; a function value is used as-is.
+    if (identical(ppk_cli, "auto") && ppk_files$has_ppk_inputs) {
+      ppk_cli <- resolve_ppk_cli_auto(project$images_dir)
+    } else if (identical(ppk_cli, "auto")) {
+      # No .bin/.nav rover files -> nothing for a CLI to refine.
+      ppk_cli <- NULL
+    }
     if (is.function(ppk_cli) && ppk_files$has_ppk_inputs) {
       message(sprintf("[%s] Running user-supplied PPK CLI hook...", band))
       tryCatch(
@@ -473,18 +484,34 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'   from the geo.txt — including them would let degraded positions
 #'   destabilise the bundle adjustment. Set to `50` to demand
 #'   RTK-Fixed-only, or `0` to keep everything.
-#' @param ppk_cli Optional function, **the PPK CLI hook**. Called
-#'   once before the band's ODM run when both `_PPKRAW.bin` and
-#'   `_PPKNAV.nav` sidecars are present. Signature:
-#'   `function(images_dir, bin_paths, nav_paths, mrk_paths)`. The
-#'   hook is expected to invoke a real PPK CLI (rtklib's
-#'   `rnx2rtkp`, a DJI-to-RINEX converter, etc.) and rewrite the
-#'   `_Timestamp.MRK` files in place with the corrected positions.
-#'   DroneBioR then re-reads the .MRK and writes geo.txt from the
-#'   improved values. [ppk_cli_rtklib_dji()] is a ready-made hook
-#'   for users who have rtklib + a DJI .bin -> RINEX converter
-#'   installed; pass `NULL` (default) to skip the CLI step and use
-#'   the .MRK as it ships.
+#' @param ppk_cli Controls the **PPK CLI step that runs before ODM**
+#'   when the source folder ships the `.bin` / `.nav` rover files.
+#'   Three forms are accepted:
+#'   \describe{
+#'     \item{`"auto"` (default)}{Probe the system for everything
+#'       `ppk_cli_rtklib_dji()` needs: `rnx2rtkp` on PATH (e.g.
+#'       `brew install rtklib`), a DJI `.bin` -> RINEX converter
+#'       on PATH (tried in order: `klauppk_dji_to_rinex`,
+#'       `klauppk`, `dji_to_rinex`, `djiparsekit`,
+#'       `djirinexconverter`, `convbin`), and a base-station
+#'       RINEX observation file located via (a) the
+#'       `DRONEBIOR_PPK_BASE_OBS` environment variable, (b) the
+#'       `dronebior.ppk_base_obs` R option, or (c)
+#'       `<images_dir>/base/*.obs|*.YYo`. When every piece is in
+#'       place, run full PPK before ODM. When anything is missing,
+#'       emit a clear message naming what is missing and fall back
+#'       to the .MRK-as-shipped path.}
+#'     \item{`NULL` / `FALSE`}{Skip the CLI step. Use the .MRK as
+#'       it ships from the drone (still better than EXIF GPS
+#'       because the .MRK already holds RTK-quality positions when
+#'       the drone had an RTK Fix in flight).}
+#'     \item{A function}{Custom hook with signature
+#'       `function(images_dir, bin_paths, nav_paths, mrk_paths)`.
+#'       Use [ppk_cli_rtklib_dji()] to build one with explicit
+#'       paths if the auto-detect probes need an override.}
+#'   }
+#'   In every case DroneBioR then reads the (possibly improved)
+#'   .MRK and writes an ODM `geo.txt` consumed via `--geo`.
 #' @param rgb_extra_args Extra arguments appended to the **RGB** ODM
 #'   run (`build_odm_args(..., extra_args = ...)`).
 #' @param ms_extra_args Extra arguments appended to **each MS** ODM
@@ -513,7 +540,7 @@ run_odm_dji_mavic_3m <- function(project,
                                  cleanup_intermediates = TRUE,
                                  use_ppk_mrk  = TRUE,
                                  ppk_min_fix_quality = 4L,
-                                 ppk_cli      = NULL,
+                                 ppk_cli      = "auto",
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
   if (!nzchar(Sys.which("docker"))) {
