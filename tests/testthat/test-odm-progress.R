@@ -135,29 +135,38 @@ test_that("run_docker_with_progress drives a real subprocess to clean exit", {
   dir.create(project_dir)
 
   t0 <- Sys.time()
-  # Banner is emitted via message() (stderr); sticky status via cat()
-  # (stdout). Capture both so we can verify both channels.
-  captured_out <- testthat::capture_output(
-    captured_msg <- testthat::capture_messages(
-      status <- DroneBioR:::run_docker_with_progress(
-        args               = c("1"),
-        project_dir        = project_dir,
-        image_count        = 10L,
-        band_label         = "TEST",
-        poll_interval_secs = 0.3,
-        command            = "sleep"
-      )
+  # Both the start banner, the per-poll status line and the final
+  # exit-status report go through message() (stderr) — capture them
+  # in one stream.
+  captured_msg <- testthat::capture_messages(
+    status <- DroneBioR:::run_docker_with_progress(
+      args               = c("1"),
+      project_dir        = project_dir,
+      image_count        = 10L,
+      band_label         = "TEST",
+      poll_interval_secs = 0.3,
+      command            = "sleep"
     )
   )
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  joined <- paste(captured_msg, collapse = "\n")
 
   expect_equal(status, 0L)
   expect_gte(elapsed, 0.9)        # the subprocess really ran ~1 s
-  expect_true(any(grepl("Starting ODM run", captured_msg)))
-  # Sticky status uses \r so capture_output captures it as a single
-  # blob with carriage returns. At minimum it must contain "stages".
-  expect_match(captured_out, "stages")
-  # Docker output is redirected to a log file inside project_dir.
+  expect_match(joined, "Starting ODM run")
+  # At least two status lines (one mid-run, one final) should mention
+  # the stage breakdown.
+  poll_lines <- grep("stages", captured_msg, value = TRUE)
+  expect_gte(length(poll_lines), 2L)
+  # The post-run summary names the docker exit status and lists
+  # which final products are on disk (none here, since `sleep` is
+  # not docker).
+  expect_match(joined, "Docker exited with status 0")
+  expect_match(joined, "ortho")
+  expect_match(joined, "dsm")
+  # Docker output would land in a log file inside project_dir; for a
+  # `sleep` subprocess there is none to capture but the file is still
+  # created.
   expect_true(file.exists(file.path(project_dir, "dronebior_odm.log")))
 })
 

@@ -1,5 +1,26 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **Progress line no longer freezes on RStudio Console.** The
+  previous release tried to render the per-poll status as a single
+  carriage-return-updated sticky line. That worked in real terminals
+  but rendered as a single frozen-looking line in RStudio Console
+  on some R versions, hiding the per-15-s update entirely. The
+  status now prints as a fresh `message()` line each poll. Because
+  docker's verbose output is already redirected to
+  `<project_dir>/dronebior_odm.log`, the console only has our
+  poller writing to it, so a "one short line per poll" stream is
+  uncluttered AND renders reliably everywhere R runs.
+* **Final summary names the docker exit status and on-disk
+  products.** `run_docker_with_progress()` now prints, right after
+  the subprocess exits, a single line listing the docker exit code
+  and a `ortho YES, dsm YES, dtm NO, las NO`-style breakdown of the
+  four artefacts DroneBioR cares about. Surfaced after every band
+  in the DJI Mavic 3M pipeline so the user can immediately tell
+  whether the run actually delivered the expected products without
+  having to inspect the project tree by hand.
+
 ## Changes
 
 * **`run_odm_dji_mavic_3m()` PPK CLI is now opt-OUT, not opt-IN.**
