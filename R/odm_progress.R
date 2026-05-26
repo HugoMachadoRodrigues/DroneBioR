@@ -197,7 +197,7 @@ run_docker_with_progress <- function(args,
   log_path <- file.path(project_dir, "dronebior_odm.log")
 
   message(sprintf(
-    "%s[%s] Starting ODM run; raw docker log -> %s (tail -f to follow). Status updates in place every %ss.",
+    "%s[%s] Starting ODM run; raw docker log -> %s (tail -f to follow). Polling every %ss.",
     if (!is.null(band_label)) sprintf("[%s] ", band_label) else "",
     format(Sys.time(), "%H:%M:%S"),
     log_path,
@@ -211,40 +211,67 @@ run_docker_with_progress <- function(args,
     cleanup = TRUE
   )
 
-  # Sticky-line renderer.
-  # `\r` returns the cursor to the start of the current terminal line,
-  # so the next write overwrites it. We pre-pad with spaces sized to
-  # the previous status so partial overwrites do not leave trailing
-  # characters from a longer previous line.
-  status_width <- 0L
+  # Plain message()-based renderer. The previous implementation tried
+  # to use \r to overwrite a single sticky line in place; it worked in
+  # a real terminal but rendered as a frozen-looking single line in
+  # RStudio Console on some R versions, hiding the progress entirely.
+  # Since docker's verbose output is already redirected to `log_path`,
+  # the console has nothing else to print besides our poller, so a
+  # plain "one line per poll" stream is uncluttered AND it is
+  # rendered reliably everywhere R runs.
   render <- function(poll_result) {
     if (is.null(poll_result)) return(invisible(NULL))
-    # New-stage transitions get a full line of their own ABOVE the
-    # sticky status: clear the current sticky line first, print each
-    # transition with \n, then re-print the sticky status.
-    if (length(poll_result$announcements)) {
-      cat("\r", strrep(" ", status_width), "\r", sep = "")
-      for (a in poll_result$announcements) cat(a, "\n", sep = "")
-    }
-    # Overwrite the previous sticky status. Pad the new status out so
-    # short status lines fully erase any leftover characters from a
-    # longer previous one.
-    new_status <- poll_result$status
-    pad <- max(0L, status_width - nchar(new_status))
-    cat("\r", new_status, strrep(" ", pad), sep = "")
-    flush.console()
-    status_width <<- nchar(new_status)
+    for (a in poll_result$announcements) message(a)
+    message(poll_result$status)
   }
 
   while (proc$is_alive()) {
     proc$wait(timeout = as.integer(poll_interval_secs * 1000L))
     render(tryCatch(poller(), error = function(e) NULL))
   }
-  # Final render so the user sees the terminal on-disk state.
+  # Final poll so the user sees the terminal on-disk state alongside
+  # the docker exit status. We also count the final products that
+  # made it to disk so the user can sanity-check whether the run
+  # actually delivered DSM / DTM / orthomosaic.
   render(tryCatch(poller(), error = function(e) NULL))
-  cat("\n")  # commit the sticky line with a final newline
 
   status <- proc$get_exit_status()
   if (is.null(status)) status <- 1L
-  as.integer(status)
+  status <- as.integer(status)
+
+  prod_summary <- summarise_odm_products_on_disk(project_dir)
+  message(sprintf(
+    "%s[%s] Docker exited with status %d. On disk now: %s.",
+    if (!is.null(band_label)) sprintf("[%s] ", band_label) else "",
+    format(Sys.time(), "%H:%M:%S"),
+    status,
+    prod_summary
+  ))
+  status
+}
+
+#' Concise report on which ODM final products are on disk
+#'
+#' Looks for the four artefacts DroneBioR cares about — orthomosaic,
+#' DSM, DTM, georeferenced LAS — and returns a single-line summary
+#' like `"ortho YES, dsm YES, dtm NO, las NO"`. Surfaced by
+#' [run_docker_with_progress()] after the subprocess exits so the
+#' user can immediately tell whether the run actually delivered the
+#' products even if the poll status looked confusing.
+#'
+#' @noRd
+summarise_odm_products_on_disk <- function(project_dir) {
+  checks <- list(
+    ortho = file.path(project_dir, "odm_orthophoto", "odm_orthophoto.tif"),
+    dsm   = file.path(project_dir, "odm_dem",       "dsm.tif"),
+    dtm   = file.path(project_dir, "odm_dem",       "dtm.tif"),
+    las   = file.path(project_dir, "odm_georeferencing",
+                      "odm_georeferenced_model.las")
+  )
+  paste(
+    vapply(names(checks), function(k) {
+      sprintf("%s %s", k, if (file.exists(checks[[k]])) "YES" else "NO")
+    }, character(1)),
+    collapse = ", "
+  )
 }
