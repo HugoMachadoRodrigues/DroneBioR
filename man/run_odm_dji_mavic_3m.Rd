@@ -14,6 +14,9 @@ run_odm_dji_mavic_3m(
   skip_3dmodel = TRUE,
   skip_report = TRUE,
   cleanup_intermediates = TRUE,
+  use_ppk_mrk = TRUE,
+  ppk_min_fix_quality = 4L,
+  ppk_cli = NULL,
   rgb_extra_args = character(),
   ms_extra_args = character()
 )
@@ -68,6 +71,34 @@ intermediates — \verb{images/}, \verb{opensfm/}, \verb{openmvs/},
 files — are never read by the downstream R pipeline.
 }
 Set \code{FALSE} to keep everything for debugging.}
+
+\item{use_ppk_mrk}{Logical. Default \code{TRUE}. When the source folder
+carries the DJI \verb{_Timestamp.MRK} sidecar(s), parse them with
+\code{\link[=parse_djim3m_mrk_folder]{parse_djim3m_mrk_folder()}}, resolve each per-band filename to
+its photo number, and write an ODM \code{geo.txt} so ODM uses the
+RTK / PPK positions instead of the EXIF GPS (which the Mavic 3M
+notoriously corrupts on altitude — that is the bug that makes
+OpenSfM diverge and \code{odm_orthophoto} OOM). ODM then runs with
+\verb{--geo /datasets/<proj>/geo.txt --gps-accuracy 0.10}.}
+
+\item{ppk_min_fix_quality}{Integer. Default \code{4} (RTK Float).
+Photos whose .MRK row reports a lower fix quality are dropped
+from the geo.txt — including them would let degraded positions
+destabilise the bundle adjustment. Set to \code{50} to demand
+RTK-Fixed-only, or \code{0} to keep everything.}
+
+\item{ppk_cli}{Optional function, \strong{the PPK CLI hook}. Called
+once before the band's ODM run when both \verb{_PPKRAW.bin} and
+\verb{_PPKNAV.nav} sidecars are present. Signature:
+\verb{function(images_dir, bin_paths, nav_paths, mrk_paths)}. The
+hook is expected to invoke a real PPK CLI (rtklib's
+\code{rnx2rtkp}, a DJI-to-RINEX converter, etc.) and rewrite the
+\verb{_Timestamp.MRK} files in place with the corrected positions.
+DroneBioR then re-reads the .MRK and writes geo.txt from the
+improved values. \code{\link[=ppk_cli_rtklib_dji]{ppk_cli_rtklib_dji()}} is a ready-made hook
+for users who have rtklib + a DJI .bin -> RINEX converter
+installed; pass \code{NULL} (default) to skip the CLI step and use
+the .MRK as it ships.}
 
 \item{rgb_extra_args}{Extra arguments appended to the \strong{RGB} ODM
 run (\code{build_odm_args(..., extra_args = ...)}).}
