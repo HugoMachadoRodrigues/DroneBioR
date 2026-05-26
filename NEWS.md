@@ -1,5 +1,22 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **Auto-retry on `exit status 137` (Docker OOM kill).** ODM Docker
+  runs occasionally crash with `exit status 137 = 128 + SIGKILL(9)`,
+  which means the host OS killed the container — almost always
+  Docker Desktop's memory cap being too low for OpenSfM /
+  OpenMVS peak usage on 300+ image flights. Observed on the MS_R
+  band of a 308-image DJI Mavic 3M flight (\`ODM failed on band
+  MS_R (exit status 137).\`). Both `run_odm_project()` and
+  `run_one_dji_band()` now detect 137 specifically: they wipe any
+  partial ODM state and retry once with `--max-concurrency 1` +
+  `--feature-quality medium`, which roughly halves peak memory
+  and usually fits inside an 8 GB Docker allocation. If the retry
+  also dies with 137, the error message now spells out the actual
+  cause and the remedy (Docker Desktop -> Settings -> Resources
+  -> Memory, raise to >= 16 GB).
+
 ## Cleanup
 
 * **`run_odm_dji_mavic_3m()` strips the canonical `dji/` project to

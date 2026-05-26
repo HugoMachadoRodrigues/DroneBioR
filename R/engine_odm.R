@@ -351,6 +351,33 @@ run_odm_project <- function(project,
     image_count  = nrow(manifest),
     band_label   = NULL
   )
+
+  # Exit 137 = OOM kill inside the Docker container. Retry once with
+  # --max-concurrency 1 --feature-quality medium so the container fits
+  # inside Docker Desktop's typical 8 GB memory cap. See the matching
+  # logic in run_one_dji_band() for the rationale.
+  if (identical(as.integer(status), 137L) &&
+      !file.exists(project$odm_orthomosaic)) {
+    message(sprintf(
+      "[%s] ODM exit status 137 — the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
+      project$odm_project_name
+    ))
+    clean_incomplete_odm_state(project$odm_project_dir)
+    oom_args <- do.call(build_odm_args, c(list(
+      dataset_dir  = project$odm_dataset_dir,
+      project_name = project$odm_project_name,
+      camera_type  = camera_type,
+      extra_args   = c(auto_extra, user_extra,
+                       "--feature-quality", "medium")
+    ), modifyList(passthrough, list(max_concurrency = 1L))))
+    status <- run_docker_with_progress(
+      args        = oom_args,
+      project_dir = project$odm_project_dir,
+      image_count = nrow(manifest),
+      band_label  = "oom-retry"
+    )
+  }
+
   if (!identical(status, 0L) && !file.exists(project$odm_orthomosaic)) {
     converted <- convert_undistorted_tiffs_for_texturing(project$odm_project_dir)
     if (converted > 0) {
@@ -390,6 +417,12 @@ run_odm_project <- function(project,
   }
 
   if (!identical(status, 0L)) {
+    if (identical(as.integer(status), 137L)) {
+      stop(
+        "ODM was killed by the OS twice in a row (exit status 137). This is almost always Docker Desktop's memory cap being lower than what OpenSfM / OpenMVS need on a 300+ image flight. Open Docker Desktop -> Settings -> Resources -> Memory and raise the allocation to at least 16 GB (32 GB if you can spare it), then re-run. The first failure already triggered an automatic retry with --max-concurrency 1 --feature-quality medium, so reducing concurrency further is not the remedy here.",
+        call. = FALSE
+      )
+    }
     stop("ODM failed with exit status ", status, call. = FALSE)
   }
 
