@@ -79,3 +79,74 @@ test_that("clean_incomplete_odm_state is a no-op on fresh project", {
 test_that("clean_incomplete_odm_state handles non-existent project dirs", {
   expect_false(isTRUE(DroneBioR:::clean_incomplete_odm_state(tempfile("never-"))))
 })
+
+# --- keep_only_final_odm_products -----------------------------------------
+
+make_complete_odm_project <- function() {
+  proj <- tempfile("odm-complete-")
+  # Final products we want to KEEP.
+  dir.create(file.path(proj, "odm_dem"), recursive = TRUE)
+  file.create(file.path(proj, "odm_dem", "dsm.tif"))
+  file.create(file.path(proj, "odm_dem", "dtm.tif"))
+  dir.create(file.path(proj, "odm_orthophoto"))
+  file.create(file.path(proj, "odm_orthophoto", "odm_orthophoto.tif"))
+  file.create(file.path(proj, "log.json"))
+  file.create(file.path(proj, "dronebior_odm.log"))
+  # Intermediates we want to STRIP.
+  dir.create(file.path(proj, "images"))
+  file.create(file.path(proj, "images", "DJI_0001.JPG"))
+  dir.create(file.path(proj, "opensfm"))
+  file.create(file.path(proj, "opensfm", "reconstruction.json"))
+  dir.create(file.path(proj, "openmvs"))
+  dir.create(file.path(proj, "odm_filterpoints"))
+  dir.create(file.path(proj, "odm_georeferencing"))
+  dir.create(file.path(proj, "odm_postprocess"))
+  file.create(file.path(proj, "cameras.json"))
+  file.create(file.path(proj, "images.json"))
+  file.create(file.path(proj, "img_list.txt"))
+  file.create(file.path(proj, "benchmark.txt"))
+  proj
+}
+
+test_that("keep_only_final_odm_products preserves DEM + ortho + logs", {
+  proj <- make_complete_odm_project()
+  removed <- DroneBioR:::keep_only_final_odm_products(proj)
+  # Kept:
+  expect_true(file.exists(file.path(proj, "odm_dem", "dsm.tif")))
+  expect_true(file.exists(file.path(proj, "odm_dem", "dtm.tif")))
+  expect_true(file.exists(file.path(proj, "odm_orthophoto",
+                                    "odm_orthophoto.tif")))
+  expect_true(file.exists(file.path(proj, "log.json")))
+  expect_true(file.exists(file.path(proj, "dronebior_odm.log")))
+  # Removed:
+  for (gone in c("images", "opensfm", "openmvs", "odm_filterpoints",
+                 "odm_georeferencing", "odm_postprocess",
+                 "cameras.json", "images.json", "img_list.txt",
+                 "benchmark.txt")) {
+    expect_false(file.exists(file.path(proj, gone)),
+                 info = gone)
+    expect_false(dir.exists(file.path(proj, gone)),
+                 info = gone)
+    expect_true(gone %in% removed, info = gone)
+  }
+})
+
+test_that("keep_only_final_odm_products is a no-op on non-existent dir", {
+  out <- DroneBioR:::keep_only_final_odm_products(tempfile("never-"))
+  expect_length(out, 0L)
+})
+
+test_that("keep_only_final_odm_products honours keep_extra allowlist", {
+  proj <- make_complete_odm_project()
+  removed <- DroneBioR:::keep_only_final_odm_products(
+    proj,
+    keep_extra = c("opensfm", "cameras.json")
+  )
+  # The two extras are now preserved.
+  expect_true(dir.exists(file.path(proj, "opensfm")))
+  expect_true(file.exists(file.path(proj, "cameras.json")))
+  expect_false("opensfm" %in% removed)
+  expect_false("cameras.json" %in% removed)
+  # The standard intermediates are still stripped.
+  expect_false(dir.exists(file.path(proj, "openmvs")))
+})
