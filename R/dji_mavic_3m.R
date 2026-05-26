@@ -270,6 +270,13 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'   so ODM does not generate its PDF run report. Saves ~1-2 min
 #'   per band and avoids the well-known `gdal_translate` / numpy
 #'   ABI crash inside some `opendronemap/odm` Docker images.
+#' @param cleanup_ms_workspaces Logical. Default `TRUE`. After the
+#'   7-band stacked orthomosaic is written, delete the per-MS-band
+#'   ODM project directories (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`,
+#'   `dji_ms_nir/`). They are pure intermediates whose only output —
+#'   the per-band orthos — is already included in the stack; nothing
+#'   downstream reads them again. Set `FALSE` if you want to inspect
+#'   the per-band SfM artefacts manually.
 #' @param rgb_extra_args Extra arguments appended to the **RGB** ODM
 #'   run (`build_odm_args(..., extra_args = ...)`).
 #' @param ms_extra_args Extra arguments appended to **each MS** ODM
@@ -295,6 +302,7 @@ run_odm_dji_mavic_3m <- function(project,
                                  pc_las       = FALSE,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
+                                 cleanup_ms_workspaces = TRUE,
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
   if (!nzchar(Sys.which("docker"))) {
@@ -422,6 +430,31 @@ run_odm_dji_mavic_3m <- function(project,
     ms_orthos = ms_paths,
     out_path  = stacked_path
   )
+
+  # After the stack is on disk every band's contribution lives inside
+  # the canonical RGB project directory. The per-band MS workspaces
+  # (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`, `dji_ms_nir/`) are pure
+  # intermediates — they hold ODM's per-band SfM artefacts (opensfm/,
+  # filterpoints/, the single-band ortho that already lives in the
+  # stack, etc.) and never get read again by the pipeline. Delete them
+  # by default so the user is left with a single `dji/` folder that
+  # holds every product worth keeping.
+  if (isTRUE(cleanup_ms_workspaces)) {
+    removed <- character()
+    for (band_label in c("ms_g", "ms_r", "ms_re", "ms_nir")) {
+      ws <- dji_band_dataset_subdir(project, band_label)
+      if (dir.exists(ws)) {
+        unlink(ws, recursive = TRUE, force = TRUE)
+        if (!dir.exists(ws)) removed <- c(removed, basename(ws))
+      }
+    }
+    if (length(removed)) {
+      message(sprintf(
+        "Cleaned MS workspaces (intermediate, no longer needed): %s",
+        paste(removed, collapse = ", ")
+      ))
+    }
+  }
 
   message(sprintf("DJI Mavic 3M workflow done in %.1f min.",
                   as.numeric(difftime(Sys.time(), t0, units = "mins"))))

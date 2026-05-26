@@ -13,6 +13,7 @@ run_odm_dji_mavic_3m(
   pc_las = FALSE,
   skip_3dmodel = TRUE,
   skip_report = TRUE,
+  cleanup_ms_workspaces = TRUE,
   rgb_extra_args = character(),
   ms_extra_args = character()
 )
@@ -47,6 +48,14 @@ you want the textured 3D model for visualization.}
 so ODM does not generate its PDF run report. Saves ~1-2 min
 per band and avoids the well-known \code{gdal_translate} / numpy
 ABI crash inside some \code{opendronemap/odm} Docker images.}
+
+\item{cleanup_ms_workspaces}{Logical. Default \code{TRUE}. After the
+7-band stacked orthomosaic is written, delete the per-MS-band
+ODM project directories (\verb{dji_ms_g/}, \verb{dji_ms_r/}, \verb{dji_ms_re/},
+\verb{dji_ms_nir/}). They are pure intermediates whose only output —
+the per-band orthos — is already included in the stack; nothing
+downstream reads them again. Set \code{FALSE} if you want to inspect
+the per-band SfM artefacts manually.}
 
 \item{rgb_extra_args}{Extra arguments appended to the \strong{RGB} ODM
 run (\code{build_odm_args(..., extra_args = ...)}).}

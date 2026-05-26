@@ -1,5 +1,21 @@
 # DroneBioR (development version)
 
+## Cleanup
+
+* **`run_odm_dji_mavic_3m()` removes the per-band MS workspaces
+  after stacking.** Each MS band needs its own ODM project
+  workspace (`dji_ms_g/`, `dji_ms_r/`, `dji_ms_re/`, `dji_ms_nir/`)
+  because the DJI Mavic 3M visible camera and the MS camera array
+  have different focal lengths and viewing geometry — they cannot
+  share one ODM bundle adjustment. Each MS workspace produces a
+  single-band orthomosaic that goes straight into the 7-band stack
+  written under `dji/odm_orthophoto/`; nothing downstream reads
+  the MS workspaces again. They are now deleted automatically once
+  the stack is on disk, leaving the user with a single canonical
+  `dji/` folder that holds every product worth keeping (RGB ortho,
+  stacked 7-band ortho, DSM, DTM, CHM). Set
+  `cleanup_ms_workspaces = FALSE` to keep them for debugging.
+
 ## Performance
 
 * **`run_odm_dji_mavic_3m()` skips ODM stages DroneBioR does not
