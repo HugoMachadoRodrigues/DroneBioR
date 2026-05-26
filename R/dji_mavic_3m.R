@@ -116,7 +116,10 @@ run_one_dji_band <- function(project,
                              max_concurrency = 4,
                              pc_las       = FALSE,
                              skip_3dmodel = TRUE,
-                             skip_report  = TRUE) {
+                             skip_report  = TRUE,
+                             use_ppk_mrk  = TRUE,
+                             ppk_min_fix_quality = 4L,
+                             ppk_cli      = NULL) {
   proj_name <- dji_band_project_name(project, band_label)
   band_proj <- dji_band_dataset_subdir(project, band_label)  # dataset_dir/project_name
   band_imgs <- file.path(band_proj, "images")
@@ -130,6 +133,71 @@ run_one_dji_band <- function(project,
   message(sprintf("[%s] linking %d images into %s",
                   band, nrow(images_manifest), band_imgs))
   populate_band_images_dir(images_manifest, band_imgs)
+
+  # ----- PPK / RTK geo.txt -------------------------------------------------
+  # The DJI Mavic 3M EXIF GPS has a documented altitude bug that makes
+  # OpenSfM diverge. The .MRK files shipped beside the photos carry
+  # the RTK-quality positions for every trigger event. When a .MRK is
+  # available we resolve each per-band filename to its row and write
+  # an ODM geo.txt right next to the project root, then tell ODM to
+  # honour it via --geo + a tight --gps-accuracy. `ppk_cli` lets users
+  # hook an external PPK CLI (rtklib etc.) that takes the .bin/.nav
+  # rover files plus their own base RINEX and improves the .MRK
+  # before we read it.
+  ppk_geo_args <- character()
+  if (isTRUE(use_ppk_mrk)) {
+    ppk_files <- detect_djim3m_ppk_files(project$images_dir)
+    if (is.function(ppk_cli) && ppk_files$has_ppk_inputs) {
+      message(sprintf("[%s] Running user-supplied PPK CLI hook...", band))
+      tryCatch(
+        ppk_cli(
+          images_dir = project$images_dir,
+          bin_paths  = ppk_files$bin,
+          nav_paths  = ppk_files$nav,
+          mrk_paths  = ppk_files$mrk
+        ),
+        error = function(e) {
+          warning("ppk_cli hook failed: ", conditionMessage(e),
+                  ". Falling back to the raw .MRK.", call. = FALSE)
+        }
+      )
+      # Re-detect in case the hook rewrote the .MRK files in place.
+      ppk_files <- detect_djim3m_ppk_files(project$images_dir)
+    }
+    if (ppk_files$has_mrk) {
+      geo_txt <- file.path(band_proj, "geo.txt")
+      result <- tryCatch(
+        write_djim3m_geo_txt(
+          images_dir       = project$images_dir,
+          image_filenames  = images_manifest$filename,
+          geo_txt_path     = geo_txt,
+          min_fix_quality  = ppk_min_fix_quality
+        ),
+        error = function(e) {
+          warning(sprintf(
+            "[%s] Could not build geo.txt from .MRK: %s. Proceeding without --geo.",
+            band, conditionMessage(e)
+          ), call. = FALSE)
+          NULL
+        }
+      )
+      if (!is.null(result)) {
+        # ODM consumes the file from inside the container — translate
+        # the host path to the in-container `/datasets/<project>/geo.txt`.
+        ppk_geo_args <- c(
+          "--geo", paste0("/datasets/", proj_name, "/geo.txt"),
+          # 0.10 m horizontal accuracy is a conservative cap when the
+          # .MRK had RTK Fix; ODM will use the per-row std deviations
+          # we wrote out anyway, this is just the global bound.
+          "--gps-accuracy", "0.10"
+        )
+      }
+    } else {
+      message(sprintf("[%s] No .MRK PPK sidecar found in %s; ",
+                      band, project$images_dir),
+              "ODM will fall back to EXIF GPS (often bad on Mavic 3M).")
+    }
+  }
 
   is_rgb <- identical(band, "RGB")
   args <- build_odm_args(
@@ -156,7 +224,8 @@ run_one_dji_band <- function(project,
     pc_las          = is_rgb && isTRUE(pc_las),
     skip_3dmodel    = isTRUE(skip_3dmodel),
     skip_report     = isTRUE(skip_report),
-    extra_args      = if (is_rgb) rgb_extra_args else ms_extra_args
+    extra_args      = c(if (is_rgb) rgb_extra_args else ms_extra_args,
+                        ppk_geo_args)
   )
 
   # Heal any orphan OpenSfM state from a previous interrupted run
@@ -200,6 +269,7 @@ run_one_dji_band <- function(project,
       skip_report              = isTRUE(skip_report),
       extra_args               = c(
         if (is_rgb) rgb_extra_args else ms_extra_args,
+        ppk_geo_args,
         "--feature-quality", "medium"
       )
     )
@@ -231,7 +301,8 @@ run_one_dji_band <- function(project,
         pc_las                   = is_rgb && isTRUE(pc_las),
         skip_3dmodel             = isTRUE(skip_3dmodel),
         skip_report              = isTRUE(skip_report),
-        rerun_from               = "mvs_texturing"
+        rerun_from               = "mvs_texturing",
+        extra_args               = ppk_geo_args
       )
       status <- run_docker_with_progress(
         args        = retry_args,
@@ -389,6 +460,31 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'       files — are never read by the downstream R pipeline.
 #'   }
 #'   Set `FALSE` to keep everything for debugging.
+#' @param use_ppk_mrk Logical. Default `TRUE`. When the source folder
+#'   carries the DJI `_Timestamp.MRK` sidecar(s), parse them with
+#'   [parse_djim3m_mrk_folder()], resolve each per-band filename to
+#'   its photo number, and write an ODM `geo.txt` so ODM uses the
+#'   RTK / PPK positions instead of the EXIF GPS (which the Mavic 3M
+#'   notoriously corrupts on altitude — that is the bug that makes
+#'   OpenSfM diverge and `odm_orthophoto` OOM). ODM then runs with
+#'   `--geo /datasets/<proj>/geo.txt --gps-accuracy 0.10`.
+#' @param ppk_min_fix_quality Integer. Default `4` (RTK Float).
+#'   Photos whose .MRK row reports a lower fix quality are dropped
+#'   from the geo.txt — including them would let degraded positions
+#'   destabilise the bundle adjustment. Set to `50` to demand
+#'   RTK-Fixed-only, or `0` to keep everything.
+#' @param ppk_cli Optional function, **the PPK CLI hook**. Called
+#'   once before the band's ODM run when both `_PPKRAW.bin` and
+#'   `_PPKNAV.nav` sidecars are present. Signature:
+#'   `function(images_dir, bin_paths, nav_paths, mrk_paths)`. The
+#'   hook is expected to invoke a real PPK CLI (rtklib's
+#'   `rnx2rtkp`, a DJI-to-RINEX converter, etc.) and rewrite the
+#'   `_Timestamp.MRK` files in place with the corrected positions.
+#'   DroneBioR then re-reads the .MRK and writes geo.txt from the
+#'   improved values. [ppk_cli_rtklib_dji()] is a ready-made hook
+#'   for users who have rtklib + a DJI .bin -> RINEX converter
+#'   installed; pass `NULL` (default) to skip the CLI step and use
+#'   the .MRK as it ships.
 #' @param rgb_extra_args Extra arguments appended to the **RGB** ODM
 #'   run (`build_odm_args(..., extra_args = ...)`).
 #' @param ms_extra_args Extra arguments appended to **each MS** ODM
@@ -415,6 +511,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
                                  cleanup_intermediates = TRUE,
+                                 use_ppk_mrk  = TRUE,
+                                 ppk_min_fix_quality = 4L,
+                                 ppk_cli      = NULL,
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
   if (!nzchar(Sys.which("docker"))) {
@@ -498,7 +597,10 @@ run_odm_dji_mavic_3m <- function(project,
       max_concurrency  = max_concurrency,
       pc_las           = pc_las,
       skip_3dmodel     = skip_3dmodel,
-      skip_report      = skip_report
+      skip_report      = skip_report,
+      use_ppk_mrk      = use_ppk_mrk,
+      ppk_min_fix_quality = ppk_min_fix_quality,
+      ppk_cli          = ppk_cli
     )
 
     band_secs <- as.numeric(difftime(Sys.time(), band_t0, units = "secs"))

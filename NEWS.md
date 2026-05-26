@@ -1,5 +1,43 @@
 # DroneBioR (development version)
 
+## New features
+
+* **Native PPK / RTK support for DJI Mavic 3M.** When the source
+  folder ships the `_Timestamp.MRK` sidecar(s) the drone writes
+  alongside each mission's photos, `run_odm_dji_mavic_3m()` now
+  auto-detects them, resolves every per-band image filename to its
+  `photo_num` (DJI files follow `DJI_<datetime>_<NNNN>_<band>.<ext>`),
+  and writes an ODM `geo.txt` so ODM uses the RTK / PPK positions
+  instead of the EXIF GPS (which the Mavic 3M corrupts on
+  altitude — the bug that was making OpenSfM diverge and
+  `odm_orthophoto` OOM). ODM is then invoked with `--geo
+  /datasets/<proj>/geo.txt --gps-accuracy 0.10`. The .MRK itself
+  carries the receiver's fix-quality code; rows below the
+  `ppk_min_fix_quality` threshold (default 4 = RTK Float) are
+  dropped from the geo.txt so degraded positions cannot destabilise
+  the bundle adjustment.
+* **External PPK CLI hook.** New `ppk_cli` argument on
+  `run_odm_dji_mavic_3m()` and a ready-made adapter
+  `ppk_cli_rtklib_dji()` invoke a real PPK CLI **before** ODM:
+  1. Convert the DJI `_PPKRAW.bin` rover observations to RINEX with
+     a user-supplied converter (DJI's `.bin` format is proprietary,
+     so this must be a tool the user installed separately — e.g.
+     KlauPPK or any DJI-compatible converter; mainstream
+     rtklib `convbin` does not handle DJI `.bin`).
+  2. Run rtklib's `rnx2rtkp` against the rover RINEX, the
+     `_PPKNAV.nav` ephemerides and the user-supplied base station
+     RINEX, producing a positioning solution.
+  3. Rewrite each `_Timestamp.MRK` in place by matching the .MRK
+     GPS time-of-week column to the .pos epochs (within 1 s), then
+     proceed with the regular .MRK -> geo.txt flow above. The hook
+     fails loudly when its required CLI tools are missing from
+     `PATH`; DroneBioR then falls back to the .MRK-as-shipped path.
+* **New exported helpers** for direct use: `detect_djim3m_ppk_files()`,
+  `parse_djim3m_mrk()`, `parse_djim3m_mrk_folder()`,
+  `inspect_djim3m_mrk()`, `write_djim3m_geo_txt()`,
+  `ppk_cli_rtklib_dji()`. Inspect the .MRK before plumbing it into
+  ODM with `inspect_djim3m_mrk(images_dir)`.
+
 ## Documentation
 
 * **More honest diagnosis when ODM exits 137 twice.** The previous
