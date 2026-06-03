@@ -10,6 +10,9 @@ run_odm_dji_mavic_3m(
   odm_image = "opendronemap/odm",
   orthophoto_resolution_cm = 5,
   max_concurrency = 4,
+  build_dsm = TRUE,
+  build_dtm = TRUE,
+  fast_orthophoto = FALSE,
   pc_las = FALSE,
   skip_3dmodel = TRUE,
   skip_report = TRUE,
@@ -33,6 +36,18 @@ exist. Useful after changing camera or radiometric parameters.}
 \item{orthophoto_resolution_cm}{Orthophoto ground sampling distance.}
 
 \item{max_concurrency}{Concurrent ODM workers per band.}
+
+\item{build_dsm, build_dtm}{Logical, default \code{TRUE}. Build the DSM /
+DTM on the RGB run. Set both to \code{FALSE} when you only need the
+orthomosaic + spectral indices — combined with
+\code{fast_orthophoto = TRUE} this is the fastest path.}
+
+\item{fast_orthophoto}{Logical, default \code{FALSE}. When \code{TRUE}, the
+RGB run adds ODM's \code{--fast-orthophoto}, which skips the dense
+MVS reconstruction (often the single longest stage). The
+orthomosaic is built from the 2.5D mesh instead — much faster,
+but any DSM / DTM produced alongside are lower quality. Leave
+\code{FALSE} for scientifically defensible canopy heights.}
 
 \item{pc_las}{Logical. When \code{TRUE}, export the dense point cloud
 from the RGB run as a \code{.las} file (~640 MB for a 300-image

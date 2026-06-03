@@ -201,6 +201,9 @@ run_one_dji_band <- function(project,
                              ms_extra_args  = character(),
                              orthophoto_resolution_cm = 5,
                              max_concurrency = 4,
+                             build_dsm    = TRUE,
+                             build_dtm    = TRUE,
+                             fast_orthophoto = FALSE,
                              pc_las       = FALSE,
                              skip_3dmodel = TRUE,
                              skip_report  = TRUE,
@@ -316,13 +319,16 @@ run_one_dji_band <- function(project,
     radiometric_calibration  = if (is_rgb) NULL else "camera+sun",
     orthophoto_resolution_cm = orthophoto_resolution_cm,
     max_concurrency          = max_concurrency,
-    # RGB run: full pipeline for DSM + DTM.
-    # MS runs: fast-orthophoto — they only contribute their calibrated
-    # radiance band; the geometric products already exist from the
-    # RGB run.
-    fast_orthophoto = !is_rgb,
-    build_dsm       = is_rgb,
-    build_dtm       = is_rgb,
+    # RGB run: full pipeline for DSM + DTM, unless the caller asked
+    # for fast_orthophoto (skips the dense MVS reconstruction — much
+    # faster, lower-quality DEMs; good when only the orthomosaic +
+    # spectral indices are needed).
+    # MS runs: always fast-orthophoto with no DEMs — they only
+    # contribute their calibrated radiance band; the geometric
+    # products come from the RGB run.
+    fast_orthophoto = if (is_rgb) isTRUE(fast_orthophoto) else TRUE,
+    build_dsm       = if (is_rgb) isTRUE(build_dsm) else FALSE,
+    build_dtm       = if (is_rgb) isTRUE(build_dtm) else FALSE,
     # By default skip everything that DroneBioR's downstream pipeline
     # does not need (textured 3D model, PDF report, LAS point cloud).
     # Users who want the LAS for `improve_dtm_csf()` or the 3D model
@@ -400,9 +406,9 @@ run_one_dji_band <- function(project,
       radiometric_calibration  = if (is_rgb) NULL else "camera+sun",
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency          = 1L,
-      fast_orthophoto          = !is_rgb,
-      build_dsm                = is_rgb,
-      build_dtm                = is_rgb,
+      fast_orthophoto          = if (is_rgb) isTRUE(fast_orthophoto) else TRUE,
+      build_dsm                = if (is_rgb) isTRUE(build_dsm) else FALSE,
+      build_dtm                = if (is_rgb) isTRUE(build_dtm) else FALSE,
       pc_las                   = is_rgb && isTRUE(pc_las),
       skip_3dmodel             = isTRUE(skip_3dmodel),
       skip_report              = isTRUE(skip_report),
@@ -434,9 +440,9 @@ run_one_dji_band <- function(project,
         radiometric_calibration  = if (is_rgb) NULL else "camera+sun",
         orthophoto_resolution_cm = orthophoto_resolution_cm,
         max_concurrency          = max_concurrency,
-        fast_orthophoto          = !is_rgb,
-        build_dsm                = is_rgb,
-        build_dtm                = is_rgb,
+        fast_orthophoto          = if (is_rgb) isTRUE(fast_orthophoto) else TRUE,
+        build_dsm                = if (is_rgb) isTRUE(build_dsm) else FALSE,
+        build_dtm                = if (is_rgb) isTRUE(build_dtm) else FALSE,
         pc_las                   = is_rgb && isTRUE(pc_las),
         skip_3dmodel             = isTRUE(skip_3dmodel),
         skip_report              = isTRUE(skip_report),
@@ -565,6 +571,16 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #' @param odm_image Docker image tag for the ODM container.
 #' @param orthophoto_resolution_cm Orthophoto ground sampling distance.
 #' @param max_concurrency Concurrent ODM workers per band.
+#' @param build_dsm,build_dtm Logical, default `TRUE`. Build the DSM /
+#'   DTM on the RGB run. Set both to `FALSE` when you only need the
+#'   orthomosaic + spectral indices — combined with
+#'   `fast_orthophoto = TRUE` this is the fastest path.
+#' @param fast_orthophoto Logical, default `FALSE`. When `TRUE`, the
+#'   RGB run adds ODM's `--fast-orthophoto`, which skips the dense
+#'   MVS reconstruction (often the single longest stage). The
+#'   orthomosaic is built from the 2.5D mesh instead — much faster,
+#'   but any DSM / DTM produced alongside are lower quality. Leave
+#'   `FALSE` for scientifically defensible canopy heights.
 #' @param pc_las Logical. When `TRUE`, export the dense point cloud
 #'   from the RGB run as a `.las` file (~640 MB for a 300-image
 #'   flight). Default `FALSE` — DroneBioR's DSM/DTM/CHM pipeline
@@ -662,6 +678,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  odm_image = "opendronemap/odm",
                                  orthophoto_resolution_cm = 5,
                                  max_concurrency = 4,
+                                 build_dsm    = TRUE,
+                                 build_dtm    = TRUE,
+                                 fast_orthophoto = FALSE,
                                  pc_las       = FALSE,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
@@ -750,6 +769,9 @@ run_odm_dji_mavic_3m <- function(project,
       ms_extra_args    = ms_extra_args,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency  = max_concurrency,
+      build_dsm        = build_dsm,
+      build_dtm        = build_dtm,
+      fast_orthophoto  = fast_orthophoto,
       pc_las           = pc_las,
       skip_3dmodel     = skip_3dmodel,
       skip_report      = skip_report,

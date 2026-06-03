@@ -1,5 +1,19 @@
 # DroneBioR (development version)
 
+## Performance
+
+* **`run_odm_dji_mavic_3m()` gains speed knobs for orthomosaic-only
+  runs.** New `fast_orthophoto`, `build_dsm` and `build_dtm`
+  parameters (defaults `FALSE`, `TRUE`, `TRUE`) let callers skip the
+  dense MVS reconstruction — usually the single longest ODM stage —
+  when only the orthomosaic + spectral indices are needed. Setting
+  `fast_orthophoto = TRUE, build_dsm = FALSE, build_dtm = FALSE`
+  roughly halves wall-clock per flight on large image sets. The MS
+  bands already ran in fast-orthophoto mode; this exposes the same
+  control for the RGB run. Combine with
+  `rgb_extra_args = c("--feature-quality", "low", "--pc-quality", "low")`
+  for the fastest possible pass.
+
 ## Bug fixes
 
 * **DJI Mavic 3M: survive ODM's exifread / MakerNote crash.** ODM

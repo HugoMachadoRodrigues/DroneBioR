@@ -271,6 +271,18 @@ test_that("ppk_cli defaults to \"auto\" on both engines", {
   expect_identical(eval(formals(DroneBioR:::run_one_dji_band)$ppk_cli),    "auto")
 })
 
+test_that("speed/output knobs are exposed with sensible defaults", {
+  f <- formals(DroneBioR::run_odm_dji_mavic_3m)
+  expect_true(eval(f$build_dsm))
+  expect_true(eval(f$build_dtm))
+  expect_false(eval(f$fast_orthophoto))
+  # And the per-band runner accepts them too.
+  fb <- formals(DroneBioR:::run_one_dji_band)
+  expect_true("build_dsm"       %in% names(fb))
+  expect_true("build_dtm"       %in% names(fb))
+  expect_true("fast_orthophoto" %in% names(fb))
+})
+
 test_that("resolve_ppk_cli_auto returns NULL with a clear message when tools are missing", {
   # Clear any environment override the user may have set, then point
   # at a tempdir with no `base/` subfolder so the base-obs probe also
