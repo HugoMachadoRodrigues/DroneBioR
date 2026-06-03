@@ -91,17 +91,104 @@ dji_band_ortho_path <- function(project, band_label) {
 # into the ODM `images/` subfolder of a per-band run. We use hardlinks
 # wherever possible — on a single-filesystem setup that is essentially
 # free, and matches the strategy in `process_flyover_1.R`.
-populate_band_images_dir <- function(manifest, dest_dir) {
+#
+# When `sanitize_exif = TRUE` (set by the DJI pipeline once an exifread
+# crash has been detected, or proactively when exiftool is present) we
+# must COPY rather than hardlink: a hardlink shares the inode with the
+# source image, so running `exiftool -overwrite_original` on it would
+# corrupt the user's original photo (potentially syncing the damage
+# back to OneDrive / Google Drive). After copying we strip the DJI
+# MakerNote, which is what crashes ODM's bundled `exifread`.
+populate_band_images_dir <- function(manifest, dest_dir, sanitize_exif = FALSE) {
   dir.create(dest_dir, recursive = TRUE, showWarnings = FALSE)
   for (i in seq_len(nrow(manifest))) {
     dest <- file.path(dest_dir, manifest$filename[i])
     if (file.exists(dest)) next
-    ok <- suppressWarnings(file.link(manifest$file[i], dest))
-    if (!isTRUE(ok)) {
-      file.copy(manifest$file[i], dest)
+    if (isTRUE(sanitize_exif)) {
+      file.copy(manifest$file[i], dest)         # real copy, never a hardlink
+    } else {
+      ok <- suppressWarnings(file.link(manifest$file[i], dest))
+      if (!isTRUE(ok)) file.copy(manifest$file[i], dest)
     }
   }
+  if (isTRUE(sanitize_exif)) {
+    sanitize_dji_exif_makernotes(file.path(dest_dir, manifest$filename))
+  }
   invisible(file.path(dest_dir, manifest$filename))
+}
+
+#' Strip the DJI MakerNote EXIF tag from a set of image copies
+#'
+#' ODM 3.6.0 bundles a version of the `exifread` Python library that
+#' raises `IndexError: list index out of range` inside
+#' `decode_maker_note()` on certain DJI Mavic 3M MakerNote tags. The
+#' crash happens in the very first (`dataset`) stage, so the whole
+#' run dies in seconds. The DJI MakerNote holds proprietary metadata
+#' ODM does not use for reconstruction — standard EXIF (camera model,
+#' focal length, image dimensions, GPS) plus our `geo.txt` cover
+#' everything ODM needs — so stripping just the MakerNote is a safe,
+#' targeted fix.
+#'
+#' Requires `exiftool` on PATH. The caller is responsible for only
+#' passing **copies** (never hardlinks to the originals), because
+#' `-overwrite_original` rewrites the files in place.
+#'
+#' @param image_paths Character vector of image copies to sanitize.
+#' @return Invisibly, the number of files exiftool reported updating.
+#' @noRd
+sanitize_dji_exif_makernotes <- function(image_paths) {
+  image_paths <- image_paths[file.exists(image_paths)]
+  if (!length(image_paths)) return(invisible(0L))
+  if (!nzchar(Sys.which("exiftool"))) {
+    stop(
+      "exiftool is required to strip the DJI MakerNote EXIF that crashes ",
+      "ODM's exifread, but it was not found on PATH. Install it with ",
+      "`brew install exiftool` (macOS) or your platform's package manager, ",
+      "then re-run.",
+      call. = FALSE
+    )
+  }
+  # -MakerNotes= removes the tag; -overwrite_original avoids the
+  # `_original` backup files exiftool writes by default; -P preserves
+  # filesystem timestamps; -q keeps the output quiet. system2() execs
+  # exiftool directly (no shell), so each path is its own argv element
+  # and must NOT be shQuote()'d — spaces in paths are handled by the
+  # argv boundary. The `--` ends option parsing so filenames that
+  # start with `-` are not mistaken for flags.
+  invisible(suppressWarnings(system2(
+    "exiftool",
+    args = c("-q", "-P", "-overwrite_original", "-MakerNotes=", "--",
+             image_paths),
+    stdout = TRUE, stderr = TRUE
+  )))
+  message(sprintf("[exif] Stripped DJI MakerNote from %d image(s).",
+                  length(image_paths)))
+  invisible(length(image_paths))
+}
+
+#' Did this ODM run die on the exifread / DJI MakerNote crash?
+#'
+#' Scans a `dronebior_odm.log` for the signature of the bundled
+#' exifread library choking on a DJI MakerNote tag. Used to turn an
+#' opaque `exit status 1` into an actionable "install exiftool" error
+#' and to trigger the auto-sanitize retry.
+#'
+#' @param log_path Path to the docker output log.
+#' @return `TRUE` when the exifread MakerNote crash signature is found.
+#' @noRd
+odm_log_has_exifread_crash <- function(log_path) {
+  if (!is.character(log_path) || !length(log_path) ||
+      !file.exists(log_path)) {
+    return(FALSE)
+  }
+  lines <- tryCatch(readLines(log_path, warn = FALSE),
+                    error = function(e) character())
+  if (!length(lines)) return(FALSE)
+  has_exifread <- any(grepl("exifread", lines, ignore.case = TRUE))
+  has_makernote <- any(grepl("decode_maker_note|MakerNote", lines,
+                             ignore.case = TRUE))
+  has_indexerr <- any(grepl("IndexError", lines))
+  has_exifread && (has_makernote || has_indexerr)
 }
 
 run_one_dji_band <- function(project,
@@ -130,9 +217,19 @@ run_one_dji_band <- function(project,
     return(ortho_path)
   }
 
-  message(sprintf("[%s] linking %d images into %s",
-                  band, nrow(images_manifest), band_imgs))
-  populate_band_images_dir(images_manifest, band_imgs)
+  # Proactively strip the DJI MakerNote EXIF when exiftool is present:
+  # ODM 3.6.0's bundled exifread crashes on certain DJI MakerNote tags
+  # (IndexError in decode_maker_note) during the very first stage. When
+  # exiftool is missing we hardlink as usual and only react if the
+  # crash actually happens (see the retry block after the docker run).
+  have_exiftool <- nzchar(Sys.which("exiftool"))
+  message(sprintf("[%s] %s %d images into %s%s",
+                  band,
+                  if (have_exiftool) "copying + EXIF-sanitizing" else "linking",
+                  nrow(images_manifest), band_imgs,
+                  if (have_exiftool) " (stripping DJI MakerNote)" else ""))
+  populate_band_images_dir(images_manifest, band_imgs,
+                           sanitize_exif = have_exiftool)
 
   # ----- PPK / RTK geo.txt -------------------------------------------------
   # The DJI Mavic 3M EXIF GPS has a documented altitude bug that makes
@@ -243,12 +340,43 @@ run_one_dji_band <- function(project,
   # before invoking docker — see clean_incomplete_odm_state() for the
   # failure mode this protects against.
   clean_incomplete_odm_state(band_proj)
+  band_log <- file.path(band_proj, "dronebior_odm.log")
   status <- run_docker_with_progress(
     args        = args,
     project_dir = band_proj,
     image_count = nrow(images_manifest),
     band_label  = band
   )
+
+  # exifread / DJI MakerNote crash: ODM dies in the `dataset` stage
+  # with IndexError inside exifread. If we had NOT already sanitized
+  # (exiftool was absent on the first pass) we cannot self-heal, so
+  # raise a clear, actionable error. If exiftool has SINCE been
+  # installed, re-populate with sanitized copies and retry once.
+  if (!identical(status, 0L) && !file.exists(ortho_path) &&
+      odm_log_has_exifread_crash(band_log)) {
+    if (nzchar(Sys.which("exiftool"))) {
+      message(sprintf(
+        "[%s] ODM crashed reading DJI MakerNote EXIF. Re-copying images with the MakerNote stripped and retrying once...",
+        band
+      ))
+      unlink(band_imgs, recursive = TRUE, force = TRUE)
+      clean_incomplete_odm_state(band_proj)
+      populate_band_images_dir(images_manifest, band_imgs,
+                               sanitize_exif = TRUE)
+      status <- run_docker_with_progress(
+        args        = args,
+        project_dir = band_proj,
+        image_count = nrow(images_manifest),
+        band_label  = paste0(band, "/exif-retry")
+      )
+    } else {
+      stop(sprintf(
+        "ODM crashed on band %s reading the DJI Mavic 3M MakerNote EXIF (a known bug in ODM's bundled exifread). DroneBioR can strip the offending MakerNote automatically, but that needs exiftool, which is not installed. Install it with `brew install exiftool` (macOS) and re-run.",
+        band
+      ), call. = FALSE)
+    }
+  }
 
   # Exit 137 = 128 + SIGKILL(9): the Docker container was killed by
   # the host OS. By far the most common cause is Docker Desktop's

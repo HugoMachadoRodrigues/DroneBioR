@@ -2,6 +2,32 @@
 
 ## Bug fixes
 
+* **DJI Mavic 3M: survive ODM's exifread / MakerNote crash.** ODM
+  3.6.0 bundles a version of the `exifread` Python library that
+  raises `IndexError: list index out of range` inside
+  `decode_maker_note()` on some DJI Mavic 3M MakerNote tags, killing
+  the run in the very first (`dataset`) stage within seconds. The DJI
+  pipeline now strips the offending MakerNote with `exiftool` before
+  ODM sees the images: when exiftool is on PATH it copies (never
+  hardlinks — a hardlink would corrupt the originals) the band's
+  images and removes the `MakerNotes` tag proactively; when exiftool
+  is absent it runs as before and, if the crash is detected in the
+  docker log, raises a clear "install exiftool (`brew install
+  exiftool`)" error instead of an opaque `exit status 1`. Standard
+  EXIF (camera model, focal length, dimensions, GPS) and the PPK
+  geo.txt are untouched, so reconstruction quality is unaffected.
+* **Drone Biomass Studio: progress card now follows the real ODM
+  log.** For DJI Mavic 3M runs the "ODM run progress" card was
+  pointed at the callr R-message log (`odm_run.log`), which does not
+  contain the `Running X stage` / `Finished X stage` markers the card
+  parses — so it sat at "0 / 13 stages" and "Total elapsed: --" even
+  while ODM was working (or had already crashed). The card now
+  watches the RGB band's `dronebior_odm.log`, which carries ODM's
+  own stage markers, init timestamp and error tracebacks, so elapsed
+  time, the active stage and any failure surface live.
+
+
+
 * **Drone Biomass Studio: stop erroring on DJI Mavic 3M folders.**
   The Studio's "Run processing engine" button used to call
   `list_micasense_images()` which rejected DJI filenames with
