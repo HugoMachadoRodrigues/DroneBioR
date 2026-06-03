@@ -820,6 +820,7 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
                                                fast_orthophoto, auto_boundary,
                                                pc_las, skip_3dmodel, skip_report,
                                                cleanup_intermediates,
+                                               harmonize = TRUE, canopy_ceiling = 18,
                                                use_ppk_mrk, ppk_min_fix_quality,
                                                ppk_cli, rgb_extra_args,
                                                ms_extra_args) {
@@ -864,6 +865,14 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
     warning("MS run produced no orthomosaic; stacked product will be RGB-only.",
             call. = FALSE)
     stacked_path <- rgb_ortho
+  }
+
+  # Make DSM/DTM/CHM physically consistent (CHM >= 0, DSM >= DTM) and
+  # spike-free, in place, so every downstream consumer uses the clean
+  # products. Raw ODM rasters are preserved as dsm_raw.tif / dtm_raw.tif.
+  if (isTRUE(harmonize) && isTRUE(build_dsm) && isTRUE(build_dtm)) {
+    message(">>> Harmonizing DSM/DTM/CHM (consistent, spike-free)...")
+    harmonize_project_dems_inplace(project, canopy_ceiling = canopy_ceiling)
   }
 
   if (isTRUE(cleanup_intermediates)) {
@@ -966,6 +975,19 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
 #'   so ODM does not generate its PDF run report. Saves ~1-2 min
 #'   per band and avoids the well-known `gdal_translate` / numpy
 #'   ABI crash inside some `opendronemap/odm` Docker images.
+#' @param harmonize Logical, default `TRUE`. After the run, make the
+#'   DSM, DTM and CHM physically consistent and spike-free in place via
+#'   [harmonize_dem_products()]: the DTM is despiked, the CHM is
+#'   derived non-negative and despiked, and the DSM is rebuilt as
+#'   `DTM + CHM` so `CHM >= 0` and `DSM >= DTM` hold everywhere. The
+#'   raw ODM rasters are preserved as `dsm_raw.tif` / `dtm_raw.tif`, and
+#'   the canonical `dsm.tif` / `dtm.tif` / `chm.tif` become the clean
+#'   versions so every downstream consumer (indices, Shiny app,
+#'   `build_chm_raster()`) uses them transparently.
+#' @param canopy_ceiling Height (m) above the local canopy beyond which
+#'   a cell is treated as a reconstruction tower during harmonization.
+#'   Default `18` (pasture with scattered trees). Raise for forest,
+#'   lower for open pasture.
 #' @param cleanup_intermediates Logical. Default `TRUE`. After the
 #'   7-band stacked orthomosaic is written, perform two cleanups
 #'   so the user is left with only the products DroneBioR's
@@ -1058,6 +1080,8 @@ run_odm_dji_mavic_3m <- function(project,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
                                  cleanup_intermediates = TRUE,
+                                 harmonize    = TRUE,
+                                 canopy_ceiling = 18,
                                  use_ppk_mrk  = TRUE,
                                  ppk_min_fix_quality = 4L,
                                  ppk_cli      = "auto",
@@ -1094,6 +1118,7 @@ run_odm_dji_mavic_3m <- function(project,
       fast_orthophoto = fast_orthophoto, auto_boundary = auto_boundary,
       pc_las = pc_las, skip_3dmodel = skip_3dmodel, skip_report = skip_report,
       cleanup_intermediates = cleanup_intermediates,
+      harmonize = harmonize, canopy_ceiling = canopy_ceiling,
       use_ppk_mrk = use_ppk_mrk, ppk_min_fix_quality = ppk_min_fix_quality,
       ppk_cli = ppk_cli, rgb_extra_args = rgb_extra_args,
       ms_extra_args = ms_extra_args
@@ -1237,6 +1262,13 @@ run_odm_dji_mavic_3m <- function(project,
     ms_orthos = ms_paths,
     out_path  = stacked_path
   )
+
+  # Make DSM/DTM/CHM physically consistent + spike-free in place (raw
+  # kept as *_raw.tif) so downstream consumers use the clean products.
+  if (isTRUE(harmonize) && isTRUE(build_dsm) && isTRUE(build_dtm)) {
+    message(">>> Harmonizing DSM/DTM/CHM (consistent, spike-free)...")
+    harmonize_project_dems_inplace(project, canopy_ceiling = canopy_ceiling)
+  }
 
   # Two-step post-stack cleanup, both gated by `cleanup_intermediates`:
   #   1. The per-band MS workspaces (`dji_ms_g/`, `dji_ms_r/`,

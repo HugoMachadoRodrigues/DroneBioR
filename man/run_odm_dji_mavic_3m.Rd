@@ -20,6 +20,8 @@ run_odm_dji_mavic_3m(
   skip_3dmodel = TRUE,
   skip_report = TRUE,
   cleanup_intermediates = TRUE,
+  harmonize = TRUE,
+  canopy_ceiling = 18,
   use_ppk_mrk = TRUE,
   ppk_min_fix_quality = 4L,
   ppk_cli = "auto",
@@ -119,6 +121,21 @@ intermediates — \verb{images/}, \verb{opensfm/}, \verb{openmvs/},
 files — are never read by the downstream R pipeline.
 }
 Set \code{FALSE} to keep everything for debugging.}
+
+\item{harmonize}{Logical, default \code{TRUE}. After the run, make the
+DSM, DTM and CHM physically consistent and spike-free in place via
+\code{\link[=harmonize_dem_products]{harmonize_dem_products()}}: the DTM is despiked, the CHM is
+derived non-negative and despiked, and the DSM is rebuilt as
+\code{DTM + CHM} so \code{CHM >= 0} and \code{DSM >= DTM} hold everywhere. The
+raw ODM rasters are preserved as \code{dsm_raw.tif} / \code{dtm_raw.tif}, and
+the canonical \code{dsm.tif} / \code{dtm.tif} / \code{chm.tif} become the clean
+versions so every downstream consumer (indices, Shiny app,
+\code{build_chm_raster()}) uses them transparently.}
+
+\item{canopy_ceiling}{Height (m) above the local canopy beyond which
+a cell is treated as a reconstruction tower during harmonization.
+Default \code{18} (pasture with scattered trees). Raise for forest,
+lower for open pasture.}
 
 \item{use_ppk_mrk}{Logical. Default \code{TRUE}. When the source folder
 carries the DJI \verb{_Timestamp.MRK} sidecar(s), parse them with
