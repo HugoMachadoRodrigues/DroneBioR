@@ -260,3 +260,31 @@ test_that("configure_proj_database returns a logical without raising", {
   result <- suppressWarnings(configure_proj_database(verbose = FALSE))
   expect_type(result, "logical")
 })
+
+test_that("despike_dem removes isolated spikes but keeps coherent surface", {
+  # Flat-ish surface (~0 m) with a few isolated 40 m needle spikes.
+  r <- terra::rast(nrows = 40, ncols = 40, xmin = 0, xmax = 40,
+                   ymin = 0, ymax = 40)
+  terra::values(r) <- matrix(rnorm(1600, 0, 0.1), 40, 40)  # smooth surface
+  # Plant isolated spikes far from each other.
+  spike_cells <- c(205, 410, 820, 1200)
+  rv <- terra::values(r); rv[spike_cells] <- 40; terra::values(r) <- rv
+
+  expect_gt(terra::minmax(r)[2, 1], 30)          # spikes present before
+  out <- despike_dem(r, window = 5, max_deviation = 3, fill = "median")
+  expect_lt(terra::minmax(out)[2, 1], 5)         # spikes gone after
+  # The smooth surface is essentially unchanged away from spikes.
+  expect_lt(abs(terra::global(out, "mean", na.rm = TRUE)[[1]]), 0.2)
+})
+
+test_that("despike_dem can write to disk and NA-fill", {
+  r <- terra::rast(nrows = 20, ncols = 20)
+  terra::values(r) <- 0
+  rv <- terra::values(r); rv[100] <- 50; terra::values(r) <- rv
+  out_path <- tempfile(fileext = ".tif")
+  despike_dem(r, max_deviation = 3, fill = "NA", out_path = out_path)
+  expect_true(file.exists(out_path))
+  cleaned <- terra::rast(out_path)
+  expect_true(is.nan(terra::values(cleaned)[100]) ||
+              is.na(terra::values(cleaned)[100]))
+})

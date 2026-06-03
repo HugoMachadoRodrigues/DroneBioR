@@ -581,6 +581,86 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
   chm_path
 }
 
+#' Remove isolated spikes from a DSM / DTM / DEM
+#'
+#' Photogrammetric surface models routinely contain a handful of
+#' isolated "needle" spikes — single pixels (or tiny clusters) that
+#' jut tens of metres above an otherwise locally-smooth surface,
+#' caused by mis-reconstructed dense-cloud points where the imagery
+#' was blurry, low-texture or reflective. They are devastating for 3D
+#' visualisation (the surface sprouts towers) and for any slope /
+#' volume statistic, yet they are a vanishing fraction of pixels.
+#'
+#' This is a **local** outlier filter, which is the right tool for
+#' spikes: it compares each cell to the median of its
+#' `window`x`window` neighbourhood and flags cells whose absolute
+#' deviation exceeds `max_deviation` metres. Because real terrain and
+#' vegetation are spatially coherent (a tree is a cluster of similar
+#' tall pixels, so its residual from the local median is small), only
+#' the isolated spikes are caught. A global percentile clip cannot
+#' make this distinction — it would either miss spikes that are rarer
+#' than the percentile or clip the tops of genuine tall features.
+#'
+#' @param dem A `terra::SpatRaster` (first layer used) or a path to a
+#'   DEM GeoTIFF.
+#' @param window Odd integer neighbourhood size in pixels for the
+#'   local median. Default `5`.
+#' @param max_deviation Maximum allowed absolute deviation (metres)
+#'   from the local median before a cell is treated as a spike.
+#'   Default `3`. Lower it to be more aggressive.
+#' @param fill One of `"median"` (replace spikes with the local
+#'   median — keeps a continuous surface, best for 3D viz) or `"NA"`
+#'   (drop spikes to NoData). Default `"median"`.
+#' @param out_path Optional path to write the cleaned DEM. When
+#'   `NULL` (default) nothing is written and the cleaned raster is
+#'   returned in memory.
+#' @return The cleaned `terra::SpatRaster` (invisibly when `out_path`
+#'   is written).
+#' @examples
+#' \dontrun{
+#'   # Clean a DSM in place for 3D visualisation:
+#'   despike_dem("odm_dem/dsm.tif", out_path = "odm_dem/dsm_clean.tif")
+#' }
+#' @export
+despike_dem <- function(dem, window = 5, max_deviation = 3,
+                        fill = c("median", "NA"), out_path = NULL) {
+  fill <- match.arg(fill)
+  r <- if (is.character(dem)) terra::rast(dem)[[1L]] else dem[[1L]]
+  if (window %% 2L == 0L) window <- window + 1L
+
+  local_med <- terra::focal(r, w = window, fun = "median",
+                            na.policy = "omit", na.rm = TRUE)
+  residual  <- r - local_med
+  is_spike  <- abs(residual) > max_deviation
+
+  n_spikes <- tryCatch(
+    as.integer(terra::global(is_spike, "sum", na.rm = TRUE)[[1L]]),
+    error = function(e) NA_integer_
+  )
+  cleaned <- if (identical(fill, "median")) {
+    terra::ifel(is_spike, local_med, r)
+  } else {
+    terra::ifel(is_spike, NA, r)
+  }
+  names(cleaned) <- names(r)
+
+  if (!is.na(n_spikes)) {
+    message(sprintf(
+      "[despike] Replaced %d spike pixel(s) deviating > %g m from the %dx%d local median (fill = %s).",
+      n_spikes, max_deviation, window, window, fill
+    ))
+  }
+
+  if (!is.null(out_path)) {
+    dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+    terra::writeRaster(cleaned, out_path, overwrite = TRUE, datatype = "FLT4S",
+                       gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2",
+                                "BIGTIFF=IF_SAFER"))
+    return(invisible(cleaned))
+  }
+  cleaned
+}
+
 #' Detect existing ODM project subdirectories in a project root
 #'
 #' Walks `<project_dir>/outputs/` looking for any folder layout that
