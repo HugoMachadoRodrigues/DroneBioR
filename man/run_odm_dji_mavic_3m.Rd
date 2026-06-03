@@ -10,6 +10,8 @@ run_odm_dji_mavic_3m(
   odm_image = "opendronemap/odm",
   orthophoto_resolution_cm = 5,
   max_concurrency = NULL,
+  ms_mode = c("multispectral", "per_band"),
+  primary_band = "auto",
   build_dsm = TRUE,
   build_dtm = TRUE,
   fast_orthophoto = FALSE,
@@ -36,7 +38,26 @@ exist. Useful after changing camera or radiometric parameters.}
 
 \item{orthophoto_resolution_cm}{Orthophoto ground sampling distance.}
 
-\item{max_concurrency}{Concurrent ODM workers per band.}
+\item{max_concurrency}{Concurrent ODM workers per band. \code{NULL}
+(default) auto-detects the machine's physical cores.}
+
+\item{ms_mode}{One of \code{"multispectral"} (default) or \code{"per_band"}.
+In \code{"multispectral"} mode the four \verb{_MS_*.TIF} bands are processed
+in a \strong{single} ODM run: ODM reads each image's DJI band metadata
+(\code{BandName}, \code{RigCameraIndex}, \code{CentralWavelength}) to group the
+bands by capture, reconstructs once, and co-registers the bands —
+so the resulting orthomosaic is pixel-aligned across bands and the
+spectral indices come out clean with identical coverage. This is
+only 2 ODM runs total (RGB + MS). In the legacy \code{"per_band"} mode
+each MS band gets its own independent ODM run (5 runs total); the
+band orthos then end up mis-registered, which yields noisy indices
+and different valid-data coverage per index. Use \code{"per_band"} only
+if ODM fails to recognise the multispectral grouping on your data.}
+
+\item{primary_band}{Multispectral mode only. The band ODM uses to
+drive the reconstruction, passed as \code{--primary-band}. \code{"auto"}
+(default) lets ODM choose. Override with a band name (e.g.
+\code{"NIR"}) if the auto choice reconstructs poorly.}
 
 \item{build_dsm, build_dtm}{Logical, default \code{TRUE}. Build the DSM /
 DTM on the RGB run. Set both to \code{FALSE} when you only need the

@@ -292,6 +292,40 @@ test_that("run_one_dji_band passes --auto-boundary by default", {
   expect_match(body_str, "boundary_args")
 })
 
+test_that("ms_mode defaults to multispectral", {
+  expect_equal(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$ms_mode)[1],
+               "multispectral")
+})
+
+test_that("combine_ms_manifests merges the four MS band manifests", {
+  mk <- function(band, n) data.frame(
+    file = sprintf("DJI_x_%04d_MS_%s.TIF", seq_len(n), band),
+    filename = sprintf("DJI_x_%04d_MS_%s.TIF", seq_len(n), band),
+    stringsAsFactors = FALSE)
+  manifests <- list(D = mk("D", 3), MS_G = mk("G", 3), MS_R = mk("R", 3),
+                    MS_RE = mk("RE", 3), MS_NIR = mk("NIR", 3))
+  out <- DroneBioR:::combine_ms_manifests(manifests)
+  expect_equal(nrow(out), 12)          # 4 bands x 3 captures, no D
+  expect_false(any(grepl("_D\\.", out$filename)))
+})
+
+test_that("order_ms_ortho_bands maps band descriptions to G/R/RE/NIR", {
+  # RedEdge must be matched before Red so 'Red edge' is not taken as 'Red'.
+  r <- terra::rast(nrows = 2, ncols = 2, nlyrs = 4)
+  names(r) <- c("Green", "Red", "Red edge", "NIR")
+  idx <- DroneBioR:::order_ms_ortho_bands(r)
+  expect_equal(unname(idx[c("Green","Red","RedEdge","NIR")]), c(1L, 2L, 3L, 4L))
+
+  # Different physical order still resolves by description.
+  r2 <- terra::rast(nrows = 2, ncols = 2, nlyrs = 4)
+  names(r2) <- c("NIR", "Green", "RedEdge", "Red")
+  idx2 <- DroneBioR:::order_ms_ortho_bands(r2)
+  expect_equal(idx2[["NIR"]], 1L)
+  expect_equal(idx2[["Green"]], 2L)
+  expect_equal(idx2[["RedEdge"]], 3L)
+  expect_equal(idx2[["Red"]], 4L)
+})
+
 test_that("resolve_ppk_cli_auto returns NULL with a clear message when tools are missing", {
   # Clear any environment override the user may have set, then point
   # at a tempdir with no `base/` subfolder so the base-obs probe also
