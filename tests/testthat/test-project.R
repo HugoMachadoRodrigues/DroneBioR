@@ -387,3 +387,39 @@ test_that("harmonize_dem_products writes the three consistent rasters", {
                   c("dsm_consistent.tif", "dtm_consistent.tif",
                     "chm_consistent.tif"))
 })
+
+test_that("harmonize_project_dems_inplace backs up raw and writes consistent canonical DEMs", {
+  tmp <- tempfile("inplace_"); dir.create(tmp)
+  p <- dronebio_project(project_dir = tmp, odm_dataset_subdir = "ds",
+                        odm_project_name = "proj")
+  dem <- file.path(p$odm_project_dir, "odm_dem"); dir.create(dem, recursive = TRUE)
+  dtm <- terra::rast(nrows = 40, ncols = 40); terra::values(dtm) <- 0
+  dsm <- dtm
+  m <- matrix(0.5, 40, 40); m[5:8, 5:8] <- -3; m[20:22, 20:22] <- 60
+  terra::values(dsm) <- m
+  terra::writeRaster(dsm, file.path(dem, "dsm.tif"))
+  terra::writeRaster(dtm, file.path(dem, "dtm.tif"))
+
+  ok <- DroneBioR:::harmonize_project_dems_inplace(p, canopy_ceiling = 20)
+  expect_true(isTRUE(ok))
+  # Raw backups exist; canonical files now consistent.
+  expect_true(file.exists(file.path(dem, "dsm_raw.tif")))
+  expect_true(file.exists(file.path(dem, "dtm_raw.tif")))
+  d <- terra::values(terra::rast(file.path(dem, "dsm.tif")) -
+                     terra::rast(file.path(dem, "dtm.tif")))
+  d <- d[!is.na(d)]
+  expect_true(all(d >= -1e-6))                      # DSM >= DTM now
+  expect_true(file.exists(file.path(dem, "chm.tif")))
+
+  # Idempotent: a second call reads the raw backup, so the result is
+  # identical (cleaning is not compounded).
+  before <- terra::minmax(terra::rast(file.path(dem, "dsm.tif")))
+  DroneBioR:::harmonize_project_dems_inplace(p, canopy_ceiling = 20)
+  after <- terra::minmax(terra::rast(file.path(dem, "dsm.tif")))
+  expect_equal(after, before)
+})
+
+test_that("run_odm_dji_mavic_3m harmonizes by default", {
+  expect_true(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$harmonize))
+  expect_equal(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$canopy_ceiling), 18)
+})

@@ -921,6 +921,46 @@ harmonize_dem_products <- function(project = NULL, dsm = NULL, dtm = NULL,
   invisible(result)
 }
 
+# Harmonize a project's DSM/DTM/CHM in place: back up the raw ODM
+# rasters to `*_raw.tif`, then overwrite the canonical `dsm.tif`,
+# `dtm.tif` and `chm.tif` with the consistent versions so EVERYTHING
+# downstream (odm_product_paths, build_chm_raster, the Shiny app,
+# index computation) transparently uses the clean products. Idempotent:
+# always harmonizes from the `*_raw.tif` backup when present, so a
+# force-rerun does not compound the cleaning. Called by
+# run_odm_dji_mavic_3m() when harmonize = TRUE.
+#' @noRd
+harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
+                                           trend_cell_m = 30) {
+  paths   <- odm_product_paths(project)
+  dsm     <- unname(paths[["dsm"]])
+  dtm     <- unname(paths[["dtm"]])
+  chm     <- unname(paths[["chm"]])
+  if (!file.exists(dsm) || !file.exists(dtm)) return(invisible(FALSE))
+
+  dem_dir <- dirname(dsm)
+  raw_dsm <- file.path(dem_dir, "dsm_raw.tif")
+  raw_dtm <- file.path(dem_dir, "dtm_raw.tif")
+  # Source for harmonization is the raw ODM output. Back it up once, and
+  # always read from the backup so repeated runs stay idempotent.
+  if (!file.exists(raw_dsm)) file.copy(dsm, raw_dsm, overwrite = FALSE)
+  if (!file.exists(raw_dtm)) file.copy(dtm, raw_dtm, overwrite = FALSE)
+  src_dsm <- if (file.exists(raw_dsm)) raw_dsm else dsm
+  src_dtm <- if (file.exists(raw_dtm)) raw_dtm else dtm
+
+  res <- harmonize_dem_products(dsm = src_dsm, dtm = src_dtm,
+                                canopy_ceiling = canopy_ceiling,
+                                trend_cell_m = trend_cell_m, write = FALSE)
+  gopt <- c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER")
+  terra::writeRaster(res$dsm, dsm, overwrite = TRUE, datatype = "FLT4S", gdal = gopt)
+  terra::writeRaster(res$dtm, dtm, overwrite = TRUE, datatype = "FLT4S", gdal = gopt)
+  terra::writeRaster(res$chm, chm, overwrite = TRUE, datatype = "FLT4S", gdal = gopt)
+  message(sprintf(
+    "[harmonize] DSM/DTM/CHM made physically consistent in place (raw kept as dsm_raw.tif / dtm_raw.tif). canopy_ceiling = %g m.",
+    canopy_ceiling))
+  invisible(TRUE)
+}
+
 #' Detect existing ODM project subdirectories in a project root
 #'
 #' Walks `<project_dir>/outputs/` looking for any folder layout that

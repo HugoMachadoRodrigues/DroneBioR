@@ -2,6 +2,20 @@
 
 ## New features
 
+* **The DJI Mavic 3M pipeline harmonizes DEMs by default.**
+  `run_odm_dji_mavic_3m()` now runs [harmonize_dem_products()] at the
+  end of every flight (new `harmonize = TRUE`, `canopy_ceiling = 18`),
+  so the DSM, DTM and CHM come out physically consistent (`CHM >= 0`,
+  `DSM >= DTM`) and free of reconstruction towers / pits with no extra
+  call. The raw ODM rasters are preserved as `dsm_raw.tif` /
+  `dtm_raw.tif`, and the canonical `dsm.tif` / `dtm.tif` / `chm.tif`
+  are overwritten with the clean versions, so every downstream
+  consumer — `build_chm_raster()`, the spectral-index workflow, the
+  Shiny app — transparently uses the harmonized products. The step is
+  idempotent (it always re-derives from the `*_raw.tif` backups), so
+  re-running a project does not compound the cleaning. Pass
+  `harmonize = FALSE` to keep the raw ODM DEMs.
+
 * **`harmonize_dem_products()` produces physically consistent DSM,
   DTM and CHM.** ODM builds the DSM and DTM by independent processes,
   so on bare ground the interpolated DTM often sits a few centimetres
