@@ -2,6 +2,25 @@
 
 ## New features
 
+* **Field-calibrated biomass maps from drone products + sparse ground
+  samples (`run_biomass_mapping()` and friends).** A new pipeline turns a
+  handful of clipped biomass quadrats, many rising-plate / disc-meter
+  heights and the drone CHM + spectral indices into a calibrated
+  above-ground biomass map (kg/ha), following Page et al. (2025, *Rangeland
+  Ecology & Management*) and Vahidi et al. (2023, *Remote Sensing*).
+  `fit_plate_meter()` calibrates biomass against compressed plate height
+  (the double-sampling multiplier that turns plate-only points into biomass
+  points); `make_biomass_grid()` aggregates the indices + CHM onto a
+  management grid (index means, CHM mean/median/max/sd/var, and the Page
+  vegetation volume); `build_biomass_calibration()` joins the field points
+  to that grid; `fit_biomass_model()` fits a staged model — a parsimonious
+  Page linear model and (when `ranger` is available) a Vahidi random forest
+  with a categorical pasture term — reporting leave-one-out R2/RMSE/MAE and
+  the observed-vs-predicted 1:1-line stats, and keeping the lower-RMSE model
+  under `method = "auto"`; and `predict_biomass_map()` writes the
+  wall-to-wall `biomass_kgha.tif`. A `field_biomass_plate.csv` template
+  ships in `inst/extdata`.
+
 * **`finalize_dronebio_products()` collects a flight into one flat,
   documented folder.** A run otherwise leaves a deep, ODM-shaped tree
   plus raw DEM backups, a redundant RGB-only orthomosaic, the

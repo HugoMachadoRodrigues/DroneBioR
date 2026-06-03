@@ -1,0 +1,14 @@
+sample_id,pasture,x,y,biomass_kgha,plate_height_cm,sample_type
+C01,ifasbahia10,392010.5,3033012.3,2480,12.4,clip
+C02,ifasbahia10,392035.2,3033018.7,3120,15.1,clip
+C03,ifasbahia10,392058.9,3033041.0,1890,9.8,clip
+C04,ifasbahia10,392022.6,3033055.4,2750,13.6,clip
+C05,ifasbahia10,392047.1,3033030.2,2210,11.2,clip
+P01,ifasbahia10,392015.0,3033008.0,,10.5,plate
+P02,ifasbahia10,392028.4,3033025.9,,13.9,plate
+P03,ifasbahia10,392041.7,3033048.2,,8.6,plate
+P04,ifasbahia10,392052.3,3033015.5,,14.7,plate
+P05,ifasbahia10,392009.8,3033038.1,,9.1,plate
+P06,ifasbahia10,392033.0,3033060.0,,12.0,plate
+P07,ifasbahia10,392060.5,3033052.7,,16.2,plate
+P08,ifasbahia10,392019.2,3033043.6,,10.9,plate
