@@ -17,6 +17,39 @@
 # ETA. When processx is not installed the helper transparently falls
 # back to system2(), still emitting a single pre-run banner.
 
+#' Authoritative active ODM stage from the docker log
+#'
+#' ODM writes `Running <stage> stage` and `Finished <stage> stage`
+#' lines to its stdout. The active stage is the last one that started
+#' but has not yet finished. Returns `NA_character_` when the log is
+#' missing/empty or has no stage markers yet (the caller then falls
+#' back to the directory heuristic). Only stages in `expected_stages`
+#' are considered, so stray log text cannot inject a bogus stage.
+#'
+#' @noRd
+log_based_active_stage <- function(log_path, expected_stages) {
+  if (!is.character(log_path) || !length(log_path) ||
+      !file.exists(log_path)) {
+    return(NA_character_)
+  }
+  lines <- tryCatch(readLines(log_path, warn = FALSE),
+                    error = function(e) character())
+  if (!length(lines)) return(NA_character_)
+  running  <- sub(".*Running ([a-z_]+) stage.*",  "\\1",
+                  grep("Running [a-z_]+ stage",  lines, value = TRUE))
+  finished <- sub(".*Finished ([a-z_]+) stage.*", "\\1",
+                  grep("Finished [a-z_]+ stage", lines, value = TRUE))
+  running  <- running[running   %in% expected_stages]
+  finished <- finished[finished %in% expected_stages]
+  if (!length(running)) return(NA_character_)
+  # Walk the running stages newest-first; the active one is the most
+  # recent that has not been finished.
+  for (s in rev(running)) {
+    if (!(s %in% finished)) return(s)
+  }
+  NA_character_
+}
+
 #' Format a number of seconds as a compact human string
 #'
 #' @noRd
@@ -64,27 +97,56 @@ make_odm_stage_poller <- function(project_dir,
 
   function() {
     now <- Sys.time()
+
+    # --- Authoritative stage from the ODM log -----------------------------
+    # ODM prints `Running <stage> stage` / `Finished <stage> stage` to its
+    # stdout, which run_docker_with_progress() captures in
+    # <project_dir>/dronebior_odm.log. Those markers are the ground truth
+    # for which stage is *actually* executing. We prefer them over the
+    # directory heuristic because ODM creates some stage directories
+    # early — notably, when `--geo` is passed it materialises
+    # `odm_georeferencing/` to stage the coordinates while opensfm is
+    # still grinding, which fooled the directory-based heuristic into
+    # reporting odm_georeferencing as active for the whole opensfm pass.
+    log_active <- log_based_active_stage(file.path(project_dir,
+                                                   "dronebior_odm.log"),
+                                         expected_stages)
+
     existing <- list.dirs(project_dir, recursive = FALSE, full.names = FALSE)
     # Stages whose directory is present on disk AND was touched during
-    # the current run. The mtime filter is critical: stale stage
-    # directories from a previous failed/cancelled run still exist on
-    # disk; without the filter the canonical-order tie-breaker below
-    # would pick a downstream stale dir (e.g. odm_georeferencing) as
-    # "active" even when the current run is actually still grinding
-    # through opensfm, and the ETA would be wildly wrong.
+    # the current run (mtime filter rejects stale dirs from prior runs).
     candidate_stages <- intersect(expected_stages, existing)
-    started_stages <- character()
+    fresh_dir_stages <- character()
     if (length(candidate_stages)) {
       mtimes <- file.info(file.path(project_dir, candidate_stages))$mtime
       fresh <- !is.na(mtimes) & mtimes >= started_at
-      started_stages <- candidate_stages[fresh]
+      fresh_dir_stages <- candidate_stages[fresh]
     }
-    # Active stage = the latest canonical stage that is both on disk
-    # and was modified during this run.
-    active <- if (length(started_stages)) {
-      ord_idx <- max(match(started_stages, expected_stages))
-      expected_stages[ord_idx]
-    } else NA_character_
+
+    # Active stage: log marker wins; otherwise fall back to the latest
+    # canonical stage with a fresh directory.
+    active_from_log <- !is.na(log_active)
+    active <- if (active_from_log) {
+      log_active
+    } else if (length(fresh_dir_stages)) {
+      expected_stages[max(match(fresh_dir_stages, expected_stages))]
+    } else {
+      NA_character_
+    }
+
+    # "Started" stages for the progress count. When the active stage
+    # comes from the log we can safely infer that every canonical
+    # predecessor has run (ODM is strictly sequential), so we count
+    # everything up to and including the active stage. In the
+    # directory-only fallback we do NOT infer — ODM materialises some
+    # stage dirs out of order (e.g. odm_georeferencing under --geo), so
+    # we count only the directories that are actually present and fresh.
+    started_stages <- if (active_from_log) {
+      expected_stages[seq_len(match(active, expected_stages))]
+    } else {
+      fresh_dir_stages
+    }
+
     pending <- if (!is.na(active)) {
       idx <- match(active, expected_stages)
       if (idx < total_stages) expected_stages[(idx + 1L):total_stages] else character()

@@ -55,6 +55,71 @@ test_that("make_odm_stage_poller detects new stages once and reports active stag
   expect_match(joined_announcements, "`odm_orthophoto` started")
 })
 
+test_that("log_based_active_stage reads the authoritative running stage", {
+  fn <- DroneBioR:::log_based_active_stage
+  stages <- DroneBioR:::odm_stage_order()
+
+  log <- tempfile(fileext = ".log")
+  writeLines(c(
+    "[INFO]    Running dataset stage",
+    "[INFO]    Finished dataset stage",
+    "[INFO]    Running opensfm stage",
+    "2026-06-03 10:44:17 DEBUG: Undistorting image DJI_0295_D.JPG"
+  ), log)
+  # opensfm started, never finished -> it is the active stage, even
+  # though an odm_georeferencing DIRECTORY might exist on disk.
+  expect_equal(fn(log, stages), "opensfm")
+
+  # Once opensfm finishes and odm_dem starts, that becomes active.
+  writeLines(c(
+    "[INFO]    Running opensfm stage",
+    "[INFO]    Finished opensfm stage",
+    "[INFO]    Running odm_dem stage"
+  ), log)
+  expect_equal(fn(log, stages), "odm_dem")
+
+  # No markers yet / missing file -> NA (caller falls back to dirs).
+  expect_true(is.na(fn(tempfile(fileext = ".log"), stages)))
+  empty <- tempfile(fileext = ".log"); file.create(empty)
+  expect_true(is.na(fn(empty, stages)))
+})
+
+test_that("poller prefers the log stage over an early odm_georeferencing dir", {
+  # Reproduces the --geo bug: ODM creates odm_georeferencing/ early
+  # while opensfm is still running. The poller must report opensfm
+  # (from the log), not odm_georeferencing (from the directory).
+  project_dir <- tempfile("geo-early-")
+  dir.create(project_dir)
+  # Both dirs exist and are "fresh".
+  dir.create(file.path(project_dir, "opensfm"))
+  dir.create(file.path(project_dir, "odm_georeferencing"))
+  # The log says opensfm is the running stage.
+  writeLines(c(
+    "[INFO]    Running dataset stage",
+    "[INFO]    Finished dataset stage",
+    "[INFO]    Running opensfm stage"
+  ), file.path(project_dir, "dronebior_odm.log"))
+
+  Sys.sleep(0.05)  # ensure started_at < dir mtimes is not the gate here
+  poller <- DroneBioR:::make_odm_stage_poller(
+    project_dir = project_dir, image_count = 100L
+  )
+  state <- poller()
+  expect_equal(state$active_stage, "opensfm")
+  expect_match(state$status, "opensfm")
+})
+
+test_that("default_odm_concurrency returns a sane positive integer", {
+  n <- DroneBioR:::default_odm_concurrency()
+  expect_true(is.integer(n))
+  expect_gte(n, 1L)
+  expect_lte(n, 16L)
+})
+
+test_that("run_odm_dji_mavic_3m defaults max_concurrency to NULL (auto)", {
+  expect_null(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$max_concurrency))
+})
+
 test_that("make_odm_stage_poller ignores stale stage dirs from previous runs", {
   # Regression for the case where a previous failed ODM run left a
   # downstream stage directory (e.g. odm_georeferencing) on disk.

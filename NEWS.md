@@ -1,6 +1,29 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **Progress poller now reads ODM's own stage markers.** The poller
+  previously inferred the active stage from which stage *directories*
+  existed on disk. ODM creates some stage dirs out of order — notably
+  `odm_georeferencing/` is materialised early when `--geo` (PPK) is
+  used — so the poller reported `odm_georeferencing` (stuck at "2/13
+  stages") for the entire opensfm pass, even though opensfm was the
+  stage actually running. The poller now parses the authoritative
+  `Running <stage> stage` / `Finished <stage> stage` markers from the
+  docker log and only falls back to the directory heuristic when the
+  log has no markers yet. The stage count, ETA and "active stage"
+  line now track reality.
+
 ## Performance
+
+* **ODM concurrency auto-detects the machine's cores.** The default
+  `max_concurrency` was a hardcoded 4, which left most of a modern
+  multi-core machine idle (an Apple M1 Max has 10 cores; 4 workers
+  used ~2 of them). `run_odm_dji_mavic_3m()` now defaults
+  `max_concurrency = NULL`, resolved at run time to the physical core
+  count (capped at 16). Pass an explicit integer to override — lower
+  it on memory-constrained machines (each OpenSfM / OpenMVS worker
+  uses ~1-2 GB).
 
 * **`run_odm_dji_mavic_3m()` gains speed knobs for orthomosaic-only
   runs.** New `fast_orthophoto`, `build_dsm` and `build_dtm`
