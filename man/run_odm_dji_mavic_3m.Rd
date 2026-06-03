@@ -9,7 +9,7 @@ run_odm_dji_mavic_3m(
   force = FALSE,
   odm_image = "opendronemap/odm",
   orthophoto_resolution_cm = 5,
-  max_concurrency = 4,
+  max_concurrency = NULL,
   build_dsm = TRUE,
   build_dtm = TRUE,
   fast_orthophoto = FALSE,
