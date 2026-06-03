@@ -2,6 +2,22 @@
 
 ## New features
 
+* **`despike_dem()` removes isolated DSM / DTM spikes.** Surface
+  models routinely sprout a handful of single-pixel "needle" spikes
+  tens of metres tall from mis-reconstructed dense-cloud points where
+  the imagery was blurry or low-texture — devastating for 3D
+  visualisation and slope/volume stats, yet a vanishing fraction of
+  pixels (observed: 286 of ~13M, deviating up to 45 m from an
+  otherwise locally-smooth surface where 99.9% of pixels vary by
+  under 0.3 m). The new exported `despike_dem()` is a local outlier
+  filter: it compares each cell to its `window`x`window` neighbourhood
+  median and replaces cells deviating more than `max_deviation` metres
+  with the local median (or NA). Because real terrain and vegetation
+  are spatially coherent, only the isolated spikes are caught — a
+  global percentile clip cannot make that distinction. Apply it to a
+  raw DSM before 3D rendering: `despike_dem("odm_dem/dsm.tif",
+  out_path = "odm_dem/dsm_clean.tif")`.
+
 * **DJI Mavic 3M multispectral bands now reconstructed together
   (clean spectral indices).** `run_odm_dji_mavic_3m()` gains
   `ms_mode = "multispectral"` (the new default). Instead of the legacy
