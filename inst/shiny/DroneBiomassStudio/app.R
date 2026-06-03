@@ -8572,15 +8572,25 @@ server <- function(input, output, session) {
             stop("DJI Mavic 3M detected. Install the `callr` package to run the per-band pipeline from the Studio: install.packages('callr').",
                  call. = FALSE)
           }
-          log_path <- file.path(p$odm_dataset_dir, "odm_run.log")
-          dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
-          writeLines(character(), log_path)
-          updateTextInput(session, "odm_log_path", value = log_path)
+          # callr's stdout/stderr capture the R-level messages (PPK
+          # detection, per-band banners, the final error). The ODM run
+          # progress CARD, however, parses for ODM's own "Running X
+          # stage" / "Finished X stage" markers + Traceback / error
+          # lines — and those live in the docker output, which
+          # run_docker_with_progress() writes to
+          # <band_project>/dronebior_odm.log. The long-pole RGB band
+          # runs under project$odm_project_name, so point the card at
+          # that band's docker log. It does not exist until the RGB
+          # docker starts; the card handles a missing file gracefully
+          # and picks it up the moment it appears.
+          callr_log <- file.path(p$odm_dataset_dir, "odm_run.log")
+          card_log  <- file.path(p$odm_dataset_dir, p$odm_project_name,
+                                 "dronebior_odm.log")
+          dir.create(dirname(callr_log), recursive = TRUE, showWarnings = FALSE)
+          writeLines(character(), callr_log)
+          updateTextInput(session, "odm_log_path", value = card_log)
 
           # Spawn the full per-band pipeline in a background R session.
-          # callr forwards stdout / stderr to the same log_path the
-          # progress card already watches, so the existing ODM run
-          # progress UI keeps working without any other changes.
           bg <- callr::r_bg(
             func = function(project, orthophoto_resolution_cm) {
               DroneBioR::run_odm_dji_mavic_3m(
@@ -8592,10 +8602,11 @@ server <- function(input, output, session) {
               project                  = p,
               orthophoto_resolution_cm = input$resolution
             ),
-            stdout = log_path,
+            stdout = callr_log,
             stderr = "2>&1",
             supervise = FALSE
           )
+          log_path <- card_log
 
           image_count <- length(list.files(
             p$images_dir,
