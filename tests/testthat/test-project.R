@@ -302,6 +302,28 @@ test_that("despike_dem removes wide towers via height-above-ground", {
   expect_true(any(abs(vals[!is.na(vals)] - 12) < 1))     # 12 m canopy survived
 })
 
+test_that("despike_dem iterations converge a wide pit and never worsen it", {
+  # A wide deep pit (12x12 cluster at -40 m) on a flat surface, with a
+  # trend cell larger than the pit. Two iterations must clear it and
+  # never do worse than one.
+  r <- terra::rast(nrows = 80, ncols = 80, xmin = 0, xmax = 80,
+                   ymin = 0, ymax = 80)
+  m <- matrix(0, 80, 80)
+  m[30:41, 30:41] <- -40        # wide deep pit, 12x12
+  terra::values(r) <- m
+  expect_lt(terra::minmax(r)[1, 1], -30)             # pit present
+
+  one <- despike_dem(r, max_height_above_ground = 20,
+                     max_depth_below_ground = 2, trend_cell_m = 30,
+                     iterations = 1)
+  two <- despike_dem(r, max_height_above_ground = 20,
+                     max_depth_below_ground = 2, trend_cell_m = 30,
+                     iterations = 2)
+  # Two passes are never deeper than one, and clear the pit near 0.
+  expect_gte(terra::minmax(two)[1, 1], terra::minmax(one)[1, 1])
+  expect_gte(terra::minmax(two)[1, 1], -5)
+})
+
 test_that("despike_dem fills downward pits below the ground", {
   # A DSM is the top surface: a pixel 15 m BELOW the terrain is an
   # artifact (the downward spikes seen in 3D). It must be filled back
