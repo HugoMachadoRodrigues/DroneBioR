@@ -640,6 +640,11 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 #' @param trend_cell_m Coarse-trend cell size in metres used when
 #'   `ground` is not supplied. Default `15` — should comfortably
 #'   exceed the width of the towers you want removed.
+#' @param iterations Integer, default `2`. Number of detect-and-fill
+#'   passes. A single pass cannot fully clean a wide blob (while it is
+#'   present it drags the local trend toward itself, hiding its deepest
+#'   core); a second pass over the now-mostly-cleaned surface removes
+#'   the residual. The loop stops early once a pass changes nothing.
 #' @param fill One of `"median"` (replace flagged cells with the local
 #'   median / ground — keeps a continuous surface, best for 3D viz) or
 #'   `"NA"` (drop them to NoData). Default `"median"`.
@@ -661,12 +666,49 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 despike_dem <- function(dem, window = 5, max_deviation = 3,
                         max_height_above_ground = NULL, ground = NULL,
                         max_depth_below_ground = 2,
-                        trend_cell_m = 15,
+                        trend_cell_m = 15, iterations = 2L,
                         fill = c("median", "NA"), out_path = NULL) {
   fill <- match.arg(fill)
-  r <- if (is.character(dem)) terra::rast(dem)[[1L]] else dem[[1L]]
+  r0 <- if (is.character(dem)) terra::rast(dem)[[1L]] else dem[[1L]]
   if (window %% 2L == 0L) window <- window + 1L
 
+  # A single pass cannot fully clean a wide pit/tower: while the blob is
+  # present it drags the local trend toward itself, so its deepest core
+  # hides (DEM - trend stays within threshold there). Iterating fixes
+  # this — once the first pass replaces the bulk of the blob with the
+  # surrounding ground, the recomputed trend is clean and the residual
+  # core stands out and is removed on the next pass. Convergence is fast
+  # (typically 2 passes); the loop stops early when a pass changes
+  # nothing.
+  iterations <- max(1L, as.integer(iterations))
+  cleaned <- r0
+  for (it in seq_len(iterations)) {
+    res <- despike_one_pass(cleaned, window, max_deviation,
+                            max_height_above_ground, ground,
+                            max_depth_below_ground, trend_cell_m, fill)
+    cleaned <- res$cleaned
+    if (is.na(res$n_spikes) || res$n_spikes == 0L) break
+  }
+  names(cleaned) <- names(r0)
+
+  if (!is.null(out_path)) {
+    dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+    terra::writeRaster(cleaned, out_path, overwrite = TRUE, datatype = "FLT4S",
+                       gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2",
+                                "BIGTIFF=IF_SAFER"))
+    return(invisible(cleaned))
+  }
+  cleaned
+}
+
+# One despike pass: needle (local-median) + tower/pit (height-above-
+# ground) detection, returning the cleaned raster and how many cells
+# it replaced. Called repeatedly by despike_dem() to converge on wide
+# blobs.
+#' @noRd
+despike_one_pass <- function(r, window, max_deviation,
+                             max_height_above_ground, ground,
+                             max_depth_below_ground, trend_cell_m, fill) {
   # --- pass 1: local needle detector ---
   local_med <- terra::focal(r, w = window, fun = "median",
                             na.policy = "omit", na.rm = TRUE)
@@ -750,7 +792,7 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
   }
   names(cleaned) <- names(r)
 
-  if (!is.na(n_spikes)) {
+  if (!is.na(n_spikes) && n_spikes > 0L) {
     extra <- if (!is.null(max_height_above_ground) && !is.na(n_towers)) {
       sprintf(" (incl. %d tower/pit pixel(s) outside [-%g, %g] m of ground)",
               n_towers, abs(max_depth_below_ground %||% 0),
@@ -762,14 +804,7 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
     ))
   }
 
-  if (!is.null(out_path)) {
-    dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
-    terra::writeRaster(cleaned, out_path, overwrite = TRUE, datatype = "FLT4S",
-                       gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2",
-                                "BIGTIFF=IF_SAFER"))
-    return(invisible(cleaned))
-  }
-  cleaned
+  list(cleaned = cleaned, n_spikes = n_spikes)
 }
 
 #' Detect existing ODM project subdirectories in a project root

@@ -12,6 +12,7 @@ despike_dem(
   ground = NULL,
   max_depth_below_ground = 2,
   trend_cell_m = 15,
+  iterations = 2L,
   fill = c("median", "NA"),
   out_path = NULL
 )
@@ -45,6 +46,12 @@ downward spikes.}
 \item{trend_cell_m}{Coarse-trend cell size in metres used when
 \code{ground} is not supplied. Default \code{15} — should comfortably
 exceed the width of the towers you want removed.}
+
+\item{iterations}{Integer, default \code{2}. Number of detect-and-fill
+passes. A single pass cannot fully clean a wide blob (while it is
+present it drags the local trend toward itself, hiding its deepest
+core); a second pass over the now-mostly-cleaned surface removes
+the residual. The loop stops early once a pass changes nothing.}
 
 \item{fill}{One of \code{"median"} (replace flagged cells with the local
 median / ground — keeps a continuous surface, best for 3D viz) or

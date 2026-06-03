@@ -2,6 +2,20 @@
 
 ## New features
 
+* **`despike_dem()` iterates to clear wide pits/towers (new
+  `iterations`, default 2).** A single pass cannot fully remove a blob
+  wider than the trend cell: while the blob is present it drags the
+  local trend toward itself, so its deepest core hides (DEM − trend
+  stays within threshold there). The function now runs the
+  detect-and-fill pass `iterations` times — once the first pass
+  replaces the bulk of the blob with surrounding ground, the
+  recomputed trend is clean and the residual core stands out and is
+  removed next pass. On the user's data the lone remaining downward
+  pit (a 6 m-wide, −56 m cone) went from 32 residual sub-ground pixels
+  after one pass to **zero** after two; the DSM finished at −3..26 m
+  and the DTM at −3..6 m. The loop stops early when a pass changes
+  nothing.
+
 * **`despike_dem()` robustifies a spiked ground reference.** When the
   supplied `ground` (e.g. the DTM) carries the *same* spikes as the
   DEM being cleaned — common, since the user confirmed downward
