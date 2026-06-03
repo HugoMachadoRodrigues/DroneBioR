@@ -2,6 +2,21 @@
 
 ## New features
 
+* **`despike_dem()` robustifies a spiked ground reference.** When the
+  supplied `ground` (e.g. the DTM) carries the *same* spikes as the
+  DEM being cleaned — common, since the user confirmed downward
+  spikes appear in both the DSM and the DTM — using it directly made
+  shared spikes invisible (DSM − DTM looks normal where both dip). The
+  height-above-ground pass now (a) replaces any ground cell that
+  departs from its own coarse median trend by more than 5 m with the
+  trend, and (b) fills ground NoData gaps (where the DEM extends past
+  the DTM at the boundary) with the DEM's own coarse trend, so edge
+  pits no longer escape for lack of a reference. For DEMs whose ground
+  is itself heavily spiked, passing `ground = NULL` (use the
+  spike-robust coarse trend directly) is the most reliable choice; on
+  a real flight it cut the DSM range from −56..133 m to −21..35 m and
+  the DTM from −48..11 m to −7..10 m.
+
 * **`despike_dem()` also fills downward pits.** The height-above-ground
   pass now flags cells more than `max_depth_below_ground` metres
   (default 2) *below* the ground as well as the towers above it — a
