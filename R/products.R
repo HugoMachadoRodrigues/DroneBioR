@@ -591,26 +591,52 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 #' visualisation (the surface sprouts towers) and for any slope /
 #' volume statistic, yet they are a vanishing fraction of pixels.
 #'
-#' This is a **local** outlier filter, which is the right tool for
-#' spikes: it compares each cell to the median of its
-#' `window`x`window` neighbourhood and flags cells whose absolute
-#' deviation exceeds `max_deviation` metres. Because real terrain and
-#' vegetation are spatially coherent (a tree is a cluster of similar
-#' tall pixels, so its residual from the local median is small), only
-#' the isolated spikes are caught. A global percentile clip cannot
-#' make this distinction — it would either miss spikes that are rarer
-#' than the percentile or clip the tops of genuine tall features.
+#' Two complementary detectors run, and a cell flagged by either is
+#' cleaned:
+#'
+#' 1. **Local needle filter** (always on): compares each cell to the
+#'    median of its `window`x`window` neighbourhood and flags cells
+#'    whose absolute deviation exceeds `max_deviation` metres. This
+#'    catches single-pixel / tiny-cluster spikes that are taller than
+#'    their immediate surroundings.
+#' 2. **Height-above-ground filter** (opt-in via
+#'    `max_height_above_ground`): some reconstruction artifacts are not
+#'    needles but *wide towers* — coherent blobs several metres across
+#'    where a blurry / low-texture patch ballooned upward. A small
+#'    neighbourhood median cannot see those (the tower's own pixels
+#'    dominate the window), so this second pass measures each cell's
+#'    height above the ground and flags anything taller than
+#'    `max_height_above_ground` metres. The ground reference is the
+#'    `ground` raster (pass the DTM) when supplied, otherwise a coarse
+#'    trend surface built by aggregating the DEM to ~`trend_cell_m`-metre
+#'    cells (large enough to average over the towers). Use this for a
+#'    survey where you know the real surface ceiling — e.g. a pasture
+#'    whose canopy tops out near 15 m but whose DSM sprouts 50-130 m
+#'    towers.
+#'
+#' Because real terrain and vegetation are spatially coherent, both
+#' detectors leave genuine features intact; a global percentile clip
+#' could not make that distinction.
 #'
 #' @param dem A `terra::SpatRaster` (first layer used) or a path to a
 #'   DEM GeoTIFF.
 #' @param window Odd integer neighbourhood size in pixels for the
 #'   local median. Default `5`.
 #' @param max_deviation Maximum allowed absolute deviation (metres)
-#'   from the local median before a cell is treated as a spike.
-#'   Default `3`. Lower it to be more aggressive.
-#' @param fill One of `"median"` (replace spikes with the local
-#'   median — keeps a continuous surface, best for 3D viz) or `"NA"`
-#'   (drop spikes to NoData). Default `"median"`.
+#'   from the local median before a cell is treated as a needle spike.
+#'   Default `3`.
+#' @param max_height_above_ground Optional numeric (metres). When set,
+#'   also flag cells whose height above the ground reference exceeds
+#'   this — the wide-tower detector. `NULL` (default) disables it.
+#' @param ground Optional ground reference for the height-above-ground
+#'   filter: a `terra::SpatRaster` or path (typically the DTM). When
+#'   `NULL`, a coarse trend is built from the DEM itself.
+#' @param trend_cell_m Coarse-trend cell size in metres used when
+#'   `ground` is not supplied. Default `15` — should comfortably
+#'   exceed the width of the towers you want removed.
+#' @param fill One of `"median"` (replace flagged cells with the local
+#'   median / ground — keeps a continuous surface, best for 3D viz) or
+#'   `"NA"` (drop them to NoData). Default `"median"`.
 #' @param out_path Optional path to write the cleaned DEM. When
 #'   `NULL` (default) nothing is written and the cleaned raster is
 #'   returned in memory.
@@ -618,36 +644,82 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 #'   is written).
 #' @examples
 #' \dontrun{
-#'   # Clean a DSM in place for 3D visualisation:
+#'   # Needles only:
 #'   despike_dem("odm_dem/dsm.tif", out_path = "odm_dem/dsm_clean.tif")
+#'   # Wide towers too, using the DTM as ground (pasture canopy <= 20 m):
+#'   despike_dem("odm_dem/dsm.tif", ground = "odm_dem/dtm.tif",
+#'               max_height_above_ground = 20,
+#'               out_path = "odm_dem/dsm_clean.tif")
 #' }
 #' @export
 despike_dem <- function(dem, window = 5, max_deviation = 3,
+                        max_height_above_ground = NULL, ground = NULL,
+                        trend_cell_m = 15,
                         fill = c("median", "NA"), out_path = NULL) {
   fill <- match.arg(fill)
   r <- if (is.character(dem)) terra::rast(dem)[[1L]] else dem[[1L]]
   if (window %% 2L == 0L) window <- window + 1L
 
+  # --- pass 1: local needle detector ---
   local_med <- terra::focal(r, w = window, fun = "median",
                             na.policy = "omit", na.rm = TRUE)
-  residual  <- r - local_med
-  is_spike  <- abs(residual) > max_deviation
+  is_spike  <- abs(r - local_med) > max_deviation
+
+  # --- pass 2: wide-tower detector (height above ground) ---
+  n_towers <- 0L
+  ground_surface <- NULL
+  if (!is.null(max_height_above_ground)) {
+    if (!is.null(ground)) {
+      g <- if (is.character(ground)) terra::rast(ground)[[1L]] else ground[[1L]]
+      if (!terra::compareGeom(r, g, stopOnError = FALSE, lyrs = FALSE,
+                              messages = FALSE)) {
+        g <- terra::resample(g, r, method = "bilinear")
+      }
+      ground_surface <- g
+    } else {
+      # Coarse trend: aggregate to ~trend_cell_m cells (median is robust
+      # to the towers when the cell is wider than a tower), then resample
+      # back to the DEM grid.
+      fact <- max(1L, as.integer(round(trend_cell_m / terra::res(r)[1L])))
+      coarse <- terra::aggregate(r, fact = fact, fun = "median", na.rm = TRUE)
+      ground_surface <- terra::resample(coarse, r, method = "bilinear")
+    }
+    is_tower <- (r - ground_surface) > max_height_above_ground
+    is_tower <- terra::ifel(is.na(is_tower), FALSE, is_tower)
+    n_towers <- tryCatch(
+      as.integer(terra::global(is_tower, "sum", na.rm = TRUE)[[1L]]),
+      error = function(e) NA_integer_)
+    is_spike <- is_spike | is_tower
+  }
 
   n_spikes <- tryCatch(
     as.integer(terra::global(is_spike, "sum", na.rm = TRUE)[[1L]]),
     error = function(e) NA_integer_
   )
+
+  # Fill: needles -> local median; towers -> ground surface (so the
+  # surface drops back to ground, not to a still-elevated local median).
+  replacement <- if (!is.null(ground_surface)) {
+    terra::ifel((r - ground_surface) > (max_height_above_ground %||% Inf),
+                ground_surface, local_med)
+  } else {
+    local_med
+  }
   cleaned <- if (identical(fill, "median")) {
-    terra::ifel(is_spike, local_med, r)
+    terra::ifel(is_spike, replacement, r)
   } else {
     terra::ifel(is_spike, NA, r)
   }
   names(cleaned) <- names(r)
 
   if (!is.na(n_spikes)) {
+    extra <- if (!is.null(max_height_above_ground) && !is.na(n_towers)) {
+      sprintf(" (incl. %d wide-tower pixel(s) > %g m above ground)",
+              n_towers, max_height_above_ground)
+    } else ""
     message(sprintf(
-      "[despike] Replaced %d spike pixel(s) deviating > %g m from the %dx%d local median (fill = %s).",
-      n_spikes, max_deviation, window, window, fill
+      "[despike] Replaced %d cell(s)%s (fill = %s).",
+      n_spikes, extra, fill
     ))
   }
 

@@ -8,6 +8,9 @@ despike_dem(
   dem,
   window = 5,
   max_deviation = 3,
+  max_height_above_ground = NULL,
+  ground = NULL,
+  trend_cell_m = 15,
   fill = c("median", "NA"),
   out_path = NULL
 )
@@ -20,12 +23,24 @@ DEM GeoTIFF.}
 local median. Default \code{5}.}
 
 \item{max_deviation}{Maximum allowed absolute deviation (metres)
-from the local median before a cell is treated as a spike.
-Default \code{3}. Lower it to be more aggressive.}
+from the local median before a cell is treated as a needle spike.
+Default \code{3}.}
 
-\item{fill}{One of \code{"median"} (replace spikes with the local
-median — keeps a continuous surface, best for 3D viz) or \code{"NA"}
-(drop spikes to NoData). Default \code{"median"}.}
+\item{max_height_above_ground}{Optional numeric (metres). When set,
+also flag cells whose height above the ground reference exceeds
+this — the wide-tower detector. \code{NULL} (default) disables it.}
+
+\item{ground}{Optional ground reference for the height-above-ground
+filter: a \code{terra::SpatRaster} or path (typically the DTM). When
+\code{NULL}, a coarse trend is built from the DEM itself.}
+
+\item{trend_cell_m}{Coarse-trend cell size in metres used when
+\code{ground} is not supplied. Default \code{15} — should comfortably
+exceed the width of the towers you want removed.}
+
+\item{fill}{One of \code{"median"} (replace flagged cells with the local
+median / ground — keeps a continuous surface, best for 3D viz) or
+\code{"NA"} (drop them to NoData). Default \code{"median"}.}
 
 \item{out_path}{Optional path to write the cleaned DEM. When
 \code{NULL} (default) nothing is written and the cleaned raster is
@@ -45,19 +60,41 @@ visualisation (the surface sprouts towers) and for any slope /
 volume statistic, yet they are a vanishing fraction of pixels.
 }
 \details{
-This is a \strong{local} outlier filter, which is the right tool for
-spikes: it compares each cell to the median of its
-\code{window}x\code{window} neighbourhood and flags cells whose absolute
-deviation exceeds \code{max_deviation} metres. Because real terrain and
-vegetation are spatially coherent (a tree is a cluster of similar
-tall pixels, so its residual from the local median is small), only
-the isolated spikes are caught. A global percentile clip cannot
-make this distinction — it would either miss spikes that are rarer
-than the percentile or clip the tops of genuine tall features.
+Two complementary detectors run, and a cell flagged by either is
+cleaned:
+\enumerate{
+\item \strong{Local needle filter} (always on): compares each cell to the
+median of its \code{window}x\code{window} neighbourhood and flags cells
+whose absolute deviation exceeds \code{max_deviation} metres. This
+catches single-pixel / tiny-cluster spikes that are taller than
+their immediate surroundings.
+\item \strong{Height-above-ground filter} (opt-in via
+\code{max_height_above_ground}): some reconstruction artifacts are not
+needles but \emph{wide towers} — coherent blobs several metres across
+where a blurry / low-texture patch ballooned upward. A small
+neighbourhood median cannot see those (the tower's own pixels
+dominate the window), so this second pass measures each cell's
+height above the ground and flags anything taller than
+\code{max_height_above_ground} metres. The ground reference is the
+\code{ground} raster (pass the DTM) when supplied, otherwise a coarse
+trend surface built by aggregating the DEM to ~\code{trend_cell_m}-metre
+cells (large enough to average over the towers). Use this for a
+survey where you know the real surface ceiling — e.g. a pasture
+whose canopy tops out near 15 m but whose DSM sprouts 50-130 m
+towers.
+}
+
+Because real terrain and vegetation are spatially coherent, both
+detectors leave genuine features intact; a global percentile clip
+could not make that distinction.
 }
 \examples{
 \dontrun{
-  # Clean a DSM in place for 3D visualisation:
+  # Needles only:
   despike_dem("odm_dem/dsm.tif", out_path = "odm_dem/dsm_clean.tif")
+  # Wide towers too, using the DTM as ground (pasture canopy <= 20 m):
+  despike_dem("odm_dem/dsm.tif", ground = "odm_dem/dtm.tif",
+              max_height_above_ground = 20,
+              out_path = "odm_dem/dsm_clean.tif")
 }
 }
