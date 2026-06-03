@@ -2,6 +2,19 @@
 
 ## New features
 
+* **`finalize_dronebio_products()` collects a flight into one flat,
+  documented folder.** A run otherwise leaves a deep, ODM-shaped tree
+  plus raw DEM backups, a redundant RGB-only orthomosaic, the
+  reflectance stack and logs. The new helper copies just the products
+  you reuse — `orthomosaic.tif`, `dsm.tif`, `dtm.tif`, `chm.tif`,
+  `spectral_indices.tif`, `biomass_proxy.tif` — into `<project>/products/`
+  under simple names, writes a single `metadata.json` (generator
+  version, run parameters, and per raster the CRS, resolution, extent,
+  band names and per-band min/mean/max), and removes the intermediate
+  scaffolding. The 7-band DJI stack is preferred as the orthomosaic
+  when present. Pass `remove_scaffolding = FALSE` to keep the
+  intermediates.
+
 * **The DJI Mavic 3M pipeline harmonizes DEMs by default.**
   `run_odm_dji_mavic_3m()` now runs [harmonize_dem_products()] at the
   end of every flight (new `harmonize = TRUE`, `canopy_ceiling = 18`),
