@@ -168,6 +168,76 @@ test_that("ppk_cli_rtklib_dji errors clearly when CLI tools are missing", {
   )
 })
 
+test_that("odm_log_has_exifread_crash detects the EXIF MakerNote signature", {
+  fn <- DroneBioR:::odm_log_has_exifread_crash
+
+  crash_log <- tempfile(fileext = ".log")
+  writeLines(c(
+    "[INFO]    Running dataset stage",
+    "[INFO]    Loading 121 images",
+    "Traceback (most recent call last):",
+    "  File \"/code/venv/lib/python3.12/site-packages/exifread/__init__.py\", line 121, in process_file",
+    "    hdr.decode_maker_note()",
+    "IndexError: list index out of range"
+  ), crash_log)
+  expect_true(fn(crash_log))
+
+  # A normal log (no exifread crash) must not trip the detector.
+  ok_log <- tempfile(fileext = ".log")
+  writeLines(c(
+    "[INFO]    Running dataset stage",
+    "[INFO]    Finished dataset stage",
+    "[INFO]    Running opensfm stage"
+  ), ok_log)
+  expect_false(fn(ok_log))
+
+  # Missing / empty inputs are FALSE, not errors.
+  expect_false(fn(tempfile(fileext = ".log")))
+  expect_false(fn(NULL))
+})
+
+test_that("sanitize_dji_exif_makernotes errors clearly when exiftool is missing", {
+  skip_if(nzchar(Sys.which("exiftool")),
+          "exiftool is installed; cannot test the missing-tool path")
+  img <- tempfile(fileext = ".jpg")
+  file.create(img)
+  expect_error(
+    DroneBioR:::sanitize_dji_exif_makernotes(img),
+    "exiftool is required"
+  )
+})
+
+test_that("sanitize_dji_exif_makernotes is a no-op on an empty path set", {
+  expect_equal(DroneBioR:::sanitize_dji_exif_makernotes(character()), 0L)
+  expect_equal(
+    DroneBioR:::sanitize_dji_exif_makernotes(tempfile(fileext = ".jpg")),
+    0L
+  )
+})
+
+test_that("populate_band_images_dir never hardlinks when sanitizing", {
+  # When sanitize_exif = TRUE the function must make real copies, not
+  # hardlinks — a hardlink shares the inode with the source, so an
+  # in-place exiftool rewrite would corrupt the user's originals.
+  skip_if_not(nzchar(Sys.which("exiftool")),
+              "exiftool not installed; sanitize path is unreachable")
+  src <- tempfile("src-"); dir.create(src)
+  img <- file.path(src, "DJI_20260501120009_0001_D.JPG")
+  # A 1x1 JPEG so exiftool has a valid file to operate on.
+  writeBin(as.raw(c(
+    0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46,0x00,0x01,
+    0x01,0x00,0x00,0x01,0x00,0x01,0x00,0x00,0xff,0xd9
+  )), img)
+  manifest <- data.frame(file = img, filename = basename(img),
+                         stringsAsFactors = FALSE)
+  dest <- tempfile("dest-")
+  DroneBioR:::populate_band_images_dir(manifest, dest, sanitize_exif = TRUE)
+  copied <- file.path(dest, basename(img))
+  expect_true(file.exists(copied))
+  # Different inode => a real copy, not a hardlink.
+  expect_false(isTRUE(file.info(copied)$ino == file.info(img)$ino))
+})
+
 test_that("has_djim3m_images detects the Mavic 3M filename pattern", {
   yes <- tempfile("djim3m-yes-"); dir.create(yes)
   file.create(file.path(yes, "DJI_20260501132033_0001_D.JPG"))
