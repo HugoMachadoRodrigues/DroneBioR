@@ -10,6 +10,7 @@ despike_dem(
   max_deviation = 3,
   max_height_above_ground = NULL,
   ground = NULL,
+  max_depth_below_ground = 2,
   trend_cell_m = 15,
   fill = c("median", "NA"),
   out_path = NULL
@@ -33,6 +34,13 @@ this — the wide-tower detector. \code{NULL} (default) disables it.}
 \item{ground}{Optional ground reference for the height-above-ground
 filter: a \code{terra::SpatRaster} or path (typically the DTM). When
 \code{NULL}, a coarse trend is built from the DEM itself.}
+
+\item{max_depth_below_ground}{Numeric (metres), default \code{2}. Used
+only when the height-above-ground filter is active. A DSM is the
+\emph{top} surface, so a cell more than this far \strong{below} the ground
+is impossible — a downward spike. Such cells are flagged and
+filled from the ground surface too. Set \code{NULL} to ignore
+downward spikes.}
 
 \item{trend_cell_m}{Coarse-trend cell size in metres used when
 \code{ground} is not supplied. Default \code{15} — should comfortably

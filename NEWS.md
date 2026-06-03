@@ -2,6 +2,16 @@
 
 ## New features
 
+* **`despike_dem()` also fills downward pits.** The height-above-ground
+  pass now flags cells more than `max_depth_below_ground` metres
+  (default 2) *below* the ground as well as the towers above it — a
+  DSM is the top surface, so a pixel well below the terrain is the
+  downward-spike artifact visible as needles hanging beneath the
+  surface in 3D. On a real flight this removed 1488 sub-ground pixels
+  (down to −25 m) alongside the towers. Genuine edge tree canopies
+  (smooth, a few metres tall — verified at 0.03 m local roughness)
+  sit within the band and are correctly preserved.
+
 * **`despike_dem()` gains a wide-tower (height-above-ground) pass.**
   Some reconstruction artifacts are not single-pixel needles but
   coherent blobs several metres across — a blurry patch ballooning to
