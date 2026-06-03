@@ -7730,7 +7730,18 @@ server <- function(input, output, session) {
 
   manifest <- reactive({
     validate(need(dir.exists(input$images_dir), paste("Image folder not found:", input$images_dir)))
-    list_micasense_images(input$images_dir)
+    # DJI Mavic 3M datasets do not match the MicaSense `capture_band`
+    # filename pattern that list_micasense_images() enforces, so we
+    # dispatch on the permissive lister (which already knows to drop
+    # the per-capture MS TIFs when paired with a `_D.JPG` sibling)
+    # when DJI Mavic 3M images are present. Otherwise keep the
+    # MicaSense path so legacy MicaSense / Sequoia flights show their
+    # capture/band breakdown as before.
+    if (DroneBioR::has_djim3m_images(input$images_dir)) {
+      list_aerial_images(input$images_dir)
+    } else {
+      list_micasense_images(input$images_dir)
+    }
   })
 
   # Flight overlay (image-centre markers + arrow icons on the GIS map).
@@ -8547,6 +8558,70 @@ server <- function(input, output, session) {
           stop("Docker not found in PATH. Install/start Docker Desktop.", call. = FALSE)
         }
         p <- project()
+
+        # DJI Mavic 3M: the camera ships 1 RGB JPG + 4 single-band MS
+        # TIFFs per shot. The legacy `list_micasense_images()` rejects
+        # those filenames; the manual `system2(docker, ...)` dispatch
+        # below would also only produce an RGB ortho. Route to
+        # run_odm_dji_mavic_3m() instead, which orchestrates 5 per-
+        # band ODM runs + stacks the 7-band result. We run it inside
+        # a callr background R session so the Shiny UI stays
+        # responsive while the multi-hour pipeline executes.
+        if (DroneBioR::has_djim3m_images(p$images_dir)) {
+          if (!requireNamespace("callr", quietly = TRUE)) {
+            stop("DJI Mavic 3M detected. Install the `callr` package to run the per-band pipeline from the Studio: install.packages('callr').",
+                 call. = FALSE)
+          }
+          log_path <- file.path(p$odm_dataset_dir, "odm_run.log")
+          dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+          writeLines(character(), log_path)
+          updateTextInput(session, "odm_log_path", value = log_path)
+
+          # Spawn the full per-band pipeline in a background R session.
+          # callr forwards stdout / stderr to the same log_path the
+          # progress card already watches, so the existing ODM run
+          # progress UI keeps working without any other changes.
+          bg <- callr::r_bg(
+            func = function(project, orthophoto_resolution_cm) {
+              DroneBioR::run_odm_dji_mavic_3m(
+                project                  = project,
+                orthophoto_resolution_cm = orthophoto_resolution_cm
+              )
+            },
+            args = list(
+              project                  = p,
+              orthophoto_resolution_cm = input$resolution
+            ),
+            stdout = log_path,
+            stderr = "2>&1",
+            supervise = FALSE
+          )
+
+          image_count <- length(list.files(
+            p$images_dir,
+            pattern = "^DJI_[0-9]+_[0-9]+_D\\.",
+            ignore.case = TRUE
+          ))
+          DroneBioR:::write_active_run_record(
+            run_id      = paste0("dji-mavic-3m-", bg$get_pid()),
+            log_path    = log_path,
+            project_dir = p$project_dir,
+            image_count = image_count
+          )
+
+          showNotification(
+            paste0(
+              "DJI Mavic 3M dataset detected. Running the 5 per-band ",
+              "pipeline (RGB + MS_G + MS_R + MS_RE + MS_NIR) in the ",
+              "background (pid ", bg$get_pid(), "). ",
+              "Watch the 'ODM run progress' card or tail the log: ",
+              log_path
+            ),
+            type = "message", duration = 14
+          )
+          return(invisible(NULL))
+        }
+
         manifest <- switch(cam,
           multispectral = list_micasense_images(p$images_dir),
           rgb           = list_aerial_images(p$images_dir))

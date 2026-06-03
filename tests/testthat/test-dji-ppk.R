@@ -168,6 +168,21 @@ test_that("ppk_cli_rtklib_dji errors clearly when CLI tools are missing", {
   )
 })
 
+test_that("has_djim3m_images detects the Mavic 3M filename pattern", {
+  yes <- tempfile("djim3m-yes-"); dir.create(yes)
+  file.create(file.path(yes, "DJI_20260501132033_0001_D.JPG"))
+  file.create(file.path(yes, "DJI_20260501132034_0002_MS_NIR.TIF"))
+  expect_true(has_djim3m_images(yes))
+
+  no_files <- tempfile("djim3m-no-"); dir.create(no_files)
+  file.create(file.path(no_files, "IMG_0001_1.tif"))  # MicaSense-shaped
+  file.create(file.path(no_files, "random.jpg"))
+  expect_false(has_djim3m_images(no_files))
+
+  missing_dir <- tempfile("never-")
+  expect_false(has_djim3m_images(missing_dir))
+})
+
 test_that("run_one_dji_band passes --geo to ODM when .MRK is present", {
   body_str <- paste(
     deparse(body(DroneBioR:::run_one_dji_band)),

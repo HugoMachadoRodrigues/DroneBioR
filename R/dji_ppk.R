@@ -27,6 +27,35 @@
 # `run_odm_dji_mavic_3m()` calls them automatically; advanced users
 # can also use them directly.
 
+#' Does this folder hold a DJI Mavic 3M image set?
+#'
+#' Checks whether *any* file in `images_dir` matches the DJI Mavic 3M
+#' filename pattern (`DJI_<datetime>_<NNNN>_<D|MS_(G|R|RE|NIR)>.<ext>`).
+#' Used by the Drone Biomass Studio app to gate which manifest /
+#' processing engine to dispatch — the legacy `list_micasense_images()`
+#' path errors out on DJI names, while `run_odm_dji_mavic_3m()`
+#' handles them natively.
+#'
+#' @param images_dir Folder containing raw images.
+#' @return `TRUE` when at least one filename matches the DJI Mavic 3M
+#'   pattern, `FALSE` otherwise (including when the directory does not
+#'   exist or is empty).
+#' @examples
+#' \dontrun{
+#'   has_djim3m_images("/path/to/ifasbahia10")
+#' }
+#' @export
+has_djim3m_images <- function(images_dir) {
+  if (!is.character(images_dir) || !length(images_dir) ||
+      !nzchar(images_dir) || !dir.exists(images_dir)) {
+    return(FALSE)
+  }
+  files <- list.files(images_dir,
+                      pattern = "^DJI_[0-9]+_[0-9]+_(D|MS_(G|R|RE|NIR))\\.[A-Za-z]+$",
+                      ignore.case = TRUE)
+  length(files) > 0L
+}
+
 #' Detect DJI Mavic 3M PPK / RTK sidecar files
 #'
 #' Scans `images_dir` for the three families of DJI Mavic 3M sidecar

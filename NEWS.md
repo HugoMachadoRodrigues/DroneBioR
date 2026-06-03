@@ -2,6 +2,25 @@
 
 ## Bug fixes
 
+* **Drone Biomass Studio: stop erroring on DJI Mavic 3M folders.**
+  The Studio's "Run processing engine" button used to call
+  `list_micasense_images()` which rejected DJI filenames with
+  `Some image names do not match the expected MicaSense pattern
+  'capture_band.tif'`. The Run button now auto-detects DJI Mavic 3M
+  datasets via the new exported `has_djim3m_images()` and, when
+  found, spawns the full per-band pipeline (`run_odm_dji_mavic_3m()`)
+  in a `callr::r_bg()` background R session so the Shiny UI stays
+  responsive while the 5 ODM runs + stack execute. callr's
+  stdout / stderr are routed to `odm_run.log` so the existing
+  "ODM run progress" card displays the run live. The same
+  `has_djim3m_images()` gate now also fronts the `manifest` reactive
+  so the image-count and flight overlay readouts no longer crash
+  on a DJI folder. `callr` joins `Suggests` for the background
+  execution; the Studio prints a clear install hint when it is
+  missing.
+
+
+
 * **Progress line no longer freezes on RStudio Console.** The
   previous release tried to render the per-poll status as a single
   carriage-return-updated sticky line. That worked in real terminals

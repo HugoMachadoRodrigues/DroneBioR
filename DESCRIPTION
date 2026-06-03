@@ -34,6 +34,7 @@ Imports:
     utils
 Suggests:
     bslib,
+    callr,
     future,
     htmltools,
     httr,
