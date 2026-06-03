@@ -2,6 +2,22 @@
 
 ## New features
 
+* **`harmonize_dem_products()` produces physically consistent DSM,
+  DTM and CHM.** ODM builds the DSM and DTM by independent processes,
+  so on bare ground the interpolated DTM often sits a few centimetres
+  *above* the DSM — making `DSM − DTM` negative over ~15% of a
+  short-canopy survey (observed in the raw data, not a despiking
+  artifact). The new helper rebuilds all three so they obey
+  `CHM >= 0` and `DSM >= DTM` everywhere by construction: it despikes
+  the DTM, forms `CHM = DSM − DTM_clean` clamped to `>= 0` (which
+  turns the DSM's downward pits back into bare ground) and despiked
+  for canopy towers, then rebuilds `DSM = DTM_clean + CHM_clean`.
+  Validated on a real flight: the cleaned DSM is never below the DTM
+  (0 pixels) and the CHM is never negative, while genuine tree
+  canopies survive. Pass a `dronebio_project` or explicit `dsm` /
+  `dtm`; it writes `dsm_consistent.tif`, `dtm_consistent.tif` and
+  `chm_consistent.tif`.
+
 * **`despike_dem()` iterates to clear wide pits/towers (new
   `iterations`, default 2).** A single pass cannot fully remove a blob
   wider than the trend cell: while the blob is present it drags the
