@@ -2,6 +2,26 @@
 
 ## New features
 
+* **DJI Mavic 3M multispectral bands now reconstructed together
+  (clean spectral indices).** `run_odm_dji_mavic_3m()` gains
+  `ms_mode = "multispectral"` (the new default). Instead of the legacy
+  five independent ODM runs (one per MS band), it now does just two:
+  one RGB run for geometry (DSM / DTM / RGB ortho) and one combined
+  run on all four `_MS_*.TIF` bands. ODM reads each image's DJI band
+  metadata (`BandName`, `RigCameraIndex`, `CentralWavelength`, which
+  survive the MakerNote strip) to group the bands by capture,
+  reconstructs once, and co-registers the bands onto a common grid.
+  The result fixes two problems that plagued the per-band approach:
+  the band orthomosaics are now pixel-aligned (so per-pixel index
+  ratios like NDVI / NDRE are no longer corrupted by band
+  mis-registration), and every index shares the same valid-data
+  footprint (previously OSAVI covered ~12% of the area while NDRE
+  covered ~54%, because the Red band reconstructed to a different
+  extent than RedEdge). It is also faster — two ODM runs instead of
+  five. The old behaviour is still available via
+  `ms_mode = "per_band"`, and `primary_band` lets you override which
+  band drives the multispectral reconstruction.
+
 * **`build_chm_raster()` clips canopy-height outlier spikes.** New
   `outlier_percentile` argument (default `99.5`) sets CHM pixels above
   that percentile to `NA` after differencing, with a message reporting

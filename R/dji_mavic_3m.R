@@ -518,6 +518,239 @@ run_one_dji_band <- function(project,
   ortho_path
 }
 
+# Combine the four per-band MS manifests into one. ODM groups the
+# multispectral bands by capture from the DJI EXIF/XMP metadata
+# (BandName, RigCameraIndex, CentralWavelength), so all four band
+# TIFFs for a flight go into a single images/ folder and a single
+# reconstruction.
+combine_ms_manifests <- function(manifests) {
+  ms_keys <- intersect(c("MS_G", "MS_R", "MS_RE", "MS_NIR"), names(manifests))
+  parts <- manifests[ms_keys]
+  parts <- parts[!vapply(parts, is.null, logical(1))]
+  if (!length(parts)) return(NULL)
+  do.call(rbind, parts)
+}
+
+#' Run ODM once on all four MS bands as a multispectral set
+#'
+#' Unlike the legacy per-band path (one independent ODM run per MS
+#' band, which leaves the band orthos mis-registered and produces noisy
+#' indices), this feeds all four `_MS_*.TIF` images into a single ODM
+#' run. ODM reads each image's DJI band metadata (`BandName`,
+#' `RigCameraIndex`, `CentralWavelength`) to group bands by capture,
+#' reconstructs once, and co-registers (`--skip-band-alignment` left
+#' off) the bands onto a common grid — so the resulting multi-band
+#' orthomosaic is pixel-aligned across bands and the spectral indices
+#' come out clean and with identical coverage.
+#'
+#' @return Absolute path to the multi-band MS orthomosaic, or `NULL`
+#'   when no MS images are present.
+#' @noRd
+run_dji_ms_multispectral <- function(project,
+                                     ms_manifest,
+                                     odm_image,
+                                     force,
+                                     orthophoto_resolution_cm = 5,
+                                     max_concurrency = 4,
+                                     auto_boundary = TRUE,
+                                     skip_report = TRUE,
+                                     use_ppk_mrk = TRUE,
+                                     ppk_min_fix_quality = 4L,
+                                     ppk_cli = "auto",
+                                     ms_extra_args = character(),
+                                     primary_band = "auto") {
+  if (is.null(ms_manifest) || !nrow(ms_manifest)) return(NULL)
+
+  proj_name  <- paste0(project$odm_project_name, "_ms")
+  band_proj  <- dji_band_dataset_subdir(project, "ms")
+  band_imgs  <- file.path(band_proj, "images")
+  ortho_path <- dji_band_ortho_path(project, "ms")
+
+  if (file.exists(ortho_path) && isFALSE(force)) {
+    message("[MS] multispectral orthomosaic already present, skipping ODM run.")
+    return(ortho_path)
+  }
+
+  have_exiftool <- nzchar(Sys.which("exiftool"))
+  message(sprintf(
+    "[MS] %s %d images (4 bands) into %s%s",
+    if (have_exiftool) "copying + EXIF-sanitizing" else "linking",
+    nrow(ms_manifest), band_imgs,
+    if (have_exiftool) " (stripping DJI MakerNote; band tags preserved)" else ""
+  ))
+  populate_band_images_dir(ms_manifest, band_imgs, sanitize_exif = have_exiftool)
+
+  # PPK geo.txt for all MS images (each filename resolves to its
+  # capture's RTK position; the four bands of one capture share it).
+  ppk_geo_args <- character()
+  if (isTRUE(use_ppk_mrk)) {
+    ppk_files <- detect_djim3m_ppk_files(project$images_dir)
+    if (identical(ppk_cli, "auto") && ppk_files$has_ppk_inputs) {
+      ppk_cli <- resolve_ppk_cli_auto(project$images_dir)
+    } else if (identical(ppk_cli, "auto")) {
+      ppk_cli <- NULL
+    }
+    if (is.function(ppk_cli) && ppk_files$has_ppk_inputs) {
+      tryCatch(ppk_cli(images_dir = project$images_dir,
+                       bin_paths  = ppk_files$bin,
+                       nav_paths  = ppk_files$nav,
+                       mrk_paths  = ppk_files$mrk),
+               error = function(e) warning("ppk_cli hook failed: ",
+                                           conditionMessage(e), call. = FALSE))
+      ppk_files <- detect_djim3m_ppk_files(project$images_dir)
+    }
+    if (ppk_files$has_mrk) {
+      geo_txt <- file.path(band_proj, "geo.txt")
+      result <- tryCatch(
+        write_djim3m_geo_txt(project$images_dir, ms_manifest$filename,
+                             geo_txt, ppk_min_fix_quality),
+        error = function(e) {
+          warning("[MS] could not build geo.txt: ", conditionMessage(e),
+                  call. = FALSE); NULL
+        })
+      if (!is.null(result)) {
+        ppk_geo_args <- c("--geo", paste0("/datasets/", proj_name, "/geo.txt"),
+                          "--gps-accuracy", "0.10")
+      }
+    }
+  }
+
+  boundary_args <- if (isTRUE(auto_boundary)) "--auto-boundary" else character()
+  primary_args  <- if (!is.null(primary_band) && nzchar(primary_band) &&
+                       !identical(primary_band, "auto")) {
+    c("--primary-band", primary_band)
+  } else character()
+
+  args <- build_odm_args(
+    dataset_dir              = project$odm_dataset_dir,
+    project_name             = proj_name,
+    image                    = odm_image,
+    camera_type              = "rgb",                 # permissive lister; ODM still groups MS bands from metadata
+    radiometric_calibration  = "camera+sun",          # DJI DLS irradiance -> reflectance
+    orthophoto_resolution_cm = orthophoto_resolution_cm,
+    max_concurrency          = max_concurrency,
+    fast_orthophoto          = TRUE,                   # MS contributes radiance only; no DEM
+    build_dsm                = FALSE,
+    build_dtm                = FALSE,
+    skip_3dmodel             = TRUE,
+    skip_report              = isTRUE(skip_report),
+    extra_args               = c(ms_extra_args, ppk_geo_args, boundary_args,
+                                 primary_args)
+  )
+
+  clean_incomplete_odm_state(band_proj)
+  message("[MS] running ODM multispectral (all 4 bands, one reconstruction)...")
+  status <- run_docker_with_progress(args = args, project_dir = band_proj,
+                                     image_count = nrow(ms_manifest),
+                                     band_label = "MS")
+
+  if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
+    message("[MS] exit 137 — retrying once with --max-concurrency 1 --feature-quality medium...")
+    clean_incomplete_odm_state(band_proj)
+    retry <- build_odm_args(
+      dataset_dir = project$odm_dataset_dir, project_name = proj_name,
+      image = odm_image, camera_type = "rgb",
+      radiometric_calibration = "camera+sun",
+      orthophoto_resolution_cm = orthophoto_resolution_cm,
+      max_concurrency = 1L, fast_orthophoto = TRUE,
+      build_dsm = FALSE, build_dtm = FALSE, skip_3dmodel = TRUE,
+      skip_report = isTRUE(skip_report),
+      extra_args = c(ms_extra_args, ppk_geo_args, boundary_args, primary_args,
+                     "--feature-quality", "medium"))
+    status <- run_docker_with_progress(args = retry, project_dir = band_proj,
+                                       image_count = nrow(ms_manifest),
+                                       band_label = "MS/oom-retry")
+  }
+  if (!identical(status, 0L) && file.exists(ortho_path)) status <- 0L
+  if (!identical(status, 0L)) {
+    stop(sprintf("ODM multispectral MS run failed (exit status %s).", status),
+         call. = FALSE)
+  }
+  ortho_path
+}
+
+#' Order the bands of an ODM multispectral ortho as Green, Red, RedEdge, NIR
+#'
+#' ODM writes band descriptions (e.g. "Green", "Red", "Red edge", "NIR")
+#' into the multi-band orthomosaic. We match those case-insensitively to
+#' return the layer indices in canonical G, R, RE, NIR order. RedEdge is
+#' matched before Red so "Red edge" is not mistaken for "Red". Falls back
+#' to assuming the bands are already in G/R/RE/NIR order (with a warning)
+#' when the descriptions cannot be matched.
+#'
+#' @return Named integer vector `c(Green=, Red=, RedEdge=, NIR=)` of
+#'   layer indices into the MS ortho.
+#' @noRd
+order_ms_ortho_bands <- function(ms_rast) {
+  desc <- tolower(names(ms_rast))
+  n <- length(desc)
+  pick <- function(pattern, exclude = NULL) {
+    hit <- grep(pattern, desc, perl = TRUE)
+    if (!is.null(exclude)) hit <- setdiff(hit, exclude)
+    if (length(hit)) hit[1L] else NA_integer_
+  }
+  re  <- pick("red.?edge|rededge|\\bre\\b|edge")
+  nir <- pick("nir|near.?infra|800|840|860")
+  red <- pick("\\bred\\b|^red$|650|660|red(?!.?edge)", exclude = c(re))
+  grn <- pick("green|560|\\bg\\b")
+  idx <- c(Green = grn, Red = red, RedEdge = re, NIR = nir)
+  if (anyNA(idx)) {
+    warning(sprintf(
+      "[MS] Could not unambiguously map MS ortho band descriptions (%s); assuming order Green, Red, RedEdge, NIR. Verify the indices look sane.",
+      paste(names(ms_rast), collapse = ", ")
+    ), call. = FALSE)
+    idx <- c(Green = 1L, Red = 2L, RedEdge = 3L, NIR = 4L)
+    idx[idx > n] <- NA_integer_
+  }
+  idx
+}
+
+#' Stack the RGB ortho + a 4-band multispectral ortho into the 7-band DJI stack
+#'
+#' Output band order: Red, Green, Blue (from the RGB run) then MS_G,
+#' MS_R, MS_RE, MS_NIR (from the aligned multispectral run) — matching
+#' [default_dji_mavic_3m_band_map()]. The MS ortho is resampled onto the
+#' RGB grid; the four MS bands are internally aligned because they came
+#' from one reconstruction, so the spectral indices computed downstream
+#' are clean.
+#'
+#' @noRd
+stack_dji_ortho_from_ms <- function(rgb_ortho, ms_ortho, out_path) {
+  if (!file.exists(rgb_ortho)) {
+    stop("RGB orthomosaic not found: ", rgb_ortho, call. = FALSE)
+  }
+  if (!file.exists(ms_ortho)) {
+    stop("MS orthomosaic not found: ", ms_ortho, call. = FALSE)
+  }
+  rgb <- terra::rast(rgb_ortho)[[1:3]]
+  names(rgb) <- c("Red", "Green", "Blue")
+
+  ms <- terra::rast(ms_ortho)
+  ord <- order_ms_ortho_bands(ms)
+  ms_layers <- list()
+  out_names <- c(Green = "MS_G", Red = "MS_R", RedEdge = "MS_RE", NIR = "MS_NIR")
+  for (b in names(out_names)) {
+    li <- ord[[b]]
+    if (is.na(li)) next
+    layer <- ms[[li]]
+    names(layer) <- out_names[[b]]
+    if (!terra::compareGeom(rgb, layer, stopOnError = FALSE,
+                            lyrs = FALSE, messages = FALSE)) {
+      layer <- terra::resample(layer, rgb, method = "bilinear")
+    }
+    ms_layers[[out_names[[b]]]] <- layer
+  }
+
+  stacked <- rgb
+  for (nm in names(ms_layers)) stacked <- c(stacked, ms_layers[[nm]])
+
+  dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+  terra::writeRaster(stacked, out_path, overwrite = TRUE, datatype = "FLT4S",
+                     gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2",
+                              "BIGTIFF=IF_SAFER", "TILED=YES"))
+  invisible(out_path)
+}
+
 #' Stack RGB + per-band MS orthomosaics into a single GeoTIFF
 #'
 #' Reads the 3-band RGB ortho plus up to four single-band MS orthos
@@ -576,6 +809,84 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
   invisible(out_path)
 }
 
+# Multispectral-mode orchestration: one RGB run for geometry + one
+# combined MS run for the four aligned spectral bands. Called by
+# run_odm_dji_mavic_3m() when ms_mode = "multispectral" (the default).
+run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
+                                               odm_image,
+                                               orthophoto_resolution_cm,
+                                               max_concurrency, primary_band,
+                                               build_dsm, build_dtm,
+                                               fast_orthophoto, auto_boundary,
+                                               pc_las, skip_3dmodel, skip_report,
+                                               cleanup_intermediates,
+                                               use_ppk_mrk, ppk_min_fix_quality,
+                                               ppk_cli, rgb_extra_args,
+                                               ms_extra_args) {
+  t0 <- Sys.time()
+  message("DJI Mavic 3M pipeline (multispectral mode): 1 RGB run for geometry + 1 combined MS run for the 4 aligned spectral bands.")
+
+  # --- RGB run: geometry + RGB ortho (the canonical project dir) ---------
+  message(">>> RGB run (geometry: DSM / DTM / RGB ortho)...")
+  rgb_ortho <- run_one_dji_band(
+    project = project, band = "RGB", band_label = "rgb",
+    images_manifest = manifests[["D"]], odm_image = odm_image, force = force,
+    rgb_extra_args = rgb_extra_args, ms_extra_args = ms_extra_args,
+    orthophoto_resolution_cm = orthophoto_resolution_cm,
+    max_concurrency = max_concurrency, build_dsm = build_dsm,
+    build_dtm = build_dtm, fast_orthophoto = fast_orthophoto,
+    auto_boundary = auto_boundary, pc_las = pc_las, skip_3dmodel = skip_3dmodel,
+    skip_report = skip_report, use_ppk_mrk = use_ppk_mrk,
+    ppk_min_fix_quality = ppk_min_fix_quality, ppk_cli = ppk_cli
+  )
+
+  # --- MS run: all four bands together, one aligned reconstruction -------
+  message(">>> MS run (4 bands together; ODM groups + co-registers them)...")
+  ms_manifest <- combine_ms_manifests(manifests)
+  ms_ortho <- run_dji_ms_multispectral(
+    project = project, ms_manifest = ms_manifest, odm_image = odm_image,
+    force = force, orthophoto_resolution_cm = orthophoto_resolution_cm,
+    max_concurrency = max_concurrency, auto_boundary = auto_boundary,
+    skip_report = skip_report, use_ppk_mrk = use_ppk_mrk,
+    ppk_min_fix_quality = ppk_min_fix_quality, ppk_cli = ppk_cli,
+    ms_extra_args = ms_extra_args, primary_band = primary_band
+  )
+
+  rgb_proj <- project$odm_project_dir
+  dsm_path <- file.path(rgb_proj, "odm_dem", "dsm.tif")
+  dtm_path <- file.path(rgb_proj, "odm_dem", "dtm.tif")
+  stacked_path <- file.path(rgb_proj, "odm_orthophoto", "odm_orthophoto_dji.tif")
+
+  if (!is.null(ms_ortho) && file.exists(ms_ortho)) {
+    message(">>> Stacking RGB + aligned MS bands into the 7-band ortho...")
+    stack_dji_ortho_from_ms(rgb_ortho, ms_ortho, stacked_path)
+  } else {
+    warning("MS run produced no orthomosaic; stacked product will be RGB-only.",
+            call. = FALSE)
+    stacked_path <- rgb_ortho
+  }
+
+  if (isTRUE(cleanup_intermediates)) {
+    ms_ws <- dji_band_dataset_subdir(project, "ms")
+    if (dir.exists(ms_ws)) {
+      unlink(ms_ws, recursive = TRUE, force = TRUE)
+      message("Cleaned MS workspace (intermediate).")
+    }
+    keep_only_final_odm_products(project$odm_project_dir)
+  }
+
+  message(sprintf("DJI Mavic 3M workflow done in %.1f min.",
+                  as.numeric(difftime(Sys.time(), t0, units = "mins"))))
+  list(
+    rgb_orthomosaic     = rgb_ortho,
+    ms_orthomosaic      = ms_ortho,
+    dsm                 = dsm_path,
+    dtm                 = dtm_path,
+    stacked_orthomosaic = stacked_path,
+    rgb_project_dir     = rgb_proj
+  )
+}
+
 #' Run OpenDroneMap on a DJI Mavic 3M flight, producing a 7-band ortho
 #'
 #' DJI Mavic 3M captures 1 RGB (`_D.JPG`) and 4 single-band
@@ -602,7 +913,24 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'   exist. Useful after changing camera or radiometric parameters.
 #' @param odm_image Docker image tag for the ODM container.
 #' @param orthophoto_resolution_cm Orthophoto ground sampling distance.
-#' @param max_concurrency Concurrent ODM workers per band.
+#' @param max_concurrency Concurrent ODM workers per band. `NULL`
+#'   (default) auto-detects the machine's physical cores.
+#' @param ms_mode One of `"multispectral"` (default) or `"per_band"`.
+#'   In `"multispectral"` mode the four `_MS_*.TIF` bands are processed
+#'   in a **single** ODM run: ODM reads each image's DJI band metadata
+#'   (`BandName`, `RigCameraIndex`, `CentralWavelength`) to group the
+#'   bands by capture, reconstructs once, and co-registers the bands —
+#'   so the resulting orthomosaic is pixel-aligned across bands and the
+#'   spectral indices come out clean with identical coverage. This is
+#'   only 2 ODM runs total (RGB + MS). In the legacy `"per_band"` mode
+#'   each MS band gets its own independent ODM run (5 runs total); the
+#'   band orthos then end up mis-registered, which yields noisy indices
+#'   and different valid-data coverage per index. Use `"per_band"` only
+#'   if ODM fails to recognise the multispectral grouping on your data.
+#' @param primary_band Multispectral mode only. The band ODM uses to
+#'   drive the reconstruction, passed as `--primary-band`. `"auto"`
+#'   (default) lets ODM choose. Override with a band name (e.g.
+#'   `"NIR"`) if the auto choice reconstructs poorly.
 #' @param build_dsm,build_dtm Logical, default `TRUE`. Build the DSM /
 #'   DTM on the RGB run. Set both to `FALSE` when you only need the
 #'   orthomosaic + spectral indices — combined with
@@ -720,6 +1048,8 @@ run_odm_dji_mavic_3m <- function(project,
                                  odm_image = "opendronemap/odm",
                                  orthophoto_resolution_cm = 5,
                                  max_concurrency = NULL,
+                                 ms_mode = c("multispectral", "per_band"),
+                                 primary_band = "auto",
                                  build_dsm    = TRUE,
                                  build_dtm    = TRUE,
                                  fast_orthophoto = FALSE,
@@ -733,6 +1063,7 @@ run_odm_dji_mavic_3m <- function(project,
                                  ppk_cli      = "auto",
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
+  ms_mode <- match.arg(ms_mode)
   if (is.null(max_concurrency)) {
     max_concurrency <- default_odm_concurrency()
     message(sprintf(
@@ -752,6 +1083,24 @@ run_odm_dji_mavic_3m <- function(project,
     )
   }
 
+  # ---- multispectral mode: 2 runs (RGB geometry + one aligned MS run) ----
+  if (identical(ms_mode, "multispectral")) {
+    return(run_odm_dji_mavic_3m_multispectral(
+      project = project, manifests = manifests, force = force,
+      odm_image = odm_image,
+      orthophoto_resolution_cm = orthophoto_resolution_cm,
+      max_concurrency = max_concurrency, primary_band = primary_band,
+      build_dsm = build_dsm, build_dtm = build_dtm,
+      fast_orthophoto = fast_orthophoto, auto_boundary = auto_boundary,
+      pc_las = pc_las, skip_3dmodel = skip_3dmodel, skip_report = skip_report,
+      cleanup_intermediates = cleanup_intermediates,
+      use_ppk_mrk = use_ppk_mrk, ppk_min_fix_quality = ppk_min_fix_quality,
+      ppk_cli = ppk_cli, rgb_extra_args = rgb_extra_args,
+      ms_extra_args = ms_extra_args
+    ))
+  }
+
+  # ---- legacy per_band mode: five independent ODM runs ----
   # Five (RGB, MS_G, MS_R, MS_RE, MS_NIR) per-band ODM runs.
   run_specs <- list(
     list(band = "RGB",    label = "rgb",    manifest = manifests[["D"]]),
