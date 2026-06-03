@@ -46,6 +46,7 @@ Suggests:
     lidR,
     processx,
     promises,
+    ranger,
     rmarkdown,
     shiny,
     testthat (>= 3.0.0)
