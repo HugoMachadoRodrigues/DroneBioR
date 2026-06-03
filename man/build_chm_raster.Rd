@@ -4,7 +4,12 @@
 \alias{build_chm_raster}
 \title{Build a Canopy Height Model (CHM) from the DSM and DTM}
 \usage{
-build_chm_raster(project, force = FALSE, cache_aware = TRUE)
+build_chm_raster(
+  project,
+  force = FALSE,
+  cache_aware = TRUE,
+  outlier_percentile = 99.5
+)
 }
 \arguments{
 \item{project}{A \code{dronebio_project} object.}
@@ -13,6 +18,19 @@ build_chm_raster(project, force = FALSE, cache_aware = TRUE)
 
 \item{cache_aware}{Logical. Prefer the local cache when DSM + DTM
 already live there.}
+
+\item{outlier_percentile}{Numeric in (0, 100], default \code{99.5}.
+After differencing, canopy-height pixels strictly above this
+percentile are set to \code{NA} and a message reports how many were
+dropped. Photogrammetric reconstructions routinely leave a thin
+tail of physically impossible spikes (CHM pixels of tens to
+hundreds of metres over short pasture) from mis-reconstructed
+points at edges, water and low-texture areas. Even when they are
+well under 1\% of pixels they wreck colour ramps and contaminate
+downstream biomass statistics. Clipping the extreme tail at a
+high percentile removes them while preserving genuine tall
+features (the percentile adapts to each survey). Set to \code{100}
+(or \code{NULL}) to disable and keep every pixel.}
 }
 \value{
 Absolute path to the written \code{chm.tif}.
@@ -29,5 +47,7 @@ back to writing into the project's \verb{odm_dem/} directory otherwise.
 \dontrun{
   project <- dronebio_project("~/my_project")
   build_chm_raster(project)
+  # keep every pixel, no outlier clipping:
+  build_chm_raster(project, outlier_percentile = 100)
 }
 }

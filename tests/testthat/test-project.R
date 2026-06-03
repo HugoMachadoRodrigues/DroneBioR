@@ -212,6 +212,40 @@ test_that("build_chm_raster computes CHM = DSM - DTM, clamped to 0", {
   expect_equal(names(chm), "CHM")
 })
 
+test_that("build_chm_raster clips the upper-tail outliers above the percentile", {
+  tmp <- tempfile("dronebio_chm_out_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(tmp, recursive = TRUE))
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  dem_dir <- file.path(p$odm_project_dir, "odm_dem")
+  dir.create(dem_dir, recursive = TRUE)
+
+  # Flat ground; canopy mostly 0-2 m with a handful of impossible
+  # spikes (200 m) standing in for reconstruction noise.
+  dtm <- terra::rast(nrows = 100, ncols = 100,
+                     xmin = 0, xmax = 100, ymin = 0, ymax = 100)
+  terra::values(dtm) <- 100
+  dsm <- dtm
+  sv <- 100 + matrix(runif(10000, 0, 2), 100, 100)  # 0-2 m canopy
+  sv[1:20] <- 300                                    # 200 m spikes (0.2%)
+  terra::values(dsm) <- sv
+  terra::writeRaster(dsm, file.path(dem_dir, "dsm.tif"), overwrite = TRUE)
+  terra::writeRaster(dtm, file.path(dem_dir, "dtm.tif"), overwrite = TRUE)
+
+  # With the default P99.5 clip, the 200 m spikes (0.2% of pixels)
+  # become NA, so the max drops to the real canopy ceiling (~2 m).
+  out <- build_chm_raster(p, cache_aware = FALSE, force = TRUE)
+  mm <- terra::minmax(terra::rast(out))
+  expect_lt(mm[2, 1], 10)       # spikes removed -> max is the real canopy
+  expect_gte(mm[1, 1], 0)
+
+  # Disabling the clip keeps the spikes (max ~200 m).
+  out2 <- build_chm_raster(p, cache_aware = FALSE, force = TRUE,
+                           outlier_percentile = 100)
+  mm2 <- terra::minmax(terra::rast(out2))
+  expect_gt(mm2[2, 1], 150)
+})
+
 test_that("build_chm_raster errors when DSM or DTM missing", {
   tmp <- tempfile("dronebio_chm_"); dir.create(tmp, recursive = TRUE)
   on.exit(unlink(tmp, recursive = TRUE))
