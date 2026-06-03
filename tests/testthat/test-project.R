@@ -423,3 +423,39 @@ test_that("run_odm_dji_mavic_3m harmonizes by default", {
   expect_true(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$harmonize))
   expect_equal(eval(formals(DroneBioR::run_odm_dji_mavic_3m)$canopy_ceiling), 18)
 })
+
+test_that("finalize_dronebio_products flattens products and removes scaffolding", {
+  tmp <- tempfile("final_"); dir.create(tmp)
+  p <- dronebio_project(project_dir = tmp, odm_dataset_subdir = "odm_dataset",
+                        odm_project_name = "flight",
+                        output_subdir = "dronebior_analysis")
+  dem  <- file.path(p$odm_project_dir, "odm_dem")
+  orth <- file.path(p$odm_project_dir, "odm_orthophoto")
+  dir.create(dem, recursive = TRUE); dir.create(orth, recursive = TRUE)
+  dir.create(p$output_dir, recursive = TRUE)
+  mk <- function(path, n = 1) {
+    r <- terra::rast(nrows = 8, ncols = 8, nlyrs = n)
+    terra::values(r) <- runif(64 * n)
+    terra::writeRaster(r, path)
+  }
+  mk(file.path(dem, "dsm.tif")); mk(file.path(dem, "dtm.tif"))
+  mk(file.path(dem, "chm.tif")); mk(file.path(dem, "dsm_raw.tif"))
+  mk(file.path(orth, "odm_orthophoto.tif"), 4)
+  mk(file.path(orth, "odm_orthophoto_dji.tif"), 7)
+  mk(file.path(p$output_dir, "spectral_indices.tif"), 16)
+  mk(file.path(p$output_dir, "biomass_index_proxy.tif"))
+
+  out <- finalize_dronebio_products(p, extra_metadata = list(flight = "t"))
+  prod_dir <- file.path(tmp, "products")
+  # Flat, simply-named products present.
+  expect_setequal(
+    sort(list.files(prod_dir, pattern = "\\.tif$")),
+    sort(c("orthomosaic.tif", "dsm.tif", "dtm.tif", "chm.tif",
+           "spectral_indices.tif", "biomass_proxy.tif")))
+  expect_true(file.exists(file.path(prod_dir, "metadata.json")))
+  # The 7-band DJI stack was chosen as the orthomosaic.
+  expect_equal(terra::nlyr(terra::rast(file.path(prod_dir, "orthomosaic.tif"))), 7L)
+  # Scaffolding + intermediates gone.
+  expect_false(dir.exists(p$odm_dataset_dir))
+  expect_false(dir.exists(p$output_dir))
+})

@@ -961,6 +961,155 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
   invisible(TRUE)
 }
 
+#' Collect the final products into one flat folder with metadata
+#'
+#' A DroneBioR run leaves a deep, ODM-shaped tree
+#' (`odm_dataset/<name>/odm_dem/`, `.../odm_orthophoto/`,
+#' `dronebior_analysis/`) plus raw backups, the redundant RGB-only
+#' orthomosaic, the reflectance stack and run logs. For delivery you
+#' usually want just the handful of products you will actually reuse,
+#' in one place, with a machine-readable description.
+#'
+#' This copies the final products into `out_dir` under simple names —
+#' `orthomosaic.tif`, `dsm.tif`, `dtm.tif`, `chm.tif`,
+#' `spectral_indices.tif`, `biomass_proxy.tif` — writes a single
+#' `metadata.json` (run parameters plus, per raster, the CRS,
+#' resolution, extent, band names and per-band min/mean/max), and —
+#' unless `remove_scaffolding = FALSE` — deletes the ODM scaffolding,
+#' the raw DEM backups, the RGB-only ortho, the reflectance stack and
+#' the logs, leaving only `out_dir`.
+#'
+#' @param project A `dronebio_project`.
+#' @param orthomosaic Path to the orthomosaic to keep (default: the
+#'   7-band DJI stack when present, else the RGB orthomosaic).
+#' @param indices,biomass_proxy Optional paths to the spectral index
+#'   stack and biomass proxy (default: the files
+#'   `run_dronebio_workflow()` writes under the project output dir).
+#' @param out_dir Destination folder. Default
+#'   `<project_dir>/products`.
+#' @param extra_metadata Named list merged into the metadata JSON
+#'   (e.g. `list(flight = "ifasbahia10", speed = "balanced")`).
+#' @param remove_scaffolding Logical, default `TRUE`. Delete the
+#'   intermediate tree after the products are copied out.
+#' @return Invisibly, a named character vector of the final product
+#'   paths in `out_dir`.
+#' @examples
+#' \dontrun{
+#'   res <- run_odm_dji_mavic_3m(project)
+#'   wf  <- run_dronebio_workflow(project, res$stacked_orthomosaic)
+#'   finalize_dronebio_products(project, extra_metadata = list(flight = "f1"))
+#' }
+#' @export
+finalize_dronebio_products <- function(project,
+                                       orthomosaic = NULL,
+                                       indices = NULL,
+                                       biomass_proxy = NULL,
+                                       out_dir = NULL,
+                                       extra_metadata = list(),
+                                       remove_scaffolding = TRUE) {
+  paths <- odm_product_paths(project)
+  if (is.null(orthomosaic)) {
+    dji_stack <- file.path(dirname(unname(paths[["orthomosaic"]])),
+                           "odm_orthophoto_dji.tif")
+    orthomosaic <- if (file.exists(dji_stack)) dji_stack
+                   else unname(paths[["orthomosaic"]])
+  }
+  out_base <- project$output_dir
+  if (is.null(indices))       indices       <- file.path(out_base, "spectral_indices.tif")
+  if (is.null(biomass_proxy)) biomass_proxy <- file.path(out_base, "biomass_index_proxy.tif")
+  if (is.null(out_dir))       out_dir       <- file.path(project$project_dir, "products")
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  # Map source -> clean destination name. Only existing sources are kept.
+  wanted <- c(
+    orthomosaic      = orthomosaic,
+    dsm              = unname(paths[["dsm"]]),
+    dtm              = unname(paths[["dtm"]]),
+    chm              = unname(paths[["chm"]]),
+    spectral_indices = indices,
+    biomass_proxy    = biomass_proxy
+  )
+  out_paths <- character()
+  for (nm in names(wanted)) {
+    src <- wanted[[nm]]
+    if (is.null(src) || !file.exists(src)) next
+    dst <- file.path(out_dir, paste0(nm, ".tif"))
+    file.copy(src, dst, overwrite = TRUE)
+    out_paths[nm] <- dst
+  }
+  # Carry over the small CSV summaries if present.
+  for (csv in c("spectral_index_summary.csv", "reflectance_summary.csv")) {
+    src <- file.path(out_base, csv)
+    if (file.exists(src)) file.copy(src, file.path(out_dir, csv), overwrite = TRUE)
+  }
+
+  # Build and write metadata describing each product.
+  meta <- build_products_metadata(out_paths, extra_metadata)
+  meta_path <- file.path(out_dir, "metadata.json")
+  if (requireNamespace("jsonlite", quietly = TRUE)) {
+    writeLines(jsonlite::toJSON(meta, auto_unbox = TRUE, pretty = TRUE,
+                                null = "null", digits = 6), meta_path)
+  } else {
+    # Minimal fallback: dput() the list so it is still recoverable.
+    meta_path <- file.path(out_dir, "metadata.txt")
+    utils::capture.output(dput(meta), file = meta_path)
+  }
+
+  if (isTRUE(remove_scaffolding)) {
+    # Remove the deep ODM tree and the intermediate analysis folder.
+    for (d in c(project$odm_dataset_dir, out_base)) {
+      if (dir.exists(d) && !normalizePath(d, mustWork = FALSE) ==
+          normalizePath(out_dir, mustWork = FALSE)) {
+        unlink(d, recursive = TRUE, force = TRUE)
+      }
+    }
+    message(sprintf("[finalize] %d products + metadata.json in %s; intermediates removed.",
+                    length(out_paths), out_dir))
+  } else {
+    message(sprintf("[finalize] %d products + metadata.json in %s.",
+                    length(out_paths), out_dir))
+  }
+  invisible(out_paths)
+}
+
+# Assemble a metadata list describing each output raster: CRS,
+# resolution, extent, band names and per-band min/mean/max.
+#' @noRd
+build_products_metadata <- function(out_paths, extra_metadata = list()) {
+  raster_meta <- list()
+  for (nm in names(out_paths)) {
+    r <- tryCatch(terra::rast(out_paths[[nm]]), error = function(e) NULL)
+    if (is.null(r)) next
+    stats <- tryCatch(
+      terra::global(r, c("min", "mean", "max"), na.rm = TRUE),
+      error = function(e) NULL)
+    e <- as.vector(terra::ext(r))
+    raster_meta[[nm]] <- list(
+      file        = basename(out_paths[[nm]]),
+      bands       = as.integer(terra::nlyr(r)),
+      band_names  = names(r),
+      crs         = tryCatch(terra::crs(r, describe = TRUE)$name,
+                             error = function(e) NA_character_),
+      resolution_m = unname(round(terra::res(r), 4)),
+      extent      = list(xmin = e[[1]], xmax = e[[2]],
+                         ymin = e[[3]], ymax = e[[4]]),
+      stats = if (!is.null(stats)) {
+        stats::setNames(lapply(seq_len(nrow(stats)), function(i)
+          as.list(round(unlist(stats[i, ]), 4))), rownames(stats))
+      } else NULL
+    )
+  }
+  c(
+    list(
+      generator   = sprintf("DroneBioR %s",
+                            as.character(utils::packageVersion("DroneBioR"))),
+      products    = raster_meta
+    ),
+    extra_metadata
+  )
+}
+
 #' Detect existing ODM project subdirectories in a project root
 #'
 #' Walks `<project_dir>/outputs/` looking for any folder layout that
