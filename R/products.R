@@ -807,6 +807,120 @@ despike_one_pass <- function(r, window, max_deviation,
   list(cleaned = cleaned, n_spikes = n_spikes)
 }
 
+#' Produce physically consistent DSM, DTM and CHM
+#'
+#' ODM generates the DSM (top of the dense cloud) and the DTM
+#' (SMRF-classified ground, interpolated) by independent processes, so
+#' they are not pixel-consistent: on bare ground the interpolated DTM
+#' routinely sits a few centimetres *above* the DSM, which makes
+#' `DSM - DTM` (the canopy height) negative over a large fraction of a
+#' short-canopy survey. Despiking the two rasters separately can widen
+#' that gap further. This helper rebuilds all three products so they
+#' obey the physical constraints `CHM >= 0` and `DSM >= DTM`
+#' everywhere, by construction:
+#'
+#' \enumerate{
+#'   \item Despike the DTM (the ground) with [despike_dem()].
+#'   \item Form `CHM = DSM - DTM_clean`, clamp it to `>= 0` (which
+#'     turns the DSM's downward pits — where the surface dipped below
+#'     ground — back into bare ground) and despike the result to
+#'     remove canopy-height towers / needles.
+#'   \item Rebuild `DSM = DTM_clean + CHM_clean`. Because the cleaned
+#'     CHM is non-negative, the rebuilt DSM is never below the DTM.
+#' }
+#'
+#' @param project Optional `dronebio_project`; when supplied the DSM
+#'   and DTM are taken from [odm_product_paths()] and outputs default
+#'   to the same `odm_dem/` folder.
+#' @param dsm,dtm Raster paths or `terra::SpatRaster`s. Required when
+#'   `project` is not given.
+#' @param out_dir Output directory. Defaults to the DSM's folder.
+#'   The function writes `dsm_consistent.tif`, `dtm_consistent.tif`
+#'   and `chm_consistent.tif` there when `write = TRUE`.
+#' @param canopy_ceiling Height (m) above the local canopy trend
+#'   beyond which a CHM cell is treated as a tower spike and removed.
+#'   Default `30` — keeps genuine tall trees, drops the reconstruction
+#'   towers.
+#' @param trend_cell_m,max_depth_below_ground,iterations Passed to
+#'   [despike_dem()] for the DTM and CHM cleaning. Defaults `30`, `2`,
+#'   `2`.
+#' @param dtm_max_bump Height (m) above its own trend beyond which a
+#'   DTM cell is treated as a spike. Default `5`.
+#' @param write Logical. Write the three GeoTIFFs. Default `TRUE`.
+#' @return Invisibly, a list with the cleaned `dsm`, `dtm`, `chm`
+#'   `terra::SpatRaster`s and, when written, their `paths`.
+#' @examples
+#' \dontrun{
+#'   project <- dronebio_project("~/flight")
+#'   harmonize_dem_products(project)            # writes *_consistent.tif
+#' }
+#' @export
+harmonize_dem_products <- function(project = NULL, dsm = NULL, dtm = NULL,
+                                   out_dir = NULL,
+                                   canopy_ceiling = 30,
+                                   trend_cell_m = 30,
+                                   max_depth_below_ground = 2,
+                                   iterations = 2L,
+                                   dtm_max_bump = 5,
+                                   write = TRUE) {
+  if (!is.null(project)) {
+    paths <- odm_product_paths(project)
+    if (is.null(dsm)) dsm <- unname(paths[["dsm"]])
+    if (is.null(dtm)) dtm <- unname(paths[["dtm"]])
+  }
+  if (is.null(dsm) || is.null(dtm)) {
+    stop("Provide either a project or both dsm and dtm.", call. = FALSE)
+  }
+  dsm_r <- if (is.character(dsm)) terra::rast(dsm)[[1L]] else dsm[[1L]]
+  dtm_r <- if (is.character(dtm)) terra::rast(dtm)[[1L]] else dtm[[1L]]
+  if (is.null(out_dir)) {
+    out_dir <- if (is.character(dsm)) dirname(dsm) else getwd()
+  }
+  if (!terra::compareGeom(dsm_r, dtm_r, stopOnError = FALSE, lyrs = FALSE,
+                          messages = FALSE)) {
+    dtm_r <- terra::resample(dtm_r, dsm_r, method = "bilinear")
+  }
+
+  # 1. Clean the ground.
+  message("[harmonize] Cleaning DTM (ground)...")
+  dtm_clean <- despike_dem(dtm_r, max_height_above_ground = dtm_max_bump,
+                           max_depth_below_ground = max_depth_below_ground,
+                           trend_cell_m = trend_cell_m, iterations = iterations)
+
+  # 2. Canopy height from the cleaned ground, non-negative, despiked.
+  message("[harmonize] Building + cleaning CHM (canopy height)...")
+  chm <- terra::clamp(dsm_r - dtm_clean, lower = 0, upper = Inf, values = TRUE)
+  chm_clean <- despike_dem(chm, max_height_above_ground = canopy_ceiling,
+                           max_depth_below_ground = NULL,
+                           trend_cell_m = trend_cell_m, iterations = iterations)
+  chm_clean <- terra::clamp(chm_clean, lower = 0, upper = Inf, values = TRUE)
+
+  # 3. Rebuild a consistent surface: DSM = ground + canopy >= ground.
+  dsm_clean <- dtm_clean + chm_clean
+  names(dtm_clean) <- "DTM"; names(chm_clean) <- "CHM"; names(dsm_clean) <- "DSM"
+
+  result <- list(dsm = dsm_clean, dtm = dtm_clean, chm = chm_clean)
+
+  if (isTRUE(write)) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    gopt <- c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER")
+    paths_out <- c(
+      dsm = file.path(out_dir, "dsm_consistent.tif"),
+      dtm = file.path(out_dir, "dtm_consistent.tif"),
+      chm = file.path(out_dir, "chm_consistent.tif")
+    )
+    terra::writeRaster(dsm_clean, paths_out[["dsm"]], overwrite = TRUE,
+                       datatype = "FLT4S", gdal = gopt)
+    terra::writeRaster(dtm_clean, paths_out[["dtm"]], overwrite = TRUE,
+                       datatype = "FLT4S", gdal = gopt)
+    terra::writeRaster(chm_clean, paths_out[["chm"]], overwrite = TRUE,
+                       datatype = "FLT4S", gdal = gopt)
+    result$paths <- paths_out
+    message(sprintf("[harmonize] Wrote consistent DSM/DTM/CHM to %s", out_dir))
+  }
+  invisible(result)
+}
+
 #' Detect existing ODM project subdirectories in a project root
 #'
 #' Walks `<project_dir>/outputs/` looking for any folder layout that

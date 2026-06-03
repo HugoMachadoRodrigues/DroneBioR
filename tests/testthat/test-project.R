@@ -353,3 +353,37 @@ test_that("despike_dem can write to disk and NA-fill", {
   expect_true(is.nan(terra::values(cleaned)[100]) ||
               is.na(terra::values(cleaned)[100]))
 })
+
+test_that("harmonize_dem_products guarantees DSM >= DTM and CHM >= 0", {
+  # DSM that dips BELOW the DTM in places (the ODM inconsistency) plus
+  # a tower; DTM with its own bump.
+  dtm <- terra::rast(nrows = 40, ncols = 40, xmin = 0, xmax = 40,
+                     ymin = 0, ymax = 40)
+  terra::values(dtm) <- 0
+  dsm <- dtm
+  m <- matrix(0.5, 40, 40)      # ~0.5 m canopy
+  m[5:8, 5:8]   <- -3           # DSM below ground (impossible) -> CHM<0
+  m[20:22, 20:22] <- 60         # tower
+  m[28:33, 28:33] <- 12         # a real 12 m tree (coherent cluster, not a needle)
+  terra::values(dsm) <- m
+
+  res <- harmonize_dem_products(dsm = dsm, dtm = dtm, write = FALSE,
+                                canopy_ceiling = 25)
+  d <- terra::values(res$dsm - res$dtm); d <- d[!is.na(d)]
+  chm <- terra::values(res$chm); chm <- chm[!is.na(chm)]
+  expect_true(all(d >= -1e-6))               # DSM never below DTM
+  expect_true(all(chm >= -1e-6))             # CHM never negative
+  expect_lt(max(chm), 25)                    # tower removed
+  expect_true(any(abs(chm - 12) < 2))        # 12 m tree preserved
+})
+
+test_that("harmonize_dem_products writes the three consistent rasters", {
+  dtm <- terra::rast(nrows = 20, ncols = 20); terra::values(dtm) <- 0
+  dsm <- dtm; terra::values(dsm) <- 1
+  out <- tempfile("harmon_"); dir.create(out)
+  res <- harmonize_dem_products(dsm = dsm, dtm = dtm, out_dir = out)
+  expect_true(all(file.exists(unlist(res$paths))))
+  expect_setequal(basename(unlist(res$paths)),
+                  c("dsm_consistent.tif", "dtm_consistent.tif",
+                    "chm_consistent.tif"))
+})
