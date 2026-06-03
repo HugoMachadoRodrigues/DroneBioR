@@ -2,6 +2,17 @@
 
 ## New features
 
+* **`despike_dem()` gains a wide-tower (height-above-ground) pass.**
+  Some reconstruction artifacts are not single-pixel needles but
+  coherent blobs several metres across — a blurry patch ballooning to
+  a 130 m tower over an otherwise <15 m surface. A small local-median
+  window cannot see those (the tower's own pixels dominate it). New
+  `max_height_above_ground` + `ground` arguments add a second detector
+  that flags cells taller than a given height above the ground (pass
+  the DTM, or let it build a coarse trend surface). On a real flight
+  this dropped the DSM ceiling from 133 m to 31 m while the genuine
+  ~14 m canopy survived. The local needle pass still runs by default.
+
 * **`despike_dem()` removes isolated DSM / DTM spikes.** Surface
   models routinely sprout a handful of single-pixel "needle" spikes
   tens of metres tall from mis-reconstructed dense-cloud points where

@@ -277,6 +277,31 @@ test_that("despike_dem removes isolated spikes but keeps coherent surface", {
   expect_lt(abs(terra::global(out, "mean", na.rm = TRUE)[[1]]), 0.2)
 })
 
+test_that("despike_dem removes wide towers via height-above-ground", {
+  # A flat ground (DTM = 0) with a WIDE tower (10x10 cluster at 60 m)
+  # that the small local-median pass cannot see, plus genuine 12 m
+  # canopy that must survive a 20 m ceiling.
+  dtm <- terra::rast(nrows = 60, ncols = 60, xmin = 0, xmax = 60,
+                     ymin = 0, ymax = 60)
+  terra::values(dtm) <- 0
+  dsm <- dtm
+  m <- matrix(0, 60, 60)
+  m[10:21, 10:21] <- 60      # 12x12 wide tower (too wide for a 5x5 median)
+  m[40:50, 40:50] <- 12      # genuine 12 m canopy block (must survive)
+  terra::values(dsm) <- m
+
+  # Local-median pass alone barely dents the wide tower.
+  only_local <- despike_dem(dsm, window = 5, max_deviation = 3)
+  expect_gt(terra::minmax(only_local)[2, 1], 40)
+
+  # With the height-above-ground pass (DTM as ground, 20 m ceiling) the
+  # tower goes and the 12 m canopy stays.
+  cleaned <- despike_dem(dsm, ground = dtm, max_height_above_ground = 20)
+  expect_lt(terra::minmax(cleaned)[2, 1], 20)            # tower removed
+  vals <- terra::values(cleaned)
+  expect_true(any(abs(vals[!is.na(vals)] - 12) < 1))     # 12 m canopy survived
+})
+
 test_that("despike_dem can write to disk and NA-fill", {
   r <- terra::rast(nrows = 20, ncols = 20)
   terra::values(r) <- 0
