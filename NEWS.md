@@ -1,5 +1,18 @@
 # DroneBioR (development version)
 
+## New features
+
+* **`build_chm_raster()` clips canopy-height outlier spikes.** New
+  `outlier_percentile` argument (default `99.5`) sets CHM pixels above
+  that percentile to `NA` after differencing, with a message reporting
+  how many were dropped and the percentile value. Photogrammetric
+  reconstructions routinely leave a sub-1% tail of physically
+  impossible spikes (tens to hundreds of metres over short pasture)
+  from mis-reconstructed points at edges, water and low-texture areas;
+  even though they are rare they wreck colour ramps and contaminate
+  biomass statistics. Set `outlier_percentile = 100` to keep every
+  pixel.
+
 ## Bug fixes
 
 * **`--auto-boundary` by default fixes the orthophoto OOM (exit 137).**

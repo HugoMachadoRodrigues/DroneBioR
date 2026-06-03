@@ -493,14 +493,29 @@ validate_odm_outputs <- function(project) {
 #' @param force Logical. Recompute even when `chm.tif` already exists.
 #' @param cache_aware Logical. Prefer the local cache when DSM + DTM
 #'   already live there.
+#' @param outlier_percentile Numeric in (0, 100], default `99.5`.
+#'   After differencing, canopy-height pixels strictly above this
+#'   percentile are set to `NA` and a message reports how many were
+#'   dropped. Photogrammetric reconstructions routinely leave a thin
+#'   tail of physically impossible spikes (CHM pixels of tens to
+#'   hundreds of metres over short pasture) from mis-reconstructed
+#'   points at edges, water and low-texture areas. Even when they are
+#'   well under 1% of pixels they wreck colour ramps and contaminate
+#'   downstream biomass statistics. Clipping the extreme tail at a
+#'   high percentile removes them while preserving genuine tall
+#'   features (the percentile adapts to each survey). Set to `100`
+#'   (or `NULL`) to disable and keep every pixel.
 #' @return Absolute path to the written `chm.tif`.
 #' @examples
 #' \dontrun{
 #'   project <- dronebio_project("~/my_project")
 #'   build_chm_raster(project)
+#'   # keep every pixel, no outlier clipping:
+#'   build_chm_raster(project, outlier_percentile = 100)
 #' }
 #' @export
-build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE) {
+build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
+                             outlier_percentile = 99.5) {
   paths <- odm_product_paths(project)
   dsm_path <- unname(paths[["dsm"]])
   dtm_path <- unname(paths[["dtm"]])
@@ -537,6 +552,29 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE) {
   }
   chm <- dsm - dtm
   chm <- terra::clamp(chm, lower = 0, upper = Inf, values = TRUE)
+
+  # Clip the extreme upper tail of physically implausible spikes. We
+  # compute the cut from the cell values (na.rm) rather than a spatial
+  # sample so the threshold is exact, then set everything strictly
+  # above it to NA via clamp(values = FALSE).
+  if (!is.null(outlier_percentile) && is.finite(outlier_percentile) &&
+      outlier_percentile > 0 && outlier_percentile < 100) {
+    vals <- terra::values(chm, mat = FALSE)
+    vals <- vals[is.finite(vals)]
+    if (length(vals)) {
+      thr <- stats::quantile(vals, probs = outlier_percentile / 100,
+                             na.rm = TRUE, names = FALSE)
+      n_above <- sum(vals > thr)
+      if (is.finite(thr) && n_above > 0) {
+        chm <- terra::clamp(chm, lower = 0, upper = thr, values = FALSE)
+        message(sprintf(
+          "[chm] Clipped %d outlier pixel(s) above P%.1f = %.2f m to NA (max was %.2f m).",
+          n_above, outlier_percentile, thr, max(vals)
+        ))
+      }
+    }
+  }
+
   names(chm) <- "CHM"
   terra::writeRaster(chm, chm_path, overwrite = TRUE, datatype = "FLT4S",
                      gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2", "BIGTIFF=IF_SAFER"))
