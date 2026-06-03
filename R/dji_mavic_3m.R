@@ -225,6 +225,7 @@ run_one_dji_band <- function(project,
                              build_dsm    = TRUE,
                              build_dtm    = TRUE,
                              fast_orthophoto = FALSE,
+                             auto_boundary = TRUE,
                              pc_las       = FALSE,
                              skip_3dmodel = TRUE,
                              skip_report  = TRUE,
@@ -331,6 +332,16 @@ run_one_dji_band <- function(project,
     }
   }
 
+  # --auto-boundary crops the reconstruction (and crucially the
+  # orthophoto canvas) to a polygon derived from the camera GPS. On a
+  # bounded aerial survey this discards the handful of stray points that
+  # low feature quality can scatter kilometres from the real footprint.
+  # Without it, the orthophoto stage tries to render the full spread
+  # (e.g. a 4x6 km canvas at 5 cm = billions of pixels) and the Docker
+  # container is OOM-killed (exit 137) even though the DSM/DTM — which
+  # are cropped — wrote fine.
+  boundary_args <- if (isTRUE(auto_boundary)) "--auto-boundary" else character()
+
   is_rgb <- identical(band, "RGB")
   args <- build_odm_args(
     dataset_dir              = project$odm_dataset_dir,
@@ -360,7 +371,7 @@ run_one_dji_band <- function(project,
     skip_3dmodel    = isTRUE(skip_3dmodel),
     skip_report     = isTRUE(skip_report),
     extra_args      = c(if (is_rgb) rgb_extra_args else ms_extra_args,
-                        ppk_geo_args)
+                        ppk_geo_args, boundary_args)
   )
 
   # Heal any orphan OpenSfM state from a previous interrupted run
@@ -435,7 +446,7 @@ run_one_dji_band <- function(project,
       skip_report              = isTRUE(skip_report),
       extra_args               = c(
         if (is_rgb) rgb_extra_args else ms_extra_args,
-        ppk_geo_args,
+        ppk_geo_args, boundary_args,
         "--feature-quality", "medium"
       )
     )
@@ -468,7 +479,7 @@ run_one_dji_band <- function(project,
         skip_3dmodel             = isTRUE(skip_3dmodel),
         skip_report              = isTRUE(skip_report),
         rerun_from               = "mvs_texturing",
-        extra_args               = ppk_geo_args
+        extra_args               = c(ppk_geo_args, boundary_args)
       )
       status <- run_docker_with_progress(
         args        = retry_args,
@@ -602,6 +613,16 @@ stack_dji_mavic_3m_ortho <- function(rgb_ortho, ms_orthos, out_path) {
 #'   orthomosaic is built from the 2.5D mesh instead — much faster,
 #'   but any DSM / DTM produced alongside are lower quality. Leave
 #'   `FALSE` for scientifically defensible canopy heights.
+#' @param auto_boundary Logical, default `TRUE`. Adds ODM's
+#'   `--auto-boundary`, which crops the reconstruction and — crucially
+#'   — the orthophoto canvas to a polygon derived from the camera GPS.
+#'   This prevents a common failure on bounded aerial surveys where a
+#'   few stray, mis-registered points scatter kilometres from the true
+#'   footprint: without cropping, the orthophoto stage tries to render
+#'   that whole sprawl at full resolution and the Docker container is
+#'   OOM-killed (exit 137) even though the cropped DSM / DTM wrote
+#'   fine. Set `FALSE` only if your survey genuinely has no usable
+#'   camera GPS.
 #' @param pc_las Logical. When `TRUE`, export the dense point cloud
 #'   from the RGB run as a `.las` file (~640 MB for a 300-image
 #'   flight). Default `FALSE` — DroneBioR's DSM/DTM/CHM pipeline
@@ -702,6 +723,7 @@ run_odm_dji_mavic_3m <- function(project,
                                  build_dsm    = TRUE,
                                  build_dtm    = TRUE,
                                  fast_orthophoto = FALSE,
+                                 auto_boundary = TRUE,
                                  pc_las       = FALSE,
                                  skip_3dmodel = TRUE,
                                  skip_report  = TRUE,
@@ -816,6 +838,7 @@ run_odm_dji_mavic_3m <- function(project,
       build_dsm        = build_dsm,
       build_dtm        = build_dtm,
       fast_orthophoto  = fast_orthophoto,
+      auto_boundary    = auto_boundary,
       pc_las           = pc_las,
       skip_3dmodel     = skip_3dmodel,
       skip_report      = skip_report,
