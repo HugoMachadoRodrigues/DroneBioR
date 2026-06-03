@@ -302,6 +302,24 @@ test_that("despike_dem removes wide towers via height-above-ground", {
   expect_true(any(abs(vals[!is.na(vals)] - 12) < 1))     # 12 m canopy survived
 })
 
+test_that("despike_dem fills downward pits below the ground", {
+  # A DSM is the top surface: a pixel 15 m BELOW the terrain is an
+  # artifact (the downward spikes seen in 3D). It must be filled back
+  # to ground.
+  dtm <- terra::rast(nrows = 30, ncols = 30, xmin = 0, xmax = 30,
+                     ymin = 0, ymax = 30)
+  terra::values(dtm) <- 0
+  dsm <- dtm
+  m <- matrix(1, 30, 30)        # 1 m canopy everywhere
+  m[15, 15] <- -15              # a downward pit
+  terra::values(dsm) <- m
+  expect_lt(terra::minmax(dsm)[1, 1], -10)               # pit present before
+  cleaned <- despike_dem(dsm, ground = dtm,
+                         max_height_above_ground = 20,
+                         max_depth_below_ground = 2)
+  expect_gte(terra::minmax(cleaned)[1, 1], -2)           # pit filled to ground
+})
+
 test_that("despike_dem can write to disk and NA-fill", {
   r <- terra::rast(nrows = 20, ncols = 20)
   terra::values(r) <- 0

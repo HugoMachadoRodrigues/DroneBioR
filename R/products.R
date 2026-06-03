@@ -631,6 +631,12 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 #' @param ground Optional ground reference for the height-above-ground
 #'   filter: a `terra::SpatRaster` or path (typically the DTM). When
 #'   `NULL`, a coarse trend is built from the DEM itself.
+#' @param max_depth_below_ground Numeric (metres), default `2`. Used
+#'   only when the height-above-ground filter is active. A DSM is the
+#'   *top* surface, so a cell more than this far **below** the ground
+#'   is impossible — a downward spike. Such cells are flagged and
+#'   filled from the ground surface too. Set `NULL` to ignore
+#'   downward spikes.
 #' @param trend_cell_m Coarse-trend cell size in metres used when
 #'   `ground` is not supplied. Default `15` — should comfortably
 #'   exceed the width of the towers you want removed.
@@ -654,6 +660,7 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
 #' @export
 despike_dem <- function(dem, window = 5, max_deviation = 3,
                         max_height_above_ground = NULL, ground = NULL,
+                        max_depth_below_ground = 2,
                         trend_cell_m = 15,
                         fill = c("median", "NA"), out_path = NULL) {
   fill <- match.arg(fill)
@@ -665,7 +672,7 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
                             na.policy = "omit", na.rm = TRUE)
   is_spike  <- abs(r - local_med) > max_deviation
 
-  # --- pass 2: wide-tower detector (height above ground) ---
+  # --- pass 2: wide-tower / pit detector (height above ground) ---
   n_towers <- 0L
   ground_surface <- NULL
   if (!is.null(max_height_above_ground)) {
@@ -684,7 +691,15 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
       coarse <- terra::aggregate(r, fact = fact, fun = "median", na.rm = TRUE)
       ground_surface <- terra::resample(coarse, r, method = "bilinear")
     }
-    is_tower <- (r - ground_surface) > max_height_above_ground
+    height <- r - ground_surface
+    # Towers (too far above the surface) AND pits (below the ground —
+    # a DSM is the *top* surface, so anything more than
+    # max_depth_below_ground metres below the terrain is an artifact,
+    # the downward spikes seen in 3D).
+    is_tower <- height > max_height_above_ground
+    if (!is.null(max_depth_below_ground)) {
+      is_tower <- is_tower | (height < -abs(max_depth_below_ground))
+    }
     is_tower <- terra::ifel(is.na(is_tower), FALSE, is_tower)
     n_towers <- tryCatch(
       as.integer(terra::global(is_tower, "sum", na.rm = TRUE)[[1L]]),
@@ -697,11 +712,18 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
     error = function(e) NA_integer_
   )
 
-  # Fill: needles -> local median; towers -> ground surface (so the
-  # surface drops back to ground, not to a still-elevated local median).
+  # Fill: needles -> local median; towers/pits -> ground surface (so the
+  # surface returns to terrain level, not to a still-distorted local
+  # median). A cell that is far from the ground (either way) is filled
+  # from the ground surface; the rest from the local median.
   replacement <- if (!is.null(ground_surface)) {
-    terra::ifel((r - ground_surface) > (max_height_above_ground %||% Inf),
-                ground_surface, local_med)
+    height_now <- r - ground_surface
+    far_from_ground <- height_now > max_height_above_ground
+    if (!is.null(max_depth_below_ground)) {
+      far_from_ground <- far_from_ground |
+        (height_now < -abs(max_depth_below_ground))
+    }
+    terra::ifel(far_from_ground, ground_surface, local_med)
   } else {
     local_med
   }
@@ -714,8 +736,9 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
 
   if (!is.na(n_spikes)) {
     extra <- if (!is.null(max_height_above_ground) && !is.na(n_towers)) {
-      sprintf(" (incl. %d wide-tower pixel(s) > %g m above ground)",
-              n_towers, max_height_above_ground)
+      sprintf(" (incl. %d tower/pit pixel(s) outside [-%g, %g] m of ground)",
+              n_towers, abs(max_depth_below_ground %||% 0),
+              max_height_above_ground)
     } else ""
     message(sprintf(
       "[despike] Replaced %d cell(s)%s (fill = %s).",
