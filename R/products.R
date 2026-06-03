@@ -676,20 +676,36 @@ despike_dem <- function(dem, window = 5, max_deviation = 3,
   n_towers <- 0L
   ground_surface <- NULL
   if (!is.null(max_height_above_ground)) {
+    # A coarse median trend of the DEM is robust to spikes by
+    # construction (a few spike pixels never move a wide-cell median),
+    # so it always seeds the ground reference.
+    fact <- max(1L, as.integer(round(trend_cell_m / terra::res(r)[1L])))
+    coarse <- terra::aggregate(r, fact = fact, fun = "median", na.rm = TRUE)
+    trend  <- terra::resample(coarse, r, method = "bilinear")
     if (!is.null(ground)) {
+      # Use the supplied ground (typically the DTM) where it is
+      # trustworthy, but the DTM itself often carries the SAME spikes
+      # as the DSM (the user confirmed downward spikes in both). Using
+      # a spiked DTM as the reference makes shared spikes invisible
+      # (DSM - DTM looks normal where both dip). So we robustify the
+      # ground first: wherever it departs from its own coarse trend by
+      # more than 5 m it is replaced by the trend.
       g <- if (is.character(ground)) terra::rast(ground)[[1L]] else ground[[1L]]
       if (!terra::compareGeom(r, g, stopOnError = FALSE, lyrs = FALSE,
                               messages = FALSE)) {
         g <- terra::resample(g, r, method = "bilinear")
       }
-      ground_surface <- g
+      g_fact   <- max(1L, as.integer(round(trend_cell_m / terra::res(g)[1L])))
+      g_coarse <- terra::aggregate(g, fact = g_fact, fun = "median", na.rm = TRUE)
+      g_trend  <- terra::resample(g_coarse, r, method = "bilinear")
+      robust_g <- terra::ifel(abs(g - g_trend) > 5, g_trend, g)
+      # Fill any gap where the ground has no data (the DEM often extends
+      # a little past the DTM at the boundary, and uncovered pits there
+      # would otherwise have no reference and survive) with the DEM's own
+      # coarse trend.
+      ground_surface <- terra::cover(robust_g, trend)
     } else {
-      # Coarse trend: aggregate to ~trend_cell_m cells (median is robust
-      # to the towers when the cell is wider than a tower), then resample
-      # back to the DEM grid.
-      fact <- max(1L, as.integer(round(trend_cell_m / terra::res(r)[1L])))
-      coarse <- terra::aggregate(r, fact = fact, fun = "median", na.rm = TRUE)
-      ground_surface <- terra::resample(coarse, r, method = "bilinear")
+      ground_surface <- trend
     }
     height <- r - ground_surface
     # Towers (too far above the surface) AND pits (below the ground —
