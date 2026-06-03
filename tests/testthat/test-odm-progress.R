@@ -109,6 +109,37 @@ test_that("poller prefers the log stage over an early odm_georeferencing dir", {
   expect_match(state$status, "opensfm")
 })
 
+test_that("run_docker_with_progress records per-stage durations on clean exit", {
+  skip_if_not_installed("processx")
+  if (!nzchar(Sys.which("sh"))) skip("`sh` not on PATH")
+
+  # Point the history file at a temp location so the test does not
+  # touch the user's real ~/.dronebior/odm_stage_history.csv.
+  tmp_home <- tempfile("dronebior-home-")
+  dir.create(file.path(tmp_home, ".dronebior"), recursive = TRUE)
+  withr::with_envvar(c(HOME = tmp_home), {
+    project_dir <- tempfile("rec-")
+    dir.create(project_dir)
+
+    # The subprocess must WRITE the stage marker to its stdout (which
+    # run_docker_with_progress redirects to dronebior_odm.log), because
+    # the redirect truncates any pre-seeded file. `sh -c` echoes the
+    # marker then sleeps so the poller has time to read it.
+    DroneBioR:::run_docker_with_progress(
+      args               = c("-c", "echo 'Running opensfm stage'; sleep 1"),
+      project_dir        = project_dir,
+      image_count        = 308L,
+      poll_interval_secs = 0.3,
+      command            = "sh"
+    )
+
+    hist <- DroneBioR:::read_odm_stage_history()
+    # opensfm was the active stage throughout -> it must have been
+    # recorded against image_count 308.
+    expect_true(any(hist$stage == "opensfm" & hist$image_count == 308L))
+  })
+})
+
 test_that("default_odm_concurrency returns a sane positive integer", {
   n <- DroneBioR:::default_odm_concurrency()
   expect_true(is.integer(n))

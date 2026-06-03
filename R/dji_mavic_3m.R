@@ -756,10 +756,26 @@ run_odm_dji_mavic_3m <- function(project,
     )
   }, numeric(1))
   total_estimate_secs <- sum(est_per_band)
+  # The estimate is a coarse extrapolation: it scales recorded per-stage
+  # durations linearly by image count, and it does NOT know about the
+  # feature-quality / pc-quality settings or the host's core count. When
+  # the only history is from small runs at default quality, a large
+  # low-quality run is badly over-estimated. We flag that so users do
+  # not panic at the headline number; durations recorded by this run
+  # tighten the estimate for the next run at the same image count.
+  hist_counts <- unique(read_odm_stage_history()$image_count)
+  hist_counts <- hist_counts[is.finite(hist_counts)]
+  est_caveat <- if (!length(hist_counts)) {
+    " (rough: no timing history yet — first run uses built-in baselines)"
+  } else {
+    sprintf(" (rough extrapolation from history at %s images; actual is usually faster at lower quality)",
+            paste(sort(hist_counts), collapse = "/"))
+  }
   message(sprintf(
-    "Pipeline estimate: %d bands, total ~%s based on stage history",
+    "Pipeline estimate: %d bands, total ~%s%s",
     sum(!vapply(run_specs, function(s) is.null(s$manifest), logical(1))),
-    format_seconds_human(total_estimate_secs)
+    format_seconds_human(total_estimate_secs),
+    est_caveat
   ))
 
   ortho_paths <- list()

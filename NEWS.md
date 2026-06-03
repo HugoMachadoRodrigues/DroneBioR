@@ -2,6 +2,22 @@
 
 ## Bug fixes
 
+* **ETA self-corrects + stops over-promising.** The pipeline ETA
+  extrapolates recorded per-stage durations linearly by image count.
+  Two problems made it wildly wrong: (1) the per-band/per-pipeline
+  runs never *recorded* their durations, so the only history was from
+  whatever seeded `~/.dronebior/odm_stage_history.csv` (often tiny
+  test runs), and (2) the headline number was presented as if
+  authoritative — a 39-image history extrapolated to 308 images
+  produced a frightening "~35h" estimate even though the real run
+  takes well under an hour at low quality. Now `run_docker_with_progress()`
+  records each stage's measured duration against the run's image
+  count on a clean exit, so the estimate tightens after the first run
+  at a given scale; and the estimate banner is labelled as a rough
+  extrapolation, naming the image counts it was derived from. The
+  estimate still does not model `--feature-quality` / `--pc-quality`,
+  so treat it as an upper bound, not a promise.
+
 * **Progress poller now reads ODM's own stage markers.** The poller
   previously inferred the active stage from which stage *directories*
   existed on disk. ODM creates some stage dirs out of order — notably

@@ -287,19 +287,61 @@ run_docker_with_progress <- function(args,
     message(poll_result$status)
   }
 
+  # Track when each stage first became active so we can record real
+  # per-stage durations to the history file on completion — that is
+  # what makes the ETA self-correct after the first run at a given
+  # image count, instead of forever extrapolating from whatever tiny
+  # runs seeded ~/.dronebior/odm_stage_history.csv.
+  run_started  <- Sys.time()
+  stage_starts <- list()   # stage name -> POSIXct first-seen
+  stage_order_seen <- character()
+  note_stage <- function(poll_result) {
+    if (is.null(poll_result)) return(invisible(NULL))
+    s <- poll_result$active_stage
+    if (is.character(s) && length(s) == 1L && !is.na(s) &&
+        is.null(stage_starts[[s]])) {
+      stage_starts[[s]] <<- Sys.time()
+      stage_order_seen <<- c(stage_order_seen, s)
+    }
+  }
+
   while (proc$is_alive()) {
     proc$wait(timeout = as.integer(poll_interval_secs * 1000L))
-    render(tryCatch(poller(), error = function(e) NULL))
+    pr <- tryCatch(poller(), error = function(e) NULL)
+    note_stage(pr)
+    render(pr)
   }
   # Final poll so the user sees the terminal on-disk state alongside
   # the docker exit status. We also count the final products that
   # made it to disk so the user can sanity-check whether the run
   # actually delivered DSM / DTM / orthomosaic.
-  render(tryCatch(poller(), error = function(e) NULL))
+  pr <- tryCatch(poller(), error = function(e) NULL)
+  note_stage(pr)
+  render(pr)
 
   status <- proc$get_exit_status()
   if (is.null(status)) status <- 1L
   status <- as.integer(status)
+
+  # Record per-stage durations (only on a clean exit, so a crashed
+  # run does not poison the history with a truncated final stage).
+  # Each stage's duration = next stage's start - this stage's start;
+  # the last stage runs to the process exit.
+  if (identical(status, 0L) && length(stage_order_seen) &&
+      is.finite(image_count) && image_count > 0) {
+    run_id <- format(run_started, "%Y-%m-%d %H:%M:%S")
+    ends <- c(unlist(lapply(stage_order_seen[-1L],
+                            function(s) stage_starts[[s]])),
+              as.numeric(Sys.time()))
+    for (i in seq_along(stage_order_seen)) {
+      s <- stage_order_seen[i]
+      dur <- as.numeric(ends[i]) - as.numeric(stage_starts[[s]])
+      tryCatch(
+        record_odm_stage_completion(run_id, image_count, s, dur),
+        error = function(e) NULL
+      )
+    }
+  }
 
   prod_summary <- summarise_odm_products_on_disk(project_dir)
   message(sprintf(
