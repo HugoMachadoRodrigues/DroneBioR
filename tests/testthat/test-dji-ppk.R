@@ -276,11 +276,20 @@ test_that("speed/output knobs are exposed with sensible defaults", {
   expect_true(eval(f$build_dsm))
   expect_true(eval(f$build_dtm))
   expect_false(eval(f$fast_orthophoto))
+  expect_true(eval(f$auto_boundary))   # on by default to bound the ortho
   # And the per-band runner accepts them too.
   fb <- formals(DroneBioR:::run_one_dji_band)
   expect_true("build_dsm"       %in% names(fb))
   expect_true("build_dtm"       %in% names(fb))
   expect_true("fast_orthophoto" %in% names(fb))
+  expect_true("auto_boundary"   %in% names(fb))
+})
+
+test_that("run_one_dji_band passes --auto-boundary by default", {
+  body_str <- paste(deparse(body(DroneBioR:::run_one_dji_band)),
+                    collapse = "\n")
+  expect_match(body_str, "--auto-boundary")
+  expect_match(body_str, "boundary_args")
 })
 
 test_that("resolve_ppk_cli_auto returns NULL with a clear message when tools are missing", {

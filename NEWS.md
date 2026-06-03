@@ -2,6 +2,23 @@
 
 ## Bug fixes
 
+* **`--auto-boundary` by default fixes the orthophoto OOM (exit 137).**
+  On a 308-image DJI Mavic 3M flight the pipeline ran 47 minutes,
+  wrote a correct 247 m x 484 m DSM and DTM, then the `odm_orthophoto`
+  stage was OOM-killed — and the automatic retry died the same way.
+  Root cause: a handful of stray, mis-registered points (low feature
+  quality scatters them) spread the reconstruction's *Model bounds* to
+  ~3.9 km x 6.4 km even though the real footprint was 0.12 km². The
+  DSM / DTM are cropped so they survived, but the orthophoto stage
+  tried to render the full ~25 km² canvas at 5 cm — billions of pixels
+  — and exhausted the 48 GB Docker allocation. `run_odm_dji_mavic_3m()`
+  now passes `--auto-boundary` by default (new `auto_boundary = TRUE`
+  argument), which crops the reconstruction and the orthophoto to a
+  polygon derived from the camera GPS, discarding the stray sprawl.
+  The OOM auto-retry inherits the flag, so even a divergent run
+  recovers. Set `auto_boundary = FALSE` only for surveys with no
+  usable camera GPS.
+
 * **ETA self-corrects + stops over-promising.** The pipeline ETA
   extrapolates recorded per-stage durations linearly by image count.
   Two problems made it wildly wrong: (1) the per-band/per-pipeline

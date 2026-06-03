@@ -13,6 +13,7 @@ run_odm_dji_mavic_3m(
   build_dsm = TRUE,
   build_dtm = TRUE,
   fast_orthophoto = FALSE,
+  auto_boundary = TRUE,
   pc_las = FALSE,
   skip_3dmodel = TRUE,
   skip_report = TRUE,
@@ -48,6 +49,17 @@ MVS reconstruction (often the single longest stage). The
 orthomosaic is built from the 2.5D mesh instead — much faster,
 but any DSM / DTM produced alongside are lower quality. Leave
 \code{FALSE} for scientifically defensible canopy heights.}
+
+\item{auto_boundary}{Logical, default \code{TRUE}. Adds ODM's
+\code{--auto-boundary}, which crops the reconstruction and — crucially
+— the orthophoto canvas to a polygon derived from the camera GPS.
+This prevents a common failure on bounded aerial surveys where a
+few stray, mis-registered points scatter kilometres from the true
+footprint: without cropping, the orthophoto stage tries to render
+that whole sprawl at full resolution and the Docker container is
+OOM-killed (exit 137) even though the cropped DSM / DTM wrote
+fine. Set \code{FALSE} only if your survey genuinely has no usable
+camera GPS.}
 
 \item{pc_las}{Logical. When \code{TRUE}, export the dense point cloud
 from the RGB run as a \code{.las} file (~640 MB for a 300-image
