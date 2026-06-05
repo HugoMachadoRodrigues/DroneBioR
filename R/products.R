@@ -991,6 +991,12 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
 #'   (e.g. `list(flight = "ifasbahia10", speed = "balanced")`).
 #' @param remove_scaffolding Logical, default `TRUE`. Delete the
 #'   intermediate tree after the products are copied out.
+#' @param expect Optional character vector of product names that the
+#'   caller knows it asked for (e.g. `c("spectral_indices",
+#'   "biomass_proxy")` when indices were requested). Any of these whose
+#'   source file is missing trigger a warning, so an incomplete
+#'   `products/` folder (e.g. indices that crashed before being written)
+#'   is never shipped silently. Default `character()` warns about nothing.
 #' @return Invisibly, a named character vector of the final product
 #'   paths in `out_dir`.
 #' @examples
@@ -1006,7 +1012,8 @@ finalize_dronebio_products <- function(project,
                                        biomass_proxy = NULL,
                                        out_dir = NULL,
                                        extra_metadata = list(),
-                                       remove_scaffolding = TRUE) {
+                                       remove_scaffolding = TRUE,
+                                       expect = character()) {
   paths <- odm_product_paths(project)
   if (is.null(orthomosaic)) {
     dji_stack <- file.path(dirname(unname(paths[["orthomosaic"]])),
@@ -1037,6 +1044,21 @@ finalize_dronebio_products <- function(project,
     dst <- file.path(out_dir, paste0(nm, ".tif"))
     file.copy(src, dst, overwrite = TRUE)
     out_paths[nm] <- dst
+  }
+  # Surface expected-but-missing products loudly. The computed products
+  # (spectral_indices, biomass_proxy) are silently absent when the indices
+  # step did not run or crashed; without this, finalize would quietly ship an
+  # incomplete products/ folder and then delete the intermediates (the
+  # evidence) when remove_scaffolding = TRUE.
+  missing_expected <- setdiff(expect, names(out_paths))
+  if (length(missing_expected) > 0) {
+    warning(sprintf(
+      paste0("[finalize] expected product(s) not found, so products/ is ",
+             "incomplete: %s. The source file(s) were missing - re-run the ",
+             "step that makes them (run_dronebio_workflow() for the indices) ",
+             "and finalize again."),
+      paste(paste0(missing_expected, ".tif"), collapse = ", ")
+    ), call. = FALSE)
   }
   # Carry over the small CSV summaries if present.
   for (csv in c("spectral_index_summary.csv", "reflectance_summary.csv")) {

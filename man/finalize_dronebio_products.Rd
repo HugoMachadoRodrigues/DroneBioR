@@ -11,7 +11,8 @@ finalize_dronebio_products(
   biomass_proxy = NULL,
   out_dir = NULL,
   extra_metadata = list(),
-  remove_scaffolding = TRUE
+  remove_scaffolding = TRUE,
+  expect = character()
 )
 }
 \arguments{
@@ -32,6 +33,12 @@ stack and biomass proxy (default: the files
 
 \item{remove_scaffolding}{Logical, default \code{TRUE}. Delete the
 intermediate tree after the products are copied out.}
+
+\item{expect}{Optional character vector of product names that the
+caller knows it asked for (e.g. \code{c("spectral_indices", "biomass_proxy")} when indices were requested). Any of these whose
+source file is missing trigger a warning, so an incomplete
+\verb{products/} folder (e.g. indices that crashed before being written)
+is never shipped silently. Default \code{character()} warns about nothing.}
 }
 \value{
 Invisibly, a named character vector of the final product

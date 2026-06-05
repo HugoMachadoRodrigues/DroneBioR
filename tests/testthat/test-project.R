@@ -459,3 +459,40 @@ test_that("finalize_dronebio_products flattens products and removes scaffolding"
   expect_false(dir.exists(p$odm_dataset_dir))
   expect_false(dir.exists(p$output_dir))
 })
+
+test_that("finalize_dronebio_products warns only about expected-but-missing products", {
+  mkproj <- function() {
+    tmp <- tempfile("final_miss_"); dir.create(tmp)
+    p <- dronebio_project(project_dir = tmp, odm_dataset_subdir = "odm_dataset",
+                          odm_project_name = "flight",
+                          output_subdir = "dronebior_analysis")
+    orth <- file.path(p$odm_project_dir, "odm_orthophoto")
+    dem  <- file.path(p$odm_project_dir, "odm_dem")
+    dir.create(orth, recursive = TRUE); dir.create(dem, recursive = TRUE)
+    mk <- function(path, n = 1) {
+      r <- terra::rast(nrows = 8, ncols = 8, nlyrs = n)
+      terra::values(r) <- runif(64 * n); terra::writeRaster(r, path)
+    }
+    mk(file.path(orth, "odm_orthophoto_dji.tif"), 7)
+    mk(file.path(dem, "dsm.tif")); mk(file.path(dem, "dtm.tif"))
+    mk(file.path(dem, "chm.tif"))
+    p   # note: NO spectral_indices.tif / biomass written
+  }
+
+  # Indices expected but missing -> a clear warning, products/ still written.
+  expect_warning(
+    out <- finalize_dronebio_products(mkproj(),
+                                      expect = c("spectral_indices", "biomass_proxy")),
+    "expected product"
+  )
+  expect_true("orthomosaic" %in% names(out))
+  expect_false("spectral_indices" %in% names(out))
+
+  # Same missing indices but NOT expected (ortho-only run) -> no such warning.
+  msgs <- character()
+  withCallingHandlers(
+    finalize_dronebio_products(mkproj()),
+    warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") }
+  )
+  expect_false(any(grepl("expected product", msgs)))
+})
