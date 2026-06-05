@@ -5,6 +5,12 @@
 #' @param output_dir Optional output folder.
 #' @param band_map Named band map.
 #' @param use_alpha Logical. Use layer 6 as alpha mask when available.
+#' @param max_memory_gb Numeric cap (GB) on terra's working memory while the
+#'   reflectance scaling, spectral indices and their summaries/writes run, so
+#'   large orthomosaics stream to disk in blocks instead of OOM-killing the R
+#'   session. Restored on exit. `NULL` (or
+#'   `options(dronebior.skip_terra_memcap = TRUE)`) leaves terra's settings
+#'   untouched. Default `getOption("dronebior.workflow_memmax_gb", 4)`.
 #' @return A list with rasters, summaries and output paths.
 #' @examples
 #' \donttest{
@@ -22,7 +28,30 @@ run_dronebio_workflow <- function(project = dronebio_project(),
                                   orthomosaic = NULL,
                                   output_dir = NULL,
                                   band_map = default_micasense_band_map(),
-                                  use_alpha = TRUE) {
+                                  use_alpha = TRUE,
+                                  max_memory_gb = getOption("dronebior.workflow_memmax_gb", 4)) {
+  # Big orthomosaics (a 3 cm 7-band DJI stack is ~3 GB per in-memory copy) can
+  # OOM-kill the R session: scaling to reflectance and chaining 16 indices,
+  # then summarising and writing them, makes terra try to hold whole stacks in
+  # RAM under its default budget (memfrac 0.6) - especially when Docker is
+  # holding a large share of system memory. Cap terra's memory so it streams
+  # to disk in blocks instead. Restored on exit; disable with
+  # max_memory_gb = NULL or options(dronebior.skip_terra_memcap = TRUE).
+  if (requireNamespace("terra", quietly = TRUE) &&
+      is.numeric(max_memory_gb) && length(max_memory_gb) == 1L &&
+      is.finite(max_memory_gb) &&
+      is.null(getOption("dronebior.skip_terra_memcap"))) {
+    .old_terra <- terra::terraOptions(print = FALSE)
+    terra::terraOptions(
+      memmax  = min(.old_terra$memmax  %||% Inf, max_memory_gb),
+      memfrac = min(.old_terra$memfrac %||% 0.6, 0.4)
+    )
+    on.exit(tryCatch(
+      terra::terraOptions(memmax  = .old_terra$memmax  %||% Inf,
+                          memfrac = .old_terra$memfrac %||% 0.6),
+      error = function(e) NULL), add = TRUE)
+  }
+
   # configure_proj_database() is a macOS-focused helper. Inside the workflow
   # it is purely opportunistic - if it cannot locate proj.db, terra and sf
   # still work on any properly installed system, so we silence the warning
