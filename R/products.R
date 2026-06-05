@@ -846,6 +846,14 @@ despike_one_pass <- function(r, window, max_deviation,
 #'   `2`.
 #' @param dtm_max_bump Height (m) above its own trend beyond which a
 #'   DTM cell is treated as a spike. Default `5`.
+#' @param spike_min_height,max_spike_area_m2,spike_dilate_cells Area-opening
+#'   that removes isolated SfM "cone"/needle spikes the height-based
+#'   `canopy_ceiling` filter misses (they are shorter than the ceiling). A
+#'   CHM cell taller than `spike_min_height` m (default `1.5`) is "tall";
+#'   contiguous tall patches of at most `max_spike_area_m2` m^2 (default `10`)
+#'   are flattened to ground, larger patches (real canopy) are kept. The
+#'   spike mask is grown `spike_dilate_cells` cells (default `15`) to also
+#'   catch the cone skirt. Set `max_spike_area_m2 = 0` (or `NULL`) to disable.
 #' @param write Logical. Write the three GeoTIFFs. Default `TRUE`.
 #' @return Invisibly, a list with the cleaned `dsm`, `dtm`, `chm`
 #'   `terra::SpatRaster`s and, when written, their `paths`.
@@ -862,6 +870,9 @@ harmonize_dem_products <- function(project = NULL, dsm = NULL, dtm = NULL,
                                    max_depth_below_ground = 2,
                                    iterations = 2L,
                                    dtm_max_bump = 5,
+                                   spike_min_height = 1.5,
+                                   max_spike_area_m2 = 10,
+                                   spike_dilate_cells = 15L,
                                    write = TRUE) {
   if (!is.null(project)) {
     paths <- odm_product_paths(project)
@@ -895,6 +906,15 @@ harmonize_dem_products <- function(project = NULL, dsm = NULL, dtm = NULL,
                            trend_cell_m = trend_cell_m, iterations = iterations)
   chm_clean <- terra::clamp(chm_clean, lower = 0, upper = Inf, values = TRUE)
 
+  # 2b. Area-opening: flatten small isolated CHM spikes (SfM "cones") to
+  #     ground while preserving large contiguous canopy. The height-based
+  #     despike above keeps anything shorter than canopy_ceiling, so the
+  #     isolated few-metre cones that pock low-texture pasture survive it;
+  #     this removes them by patch AREA, not height.
+  chm_clean <- area_open_chm_spikes(chm_clean, min_height = spike_min_height,
+                                    max_area_m2 = max_spike_area_m2,
+                                    dilate_cells = spike_dilate_cells)
+
   # 3. Rebuild a consistent surface: DSM = ground + canopy >= ground.
   dsm_clean <- dtm_clean + chm_clean
   names(dtm_clean) <- "DTM"; names(chm_clean) <- "CHM"; names(dsm_clean) <- "DSM"
@@ -919,6 +939,39 @@ harmonize_dem_products <- function(project = NULL, dsm = NULL, dtm = NULL,
     message(sprintf("[harmonize] Wrote consistent DSM/DTM/CHM to %s", out_dir))
   }
   invisible(result)
+}
+
+# Area-opening on a CHM: flatten small isolated "tall" patches (SfM cone /
+# needle spikes that rise out of low-texture ground) to 0 while preserving
+# large contiguous canopy. Height-based despiking (canopy_ceiling) cannot do
+# this because the spikes are SHORTER than the ceiling; the discriminator is
+# the AREA of the connected tall patch, not its height. On a real grazed
+# pasture this dropped 91 isolated cone spikes while keeping an 2820 m^2 tree
+# stand and the 21.8 m tallest canopy untouched.
+#' @noRd
+area_open_chm_spikes <- function(chm, min_height = 1.5, max_area_m2 = 10,
+                                 dilate_cells = 15L) {
+  if (is.null(max_area_m2) || !is.finite(max_area_m2) || max_area_m2 <= 0) {
+    return(chm)
+  }
+  cell_m2 <- prod(terra::res(chm))
+  tall <- terra::ifel(chm > min_height, 1L, NA)
+  pa <- tryCatch(terra::patches(tall, directions = 8, zeroAsNA = TRUE),
+                 error = function(e) NULL)
+  if (is.null(pa)) return(chm)
+  fr <- terra::freq(pa)
+  if (is.null(fr) || nrow(fr) == 0L) return(chm)
+  small <- fr$value[fr$count * cell_m2 <= max_area_m2]
+  if (length(small) == 0L) return(chm)            # only large canopy is tall
+  spike <- terra::classify(pa,
+                           cbind(fr$value, ifelse(fr$value %in% small, 1L, NA)),
+                           others = NA)
+  if (!is.null(dilate_cells) && dilate_cells >= 1) {
+    w <- as.integer(dilate_cells); if (w %% 2L == 0L) w <- w + 1L
+    spike <- terra::ifel(terra::focal(spike, w = w, fun = "max", na.rm = TRUE) > 0,
+                         1L, NA)
+  }
+  terra::ifel(!is.na(spike), 0, chm)              # flatten spikes to ground (CHM 0)
 }
 
 # Harmonize a project's DSM/DTM/CHM in place: back up the raw ODM

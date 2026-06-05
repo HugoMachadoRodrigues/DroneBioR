@@ -302,6 +302,28 @@ test_that("despike_dem removes wide towers via height-above-ground", {
   expect_true(any(abs(vals[!is.na(vals)] - 12) < 1))     # 12 m canopy survived
 })
 
+test_that("area_open_chm_spikes flattens small isolated spikes, keeps large canopy", {
+  # CHM with a 1-cell isolated spike (a cone) and a wide contiguous canopy
+  # block, both taller than the height threshold. The area-opening must drop
+  # the isolated spike and keep the block.
+  chm <- terra::rast(nrows = 60, ncols = 60, xmin = 0, xmax = 6,
+                     ymin = 0, ymax = 6)                 # 0.1 m cells -> 0.01 m2
+  m <- matrix(0, 60, 60)
+  m[5, 5] <- 8                        # isolated spike: 1 cell = 0.01 m2
+  m[20:39, 20:39] <- 6                # contiguous canopy: 20x20 = 4 m2
+  terra::values(chm) <- m
+
+  out <- DroneBioR:::area_open_chm_spikes(chm, min_height = 1.5,
+                                          max_area_m2 = 1, dilate_cells = 0)
+  v <- terra::values(out); v <- v[!is.na(v)]
+  expect_false(any(abs(v - 8) < 0.5))                    # isolated spike flattened
+  expect_equal(sum(abs(v - 6) < 0.5), 400L)              # the 4 m2 canopy kept whole
+
+  # max_spike_area_m2 = 0 disables the filter (no-op).
+  same <- DroneBioR:::area_open_chm_spikes(chm, max_area_m2 = 0)
+  expect_equal(terra::minmax(same)[2, 1], 8)
+})
+
 test_that("despike_dem iterations converge a wide pit and never worsen it", {
   # A wide deep pit (12x12 cluster at -40 m) on a flat surface, with a
   # trend cell larger than the pit. Two iterations must clear it and

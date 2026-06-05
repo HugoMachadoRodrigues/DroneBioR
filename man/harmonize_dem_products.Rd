@@ -14,6 +14,9 @@ harmonize_dem_products(
   max_depth_below_ground = 2,
   iterations = 2L,
   dtm_max_bump = 5,
+  spike_min_height = 1.5,
+  max_spike_area_m2 = 10,
+  spike_dilate_cells = 15L,
   write = TRUE
 )
 }
@@ -40,6 +43,15 @@ towers.}
 
 \item{dtm_max_bump}{Height (m) above its own trend beyond which a
 DTM cell is treated as a spike. Default \code{5}.}
+
+\item{spike_min_height, max_spike_area_m2, spike_dilate_cells}{Area-opening
+that removes isolated SfM "cone"/needle spikes the height-based
+\code{canopy_ceiling} filter misses (they are shorter than the ceiling). A
+CHM cell taller than \code{spike_min_height} m (default \code{1.5}) is "tall";
+contiguous tall patches of at most \code{max_spike_area_m2} m^2 (default \code{10})
+are flattened to ground, larger patches (real canopy) are kept. The
+spike mask is grown \code{spike_dilate_cells} cells (default \code{15}) to also
+catch the cone skirt. Set \code{max_spike_area_m2 = 0} (or \code{NULL}) to disable.}
 
 \item{write}{Logical. Write the three GeoTIFFs. Default \code{TRUE}.}
 }
