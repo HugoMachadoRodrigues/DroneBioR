@@ -2,6 +2,18 @@
 
 ## Bug fixes
 
+* **The vegetation-index step no longer OOM-crashes the R session on
+  high-resolution orthomosaics.** A 3 cm 7-band DJI stack is ~3 GB per
+  in-memory copy, and `run_dronebio_workflow()` scaled it to reflectance and
+  chained 16 indices with no cap on terra's working memory, so terra tried to
+  hold whole stacks in RAM (made worse when Docker is reserving a large share
+  of system memory) and the session was killed mid-run. The workflow now caps
+  terra's memory (new `max_memory_gb`, default 4 GB; opt out with `NULL` or
+  `options(dronebior.skip_terra_memcap = TRUE)`) for the reflectance / index /
+  summary / write steps so they stream to disk in blocks, and restores the
+  previous terra settings on exit. On a real 9336x6297x7 ortho the 16 indices
+  now complete in ~5.5 min instead of crashing.
+
 * **The multispectral run no longer crashes when the DJI Mavic 3M drops
   band frames.** ODM's multispectral grouping requires every capture to
   carry all four bands; the Mavic 3M routinely skips a band frame on turns
