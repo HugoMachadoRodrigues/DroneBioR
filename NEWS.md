@@ -2,6 +2,15 @@
 
 ## Bug fixes
 
+* **`finalize_dronebio_products()` no longer silently ships an incomplete
+  `products/` folder.** When the indices step crashed or never ran, finalize
+  copied the orthomosaic + DEMs, skipped the missing `spectral_indices.tif` /
+  `biomass_proxy.tif` without a word, and then deleted the intermediate
+  `dronebior_analysis/` folder when `remove_scaffolding = TRUE` — so the
+  absence was invisible and the inputs were gone. A new `expect` argument
+  lets the caller declare which computed products it asked for; any that are
+  missing now raise a clear warning instead of vanishing.
+
 * **The vegetation-index step no longer OOM-crashes the R session on
   high-resolution orthomosaics.** A 3 cm 7-band DJI stack is ~3 GB per
   in-memory copy, and `run_dronebio_workflow()` scaled it to reflectance and
