@@ -518,17 +518,58 @@ run_one_dji_band <- function(project,
   ortho_path
 }
 
-# Combine the four per-band MS manifests into one. ODM groups the
-# multispectral bands by capture from the DJI EXIF/XMP metadata
-# (BandName, RigCameraIndex, CentralWavelength), so all four band
-# TIFFs for a flight go into a single images/ folder and a single
-# reconstruction.
+# Capture key shared by the four band TIFFs of one DJI Mavic 3M shot:
+# the filename with the trailing `_MS_<band>.<ext>` removed. On real
+# flights this is 1:1 with the DJI `CaptureUUID` XMP tag, so we can group
+# bands by filename without a per-image EXIF read.
+dji_ms_capture_key <- function(filename) {
+  sub("_MS_[A-Za-z]+\\.(tif|tiff)$", "", filename, ignore.case = TRUE)
+}
+
+dji_ms_band_label <- function(filename) {
+  toupper(sub("^.*_MS_([A-Za-z]+)\\.(tif|tiff)$", "\\1", filename,
+              ignore.case = TRUE))
+}
+
+# Keep only captures that carry ALL of the multispectral bands. ODM's
+# multispectral grouping requires balanced bands across the set; the DJI
+# Mavic 3M routinely drops a band frame on turns and at the flight ends,
+# leaving incomplete captures. Feeding those to ODM crashes it at the very
+# first (`dataset`) stage with "Cannot match bands by filename ... check
+# that ... no images are missing", before any product is written.
+filter_complete_ms_captures <- function(manifest, n_bands) {
+  if (is.null(manifest) || !nrow(manifest)) return(manifest)
+  key  <- dji_ms_capture_key(manifest$filename)
+  band <- dji_ms_band_label(manifest$filename)
+  n_present <- tapply(band, key, function(b) length(unique(b)))
+  complete  <- names(n_present)[n_present >= n_bands]
+  keep      <- key %in% complete
+  n_caps <- length(n_present)
+  n_drop <- n_caps - length(complete)
+  if (n_drop > 0L) {
+    message(sprintf(
+      paste0("[MS] %d of %d captures are missing one or more of the %d bands ",
+             "(DJI drops band frames on turns / flight ends); using the %d ",
+             "complete %d-band captures (%d images). Patchy MS coverage, if ",
+             "any, comes from these gaps, not from the run."),
+      n_drop, n_caps, n_bands, length(complete), n_bands, sum(keep)
+    ))
+  }
+  manifest[keep, , drop = FALSE]
+}
+
+# Combine the four per-band MS manifests into one and drop any capture that
+# is missing a band (see filter_complete_ms_captures). ODM then groups the
+# balanced multispectral set by capture from the DJI EXIF/XMP metadata
+# (CaptureUUID, BandName, RigCameraIndex), reconstructs once, and
+# co-registers the bands onto a common grid.
 combine_ms_manifests <- function(manifests) {
   ms_keys <- intersect(c("MS_G", "MS_R", "MS_RE", "MS_NIR"), names(manifests))
   parts <- manifests[ms_keys]
   parts <- parts[!vapply(parts, is.null, logical(1))]
   if (!length(parts)) return(NULL)
-  do.call(rbind, parts)
+  combined <- do.call(rbind, parts)
+  filter_complete_ms_captures(combined, n_bands = length(parts))
 }
 
 #' Run ODM once on all four MS bands as a multispectral set
@@ -578,6 +619,11 @@ run_dji_ms_multispectral <- function(project,
     nrow(ms_manifest), band_imgs,
     if (have_exiftool) " (stripping DJI MakerNote; band tags preserved)" else ""
   ))
+  # Rebuild images/ from scratch so it matches the completeness-filtered
+  # manifest exactly. populate_band_images_dir() skips files that already
+  # exist, so a prior failed run's full (unbalanced) band set would
+  # otherwise linger here and crash ODM's multispectral grouping again.
+  unlink(band_imgs, recursive = TRUE, force = TRUE)
   populate_band_images_dir(ms_manifest, band_imgs, sanitize_exif = have_exiftool)
 
   # PPK geo.txt for all MS images (each filename resolves to its
