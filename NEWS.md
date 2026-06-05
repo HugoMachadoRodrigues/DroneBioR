@@ -2,6 +2,18 @@
 
 ## Bug fixes
 
+* **`harmonize_dem_products()` now removes isolated reconstruction spikes
+  (the SfM "cones") the height filter missed.** Low-texture grazed pasture
+  produces isolated few-metre cone/needle spikes in the DSM; because they are
+  *shorter* than `canopy_ceiling`, the height-based tower filter kept them, so
+  they showed up as cones in the 3D view. A new area-opening step flattens
+  small isolated tall CHM patches (contiguous area `<= max_spike_area_m2`,
+  default 10 m^2) to ground while preserving large contiguous canopy, keyed on
+  patch *area* rather than height. On a real flight it dropped 91 cone spikes
+  and kept a 2820 m^2 tree stand and the 21.8 m tallest canopy untouched. Tune
+  with `spike_min_height` / `max_spike_area_m2` / `spike_dilate_cells`, or set
+  `max_spike_area_m2 = 0` to disable.
+
 * **The 7-band DJI orthomosaic no longer has a black border.**
   `stack_dji_ortho_from_ms()` dropped the ODM RGB alpha band (band 4) and
   hard-filled the transparent flight-edge border with `0,0,0`, which showed
