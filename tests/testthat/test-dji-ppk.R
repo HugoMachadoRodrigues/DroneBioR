@@ -309,6 +309,25 @@ test_that("combine_ms_manifests merges the four MS band manifests", {
   expect_false(any(grepl("_D\\.", out$filename)))
 })
 
+test_that("combine_ms_manifests drops captures missing a band", {
+  mk <- function(keys, band) data.frame(
+    file = sprintf("%s_MS_%s.TIF", keys, band),
+    filename = sprintf("%s_MS_%s.TIF", keys, band),
+    stringsAsFactors = FALSE)
+  # 0001 complete; 0002 missing RedEdge; 0003 missing NIR -> only 0001 kept.
+  manifests <- list(
+    MS_G   = mk(c("DJI_x_0001", "DJI_x_0002", "DJI_x_0003"), "G"),
+    MS_R   = mk(c("DJI_x_0001", "DJI_x_0002", "DJI_x_0003"), "R"),
+    MS_RE  = mk(c("DJI_x_0001",               "DJI_x_0003"), "RE"),
+    MS_NIR = mk(c("DJI_x_0001", "DJI_x_0002"),               "NIR")
+  )
+  out <- suppressMessages(DroneBioR:::combine_ms_manifests(manifests))
+  expect_equal(nrow(out), 4)                                   # the one complete capture
+  expect_equal(unique(DroneBioR:::dji_ms_capture_key(out$filename)), "DJI_x_0001")
+  expect_setequal(DroneBioR:::dji_ms_band_label(out$filename),
+                  c("G", "R", "RE", "NIR"))
+})
+
 test_that("order_ms_ortho_bands maps band descriptions to G/R/RE/NIR", {
   # RedEdge must be matched before Red so 'Red edge' is not taken as 'Red'.
   r <- terra::rast(nrows = 2, ncols = 2, nlyrs = 4)

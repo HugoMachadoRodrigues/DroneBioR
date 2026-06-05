@@ -1,5 +1,20 @@
 # DroneBioR (development version)
 
+## Bug fixes
+
+* **The multispectral run no longer crashes when the DJI Mavic 3M drops
+  band frames.** ODM's multispectral grouping requires every capture to
+  carry all four bands; the Mavic 3M routinely skips a band frame on turns
+  and at the flight ends, which made ODM die at the very first (`dataset`)
+  stage ("Cannot match bands by filename ... no images are missing") before
+  any product — or the finalize / cleanup step — could run, leaving the
+  project folder full of intermediates. `run_odm_dji_mavic_3m()` now keeps
+  only captures that have all four `_MS_*` bands (grouped by the shared
+  capture key, which is 1:1 with the DJI `CaptureUUID`), reports how many
+  incomplete captures were dropped, and rebuilds the MS `images/` folder
+  each run so a previous failed run's unbalanced set can't linger and
+  re-trigger the crash.
+
 ## New features
 
 * **Field-calibrated biomass maps from drone products + sparse ground
