@@ -345,6 +345,29 @@ test_that("order_ms_ortho_bands maps band descriptions to G/R/RE/NIR", {
   expect_equal(idx2[["Red"]], 4L)
 })
 
+test_that("stack_dji_ortho_from_ms masks the alpha border to NA (no black frame)", {
+  td <- tempfile("stack_"); dir.create(td)
+  # RGBA ortho with the top-left cell (cell 1) transparent (alpha 0).
+  rgba <- terra::rast(nrows = 6, ncols = 6, nlyrs = 4,
+                      xmin = 0, xmax = 6, ymin = 0, ymax = 6)
+  av <- rep(255, 36); av[1] <- 0
+  terra::values(rgba) <- c(rep(100, 36), rep(120, 36), rep(80, 36), av)
+  rgb_path <- file.path(td, "rgb.tif"); terra::writeRaster(rgba, rgb_path)
+  # MS ortho with ODM-style band descriptions.
+  ms <- terra::rast(nrows = 6, ncols = 6, nlyrs = 4,
+                    xmin = 0, xmax = 6, ymin = 0, ymax = 6)
+  terra::values(ms) <- 0.1 + runif(36 * 4) * 0.1
+  names(ms) <- c("Green", "Red", "Red edge", "NIR")
+  ms_path <- file.path(td, "ms.tif"); terra::writeRaster(ms, ms_path)
+
+  out <- file.path(td, "stack.tif")
+  DroneBioR:::stack_dji_ortho_from_ms(rgb_path, ms_path, out)
+  st <- terra::values(terra::rast(out))
+  expect_equal(ncol(st), 7L)                    # 3 RGB + 4 MS
+  expect_true(all(is.na(st[1, ])))              # transparent border cell -> NA
+  expect_false(any(is.na(st[20, ])))            # interior cell keeps data
+})
+
 test_that("resolve_ppk_cli_auto returns NULL with a clear message when tools are missing", {
   # Clear any environment override the user may have set, then point
   # at a tempdir with no `base/` subfolder so the base-obs probe also

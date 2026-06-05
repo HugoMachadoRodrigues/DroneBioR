@@ -2,6 +2,15 @@
 
 ## Bug fixes
 
+* **The 7-band DJI orthomosaic no longer has a black border.**
+  `stack_dji_ortho_from_ms()` dropped the ODM RGB alpha band (band 4) and
+  hard-filled the transparent flight-edge border with `0,0,0`, which showed
+  up as an ugly black frame (~27% of the frame on a typical pasture) while
+  the DEMs and the original ODM ortho stayed clean. It now carries the alpha
+  as a validity mask (falling back to "all RGB == 0" when no alpha band is
+  present), so the stacked orthomosaic keeps a proper transparent nodata
+  border across all seven bands.
+
 * **`finalize_dronebio_products()` no longer silently ships an incomplete
   `products/` folder.** When the indices step crashed or never ran, finalize
   copied the orthomosaic + DEMs, skipped the missing `spectral_indices.tif` /

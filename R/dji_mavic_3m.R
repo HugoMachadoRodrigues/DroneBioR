@@ -768,8 +768,19 @@ stack_dji_ortho_from_ms <- function(rgb_ortho, ms_ortho, out_path) {
   if (!file.exists(ms_ortho)) {
     stop("MS orthomosaic not found: ", ms_ortho, call. = FALSE)
   }
-  rgb <- terra::rast(rgb_ortho)[[1:3]]
+  rgb_src <- terra::rast(rgb_ortho)
+  rgb <- rgb_src[[1:3]]
   names(rgb) <- c("Red", "Green", "Blue")
+  # ODM writes a 4th alpha band that is 0 over the transparent flight-edge
+  # border. Build a validity mask from it so the stacked ortho keeps that
+  # border transparent (NA) instead of turning it into a hard black 0,0,0
+  # fill (which shows up as an ugly black frame in QGIS). Fall back to
+  # "all three RGB bands == 0" when there is no alpha band.
+  valid <- if (terra::nlyr(rgb_src) >= 4L) {
+    terra::ifel(rgb_src[[4]] > 0, 1L, NA)
+  } else {
+    terra::ifel(rgb[[1]] == 0 & rgb[[2]] == 0 & rgb[[3]] == 0, NA, 1L)
+  }
 
   ms <- terra::rast(ms_ortho)
   ord <- order_ms_ortho_bands(ms)
@@ -789,6 +800,9 @@ stack_dji_ortho_from_ms <- function(rgb_ortho, ms_ortho, out_path) {
 
   stacked <- rgb
   for (nm in names(ms_layers)) stacked <- c(stacked, ms_layers[[nm]])
+  # Carry the transparent flight-edge border across all 7 bands so the
+  # orthomosaic has a clean nodata border, not a black one.
+  stacked <- terra::mask(stacked, valid)
 
   dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
   terra::writeRaster(stacked, out_path, overwrite = TRUE, datatype = "FLT4S",
