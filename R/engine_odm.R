@@ -359,7 +359,7 @@ run_odm_project <- function(project,
   if (identical(as.integer(status), 137L) &&
       !file.exists(project$odm_orthomosaic)) {
     message(sprintf(
-      "[%s] ODM exit status 137 — the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
+      "[%s] ODM exit status 137 - the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
       project$odm_project_name
     ))
     clean_incomplete_odm_state(project$odm_project_dir)

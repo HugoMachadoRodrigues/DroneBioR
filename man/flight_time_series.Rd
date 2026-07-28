@@ -28,9 +28,11 @@ values, so a partial registry (e.g. a few flights with missing
 orthomosaics) still produces a usable plot.
 }
 \examples{
+\dontrun{
+# One row per flight, so register the projects first.
 reg <- tempfile(fileext = ".csv")
-project <- dronebio_sample_project(target_dir = tempfile("ts-flight-"))
-register_flight(Sys.Date(), project$project_dir, registry_path = reg)
-ts <- flight_time_series(flight_ndvi_mean, registry_path = reg)
-ts
+register_flight("2026-04-01", "~/flights/2026-04-01", registry_path = reg)
+register_flight("2026-05-01", "~/flights/2026-05-01", registry_path = reg)
+flight_time_series(flight_ndvi_mean, registry_path = reg)
+}
 }

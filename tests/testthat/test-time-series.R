@@ -45,6 +45,39 @@ test_that("register_flight accepts multiple flights at distinct dates", {
   expect_equal(nrow(flights), 2)
 })
 
+test_that("register_flight keeps distinct projects flown on the same date", {
+  reg <- tempfile(fileext = ".csv")
+  p1 <- dronebio_sample_project(target_dir = tempfile("flight-same-day-1-"))
+  p2 <- dronebio_sample_project(target_dir = tempfile("flight-same-day-2-"))
+
+  register_flight("2026-05-01", p1$project_dir, notes = "plot A", registry_path = reg)
+  register_flight("2026-05-01", p2$project_dir, notes = "plot B", registry_path = reg)
+
+  flights <- list_flights(reg)
+  expect_equal(nrow(flights), 2)
+  expect_equal(length(unique(flights$flight_id)), 2)
+})
+
+test_that("flight ids survive long, deeply nested project paths", {
+  # The id embeds a hash of project_dir. Accumulating that hash in a 32-bit
+  # integer overflowed to NA after ~9 characters, so every real-world path
+  # produced the same "<date>-NA" id and same-date flights silently collided.
+  reg <- tempfile(fileext = ".csv")
+  base <- file.path(tempdir(), "OneDrive-UniversityofFlorida", "REC_Ona",
+                    "Drone_Biomass", "season2026")
+  a <- file.path(base, "plot_A")
+  b <- file.path(base, "plot_B")
+  dir.create(a, recursive = TRUE, showWarnings = FALSE)
+  dir.create(b, recursive = TRUE, showWarnings = FALSE)
+
+  expect_silent(register_flight("2026-05-01", a, registry_path = reg))
+  register_flight("2026-05-01", b, registry_path = reg)
+
+  flights <- list_flights(reg)
+  expect_equal(nrow(flights), 2)
+  expect_false(any(grepl("NA", flights$flight_id, fixed = TRUE)))
+})
+
 test_that("flight_time_series returns one numeric value per registered flight", {
   reg <- tempfile(fileext = ".csv")
   p1 <- dronebio_sample_project(target_dir = tempfile("flight-ts-1-"))

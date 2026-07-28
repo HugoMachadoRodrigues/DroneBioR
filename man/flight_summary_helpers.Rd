@@ -26,8 +26,12 @@ value, suitable for use as the \code{summary_fn} argument of
 \code{\link[=flight_time_series]{flight_time_series()}}.
 }
 \examples{
-project <- dronebio_sample_project(target_dir = tempfile("ts-ndvi-"))
+\dontrun{
+# Each helper reads the products of one flight, so point dronebio_project()
+# at a directory that already holds ODM output.
+project <- dronebio_project("~/flights/2026-05-01")
 flight_ndvi_mean(project)
 flight_biomass_proxy_mean(project)
 flight_chm_mean(project)
+}
 }

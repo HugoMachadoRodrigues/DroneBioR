@@ -37,11 +37,11 @@
 #'   raster math on every render.
 #' @return Invisibly returns the absolute path to the rendered file.
 #' @examples
-#' \donttest{
-#' project <- dronebio_sample_project(target_dir = tempfile("dronebior-sample-"))
+#' \dontrun{
+#' project <- dronebio_project("~/flights/2026-05-01")
 #' out <- render_dronebio_report(
 #'   project     = project,
-#'   output_file = file.path(tempdir(), "demo_report.html"),
+#'   output_file = file.path(tempdir(), "flight_report.html"),
 #'   field_csv   = file.path(project$project_dir, "field_samples.csv")
 #' )
 #' file.exists(out)

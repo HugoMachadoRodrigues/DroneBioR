@@ -194,7 +194,7 @@ detected, surfaces drawn.
     COPC) and `-keep_random_fraction <f>` (decoder-level decimation,
     not post-load).
   - PLY preview is the ODM `point_cloud.ply`; binary little-endian
-    layout (`x y z` float32 + `r g b views` uchar, 16 B/vertex) read
+    layout (`x y z` float32 + `red blue green views` uchar, 16 B/vertex) read
     in one `readBin()` pass (`R/pointcloud.R:28-117`).
 - **Accuracy.**
   - LAS / LAZ / COPC: full sensor precision (LAS 1.2 / 1.4

@@ -11,11 +11,11 @@ reference:
   - title: "Project setup"
     desc: >
       Build the project description used by the rest of the package,
-      seed a clickable sample project from bundled fixtures, and
-      configure PROJ on systems where terra or sf cannot find it.
+      locate existing ODM projects, and configure PROJ on systems where
+      terra or sf cannot find it.
     contents:
       - dronebio_project
-      - dronebio_sample_project
+      - detect_odm_projects
       - configure_proj_database
 
   - title: "External photogrammetry engines"
@@ -24,12 +24,49 @@ reference:
       products from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
     contents:
       - list_micasense_images
+      - list_aerial_images
       - copy_images_for_odm
       - build_odm_args
       - run_odm_project
       - convert_undistorted_tiffs_for_texturing
       - odm_product_paths
       - summarize_odm_products
+      - pick_best_point_cloud
+      - pick_best_textured_obj
+      - pick_best_textured_glb
+
+  - title: "WebODM"
+    desc: >
+      Drive a WebODM server over its REST API instead of a local Docker
+      container.
+    contents:
+      - as_webodm_options
+      - webodm_authenticate
+      - webodm_create_project
+      - webodm_list_projects
+      - webodm_submit_task
+      - webodm_task_status
+      - webodm_download_asset
+      - run_webodm_project
+
+  - title: "DJI Mavic 3M, PPK and camera geolocation"
+    desc: >
+      Reconstruct DJI Mavic 3M multispectral flights, and turn RTK/PPK
+      logs and GeoScan metadata into the geolocation files ODM expects.
+    contents:
+      - run_odm_dji_mavic_3m
+      - list_dji_mavic_3m_images
+      - has_djim3m_images
+      - detect_djim3m_ppk_files
+      - inspect_djim3m_mrk
+      - parse_djim3m_mrk
+      - parse_djim3m_mrk_folder
+      - write_djim3m_geo_txt
+      - ppk_cli_rtklib_dji
+      - detect_geoscan_metadata
+      - read_geoscan_cameras
+      - read_geoscan_gnss_offset
+      - convert_geoscan_to_odm_geo
 
   - title: "Multispectral orthomosaic"
     desc: >
@@ -37,6 +74,8 @@ reference:
       write DroneBioR raster products to disk.
     contents:
       - read_multispectral_orthomosaic
+      - default_rgb_band_map
+      - default_dji_mavic_3m_band_map
       - scale_to_reflectance
       - summarize_spatraster
       - write_dronebio_rasters
@@ -45,17 +84,32 @@ reference:
     contents:
       - compute_spectral_indices
       - compute_biomass_proxy
+      - compute_biomass_proxies
 
   - title: "Classification"
     contents:
       - classify_ground_vegetation
       - classify_ground_csf
+      - improve_dtm_csf
 
   - title: "Field data and baseline biomass model"
     contents:
       - read_field_data
       - extract_field_spectral_data
       - fit_biomass_lm
+
+  - title: "Field-calibrated biomass mapping"
+    desc: >
+      Calibrate against field samples or a rising-plate meter, then
+      predict a biomass surface over the flight.
+    contents:
+      - fit_plate_meter
+      - predict.dronebio_plate_meter
+      - build_biomass_calibration
+      - fit_biomass_model
+      - make_biomass_grid
+      - predict_biomass_map
+      - run_biomass_mapping
 
   - title: "Point clouds and CHM"
     desc: >
@@ -66,6 +120,9 @@ reference:
       - read_las_point_cloud
       - read_ply_point_cloud
       - build_chm_from_dsm_dtm
+      - build_chm_raster
+      - despike_dem
+      - harmonize_dem_products
       - add_chm_heights
       - add_point_heights
       - compute_chm_roi_metrics
@@ -91,13 +148,22 @@ reference:
       - register_flight
       - list_flights
       - flight_time_series
-      - flight_ndvi_mean
-      - flight_biomass_proxy_mean
-      - flight_chm_mean
+      - flight_summary_helpers
 
-  - title: "Workflow and Shiny app"
+  - title: "Workflow and outputs"
+    desc: >
+      Run the whole pipeline, collect the products into one documented
+      folder, and check what actually landed on disk.
     contents:
       - run_dronebio_workflow
+      - finalize_dronebio_products
+      - validate_odm_outputs
+      - quick_outputs_check
+      - is_cloud_sync_path
+      - sync_outputs_to_local_cache
+
+  - title: "Shiny app"
+    contents:
       - run_drone_biomass_studio
       - with_error_toast
 

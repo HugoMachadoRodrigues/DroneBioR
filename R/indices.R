@@ -225,7 +225,7 @@ compute_biomass_proxy <- function(indices) {
 #' truth.
 #'
 #' Layers always returned when the input indices allow:
-#'   Biomass_Spectral   mean(NDVI, SAVI, NDRE) clipped to [-1, 1]
+#'   Biomass_Spectral   mean(NDVI, SAVI, NDRE) clipped to `[-1, 1]`
 #'                      (the legacy `compute_biomass_proxy()` output)
 #'   Biomass_NDVI_x_CHM NDVI * CHM (m greenness)
 #'   Biomass_NDRE_x_CHM NDRE * CHM (m greenness, RedEdge)

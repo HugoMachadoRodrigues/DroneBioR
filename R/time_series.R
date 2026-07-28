@@ -42,9 +42,11 @@ ensure_flight_registry <- function(registry_path) {
 #'   [default_flight_registry()].
 #' @return Invisibly returns the updated registry data frame.
 #' @examples
+#' # Registering a flight only records a path, so a throwaway directory is
+#' # enough to demonstrate it; in practice project_dir is the ODM project
+#' # directory produced by the flight.
 #' reg <- tempfile(fileext = ".csv")
-#' project <- dronebio_sample_project(target_dir = tempfile("flight-1-"))
-#' register_flight(date = Sys.Date(), project_dir = project$project_dir,
+#' register_flight(date = Sys.Date(), project_dir = tempdir(),
 #'                 registry_path = reg)
 #' list_flights(reg)
 #' @export
@@ -67,8 +69,12 @@ register_flight <- function(date,
     substr(rlang_compatible_hash(project_dir), 1L, 8L)
   )
   current <- list_flights(registry_path)
-  if (flight_id %in% current$flight_id) {
-    # Idempotent: do not re-append the same flight.
+  # Idempotent on (date, project_dir), the two fields flight_id is built from.
+  # Matching those directly rather than the id keeps registries written before
+  # the hash fix -- where every id degenerated to "<date>-NA" -- from gaining a
+  # duplicate row the first time each flight is re-registered.
+  if (any(current$date == format(date_parsed, "%Y-%m-%d") &
+          current$project_dir == project_dir)) {
     return(invisible(current))
   }
   new_row <- data.frame(
@@ -86,13 +92,18 @@ register_flight <- function(date,
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
 # Tiny self-contained hash to avoid depending on digest / rlang here.
+# The running value is a double reduced modulo 2^31 - 1 on every step so it
+# always fits a 32-bit signed integer: accumulating in an R integer overflowed
+# to NA after ~9 characters, which collapsed every realistic project path to
+# the same digest.
 rlang_compatible_hash <- function(x) {
   raw <- charToRaw(paste(x, collapse = "|"))
-  h <- 0L
+  modulus <- 2147483647
+  h <- 0
   for (b in as.integer(raw)) {
-    h <- bitwXor(bitwShiftL(h, 5L) - h, b)
+    h <- bitwXor(as.integer((h * 31) %% modulus), b)
   }
-  format(as.hexmode(abs(h)), width = 8)
+  format(as.hexmode(h), width = 8)
 }
 
 #' List flights registered in the time-series registry
@@ -135,11 +146,13 @@ list_flights <- function(registry_path = default_flight_registry()) {
 #' @return A data frame with columns `date`, `value`, `flight_id`,
 #'   `project_dir`.
 #' @examples
+#' \dontrun{
+#' # One row per flight, so register the projects first.
 #' reg <- tempfile(fileext = ".csv")
-#' project <- dronebio_sample_project(target_dir = tempfile("ts-flight-"))
-#' register_flight(Sys.Date(), project$project_dir, registry_path = reg)
-#' ts <- flight_time_series(flight_ndvi_mean, registry_path = reg)
-#' ts
+#' register_flight("2026-04-01", "~/flights/2026-04-01", registry_path = reg)
+#' register_flight("2026-05-01", "~/flights/2026-05-01", registry_path = reg)
+#' flight_time_series(flight_ndvi_mean, registry_path = reg)
+#' }
 #' @export
 flight_time_series <- function(summary_fn,
                                registry_path = default_flight_registry()) {
@@ -231,8 +244,14 @@ cached_flight_metric <- function(metric, source_path, compute) {
 
 #' @rdname flight_summary_helpers
 #' @examples
-#' project <- dronebio_sample_project(target_dir = tempfile("ts-ndvi-"))
+#' \dontrun{
+#' # Each helper reads the products of one flight, so point dronebio_project()
+#' # at a directory that already holds ODM output.
+#' project <- dronebio_project("~/flights/2026-05-01")
 #' flight_ndvi_mean(project)
+#' flight_biomass_proxy_mean(project)
+#' flight_chm_mean(project)
+#' }
 #' @export
 flight_ndvi_mean <- function(project) {
   ortho_path <- project$odm_orthomosaic
@@ -258,8 +277,6 @@ flight_ndvi_mean <- function(project) {
 }
 
 #' @rdname flight_summary_helpers
-#' @examples
-#' flight_biomass_proxy_mean(project)
 #' @export
 flight_biomass_proxy_mean <- function(project) {
   ortho_path <- project$odm_orthomosaic
@@ -274,8 +291,6 @@ flight_biomass_proxy_mean <- function(project) {
 }
 
 #' @rdname flight_summary_helpers
-#' @examples
-#' flight_chm_mean(project)
 #' @export
 flight_chm_mean <- function(project) {
   dsm <- file.path(project$odm_project_dir, "odm_dem", "dsm.tif")

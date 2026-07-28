@@ -426,7 +426,7 @@ run_one_dji_band <- function(project,
   # Docker's memory allocation manually.
   if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
     message(sprintf(
-      "[%s] ODM exit status 137 — the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
+      "[%s] ODM exit status 137 - the Docker container was killed by the OS, almost certainly out-of-memory. Retrying once with --max-concurrency 1 --feature-quality medium...",
       band
     ))
     clean_incomplete_odm_state(band_proj)
@@ -691,7 +691,7 @@ run_dji_ms_multispectral <- function(project,
                                      band_label = "MS")
 
   if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
-    message("[MS] exit 137 — retrying once with --max-concurrency 1 --feature-quality medium...")
+    message("[MS] exit 137 - retrying once with --max-concurrency 1 --feature-quality medium...")
     clean_incomplete_odm_state(band_proj)
     retry <- build_odm_args(
       dataset_dir = project$odm_dataset_dir, project_name = proj_name,
@@ -1222,7 +1222,7 @@ run_odm_dji_mavic_3m <- function(project,
   hist_counts <- unique(read_odm_stage_history()$image_count)
   hist_counts <- hist_counts[is.finite(hist_counts)]
   est_caveat <- if (!length(hist_counts)) {
-    " (rough: no timing history yet — first run uses built-in baselines)"
+    " (rough: no timing history yet - first run uses built-in baselines)"
   } else {
     sprintf(" (rough extrapolation from history at %s images; actual is usually faster at lower quality)",
             paste(sort(hist_counts), collapse = "/"))

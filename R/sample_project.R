@@ -1,12 +1,15 @@
 #' Seed a fixture-backed DroneBioR project (internal test helper)
 #'
-#' Internal helper used only by the package's `testthat` suite and the
-#' `@examples` blocks of base functions like
-#' [compute_spectral_indices()]. Copies the tiny GeoTIFFs and CSV
-#' fixtures shipped under `inst/extdata/` into a writable project
-#' directory laid out like a real ODM run. This lets the test suite
-#' exercise the full pipeline (read mosaic -> reflectance -> indices
-#' -> CHM -> report) without depending on real flight data.
+#' Internal helper used only by the package's `testthat` suite. Copies
+#' the tiny GeoTIFFs and CSV fixtures shipped under `inst/extdata/` into
+#' a writable project directory laid out like a real ODM run. This lets
+#' the test suite exercise the full pipeline (read mosaic -> reflectance
+#' -> indices -> CHM -> report) without depending on real flight data.
+#'
+#' Documented examples must not call this helper: it is not exported, so
+#' anything it appears in fails for users and breaks `R CMD check`. Use
+#' the fixtures under `system.file("extdata", ...)` for runnable examples,
+#' or `\dontrun{}` with a real project directory.
 #'
 #' Not exported: the package has no user-facing "demo project" path.
 #' To use the app, point [run_drone_biomass_studio()] at a real
