@@ -9,7 +9,8 @@ build_odm_args(
   dataset_dir,
   project_name = "micasense",
   image = "opendronemap/odm",
-  radiometric_calibration = "camera+sun",
+  camera_type = c("multispectral", "rgb"),
+  radiometric_calibration = NULL,
   orthophoto_resolution_cm = 5,
   max_concurrency = 4,
   fast_orthophoto = TRUE,
@@ -21,6 +22,8 @@ build_odm_args(
   tiles = FALSE,
   three_d_tiles = FALSE,
   gltf = FALSE,
+  skip_3dmodel = FALSE,
+  skip_report = FALSE,
   rerun_from = NULL,
   end_with = NULL,
   extra_args = character()
@@ -41,9 +44,18 @@ build_odm_args(
 
   Docker image name.
 
+- camera_type:
+
+  One of `"multispectral"` (MicaSense / Sequoia-style 5-band cameras,
+  applies `--radiometric-calibration camera+sun` by default) or `"rgb"`
+  (Sony, DJI, Phantom, generic RGB - skips the radiometric flag because
+  it does not apply).
+
 - radiometric_calibration:
 
-  ODM radiometric calibration option.
+  ODM radiometric-calibration value. When `NULL`, the default is chosen
+  by `camera_type`: `"camera+sun"` for multispectral, omitted for RGB.
+  Set to `"none"` to skip explicitly.
 
 - orthophoto_resolution_cm:
 
@@ -89,6 +101,19 @@ build_odm_args(
 
   Logical. Export glTF model.
 
+- skip_3dmodel:
+
+  Logical. Add `--skip-3dmodel` to skip the ODM `odm_meshing` and
+  `mvs_texturing` stages. Saves 10-30 min on a typical 300-image flight
+  when the consumer only needs DSM / DTM / orthomosaic. The skipped
+  artifacts are the textured 3D `.obj` / `.glb` files.
+
+- skip_report:
+
+  Logical. Add `--skip-report` to skip ODM's PDF report generation
+  stage. Saves ~1-2 min and avoids the known `gdal_translate` / numpy
+  ABI crash inside some `opendronemap/odm` Docker images.
+
 - rerun_from:
 
   Optional ODM stage.
@@ -116,6 +141,16 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/Rtmpcyxrhr:/datasets"
+#> [3] "-v"                        "/tmp/RtmpNLza3t:/datasets"
 #> [5] "opendronemap/odm"          "--project-path"           
+
+# RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.
+rgb_args <- build_odm_args(
+  dataset_dir  = tempdir(),
+  project_name = "rgb_flight",
+  camera_type  = "rgb",
+  build_dsm    = TRUE
+)
+"--radiometric-calibration" %in% rgb_args
+#> [1] FALSE
 ```

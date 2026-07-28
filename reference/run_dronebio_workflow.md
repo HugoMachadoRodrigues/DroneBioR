@@ -10,7 +10,8 @@ run_dronebio_workflow(
   orthomosaic = NULL,
   output_dir = NULL,
   band_map = default_micasense_band_map(),
-  use_alpha = TRUE
+  use_alpha = TRUE,
+  max_memory_gb = getOption("dronebior.workflow_memmax_gb", 4)
 )
 ```
 
@@ -35,6 +36,15 @@ run_dronebio_workflow(
 - use_alpha:
 
   Logical. Use layer 6 as alpha mask when available.
+
+- max_memory_gb:
+
+  Numeric cap (GB) on terra's working memory while the reflectance
+  scaling, spectral indices and their summaries/writes run, so large
+  orthomosaics stream to disk in blocks instead of OOM-killing the R
+  session. Restored on exit. `NULL` (or
+  `options(dronebior.skip_terra_memcap = TRUE)`) leaves terra's settings
+  untouched. Default `getOption("dronebior.workflow_memmax_gb", 4)`.
 
 ## Value
 

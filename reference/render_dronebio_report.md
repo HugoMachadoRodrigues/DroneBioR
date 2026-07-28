@@ -15,7 +15,8 @@ render_dronebio_report(
   field_csv = NULL,
   use_alpha = TRUE,
   roi_geojson = NULL,
-  snapshot_path = NULL
+  snapshot_path = NULL,
+  rerun_workflow = FALSE
 )
 ```
 
@@ -58,6 +59,18 @@ render_dronebio_report(
   [`persp()`](https://rdrr.io/r/graphics/persp.html) rendering of the
   DSM.
 
+- rerun_workflow:
+
+  Logical. When `TRUE`, the report calls
+  [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_dronebio_workflow.md)
+  from scratch and uses its in-memory outputs. When `FALSE` (the
+  default), the report consumes the workflow artefacts already on disk
+  under `<output_dir>/` or the project's canonical `outputs/` folder,
+  falling back to a fresh workflow run only when no existing outputs can
+  be found. Keeps the report cheap to re-render after the user has
+  already run the workflow once - the previous behaviour silently re-did
+  all the raster math on every render.
+
 ## Value
 
 Invisibly returns the absolute path to the rendered file.
@@ -69,14 +82,13 @@ Requires the `rmarkdown` package (a Suggests dependency).
 ## Examples
 
 ``` r
-# \donttest{
-project <- dronebio_sample_project(target_dir = tempfile("dronebior-sample-"))
+if (FALSE) { # \dontrun{
+project <- dronebio_project("~/flights/2026-05-01")
 out <- render_dronebio_report(
   project     = project,
-  output_file = file.path(tempdir(), "demo_report.html"),
+  output_file = file.path(tempdir(), "flight_report.html"),
   field_csv   = file.path(project$project_dir, "field_samples.csv")
 )
 file.exists(out)
-#> [1] TRUE
-# }
+} # }
 ```

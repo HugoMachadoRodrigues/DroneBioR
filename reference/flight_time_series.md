@@ -35,12 +35,11 @@ orthomosaics) still produces a usable plot.
 ## Examples
 
 ``` r
+if (FALSE) { # \dontrun{
+# One row per flight, so register the projects first.
 reg <- tempfile(fileext = ".csv")
-project <- dronebio_sample_project(target_dir = tempfile("ts-flight-"))
-register_flight(Sys.Date(), project$project_dir, registry_path = reg)
-#> Warning: NAs produced by integer overflow
-ts <- flight_time_series(flight_ndvi_mean, registry_path = reg)
-ts
-#>         date     value   flight_id                            project_dir
-#> 1 2026-05-11 0.5848023 20260511-NA /tmp/Rtmpcyxrhr/ts-flight-225260ea1e77
+register_flight("2026-04-01", "~/flights/2026-04-01", registry_path = reg)
+register_flight("2026-05-01", "~/flights/2026-05-01", registry_path = reg)
+flight_time_series(flight_ndvi_mean, registry_path = reg)
+} # }
 ```

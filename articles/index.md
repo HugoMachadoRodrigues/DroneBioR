@@ -13,3 +13,5 @@
   DroneBioR](https://hugomachadorodrigues.github.io/DroneBioR/articles/spectral-indices.md):
 - [Dense point clouds, CHM and ROI
   metrics](https://hugomachadorodrigues.github.io/DroneBioR/articles/point-clouds-and-chm.md):
+- [Drone Biomass Studio: full app
+  reference](https://hugomachadorodrigues.github.io/DroneBioR/articles/app-reference.md):

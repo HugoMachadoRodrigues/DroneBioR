@@ -27,11 +27,12 @@ A single numeric value, or `NA` when the underlying product is missing.
 ## Examples
 
 ``` r
-project <- dronebio_sample_project(target_dir = tempfile("ts-ndvi-"))
+if (FALSE) { # \dontrun{
+# Each helper reads the products of one flight, so point dronebio_project()
+# at a directory that already holds ODM output.
+project <- dronebio_project("~/flights/2026-05-01")
 flight_ndvi_mean(project)
-#> [1] 0.5848023
 flight_biomass_proxy_mean(project)
-#> [1] 0.3634189
 flight_chm_mean(project)
-#> [1] 0.4664609
+} # }
 ```

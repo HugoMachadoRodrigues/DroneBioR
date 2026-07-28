@@ -1,6 +1,10 @@
 # Compute an image-only biomass proxy
 
-Compute an image-only biomass proxy
+Combines NDVI, SAVI and NDRE into a single -1..1 surface. Use as a
+qualitative biomass surrogate when no canopy-height information is
+available. For a more defensible biomass estimate, use
+[`compute_biomass_proxies()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_biomass_proxies.md)
+which also produces height-weighted variants (greenness x CHM).
 
 ## Usage
 
