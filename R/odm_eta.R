@@ -118,21 +118,63 @@ estimate_odm_stage_seconds <- function(stage, image_count = NA_integer_) {
 
 #' Sum the remaining seconds (active + pending) for a partially-finished run.
 #'
-#' `active_elapsed_seconds` is subtracted from the active stage's estimate so
-#' the ETA shrinks as the active stage progresses. Pending stages contribute
-#' their full estimate.
+#' While the active stage is inside its estimate, `active_elapsed_seconds` is
+#' subtracted from it and pending stages contribute their full estimate, so the
+#' ETA shrinks as the run progresses.
+#'
+#' Once the active stage runs *past* its estimate, that estimate is disproved
+#' and so is the history behind it. The active stage is then the only live
+#' measurement of how badly the history predicts this run, so its overrun ratio
+#' is carried over to the stages that have not started yet. Without this, an
+#' overrunning stage contributed `max(0, est - elapsed)` = 0 and every pending
+#' stage kept a figure the run had just disproved, freezing the ETA at "sum of
+#' the pending estimates" however far the run overran — a 39-image
+#' multispectral run predicted from 300-image RGB history sat at ~3 minutes
+#' remaining while a stage estimated at 48s passed 10 minutes.
+#'
+#' @param overrun_progress Assumed completion fraction of a stage that has
+#'   passed its estimate. No sub-stage progress is available from the ODM log,
+#'   so 0.5 is the memoryless guess: expect roughly as much again as it has
+#'   already spent.
+#' @param min_calibration_seconds Ignore the overrun ratio when the active
+#'   stage's own estimate is below this. Stages the history puts at a fraction
+#'   of a second (`odm_report` medians ~0.02s) would otherwise turn a few
+#'   seconds of runtime into a 100x multiplier.
+#' @param max_slowdown Upper bound on the carried-over ratio, so one
+#'   pathological stage cannot inflate the whole tail without limit.
 #' @noRd
 estimate_remaining_seconds <- function(active_stage,
                                        pending_stages,
                                        active_elapsed_seconds = 0,
-                                       image_count = NA_integer_) {
-  active_est <- if (!is.null(active_stage) && !is.na(active_stage)) {
-    max(0, estimate_odm_stage_seconds(active_stage, image_count) - active_elapsed_seconds)
-  } else 0
+                                       image_count = NA_integer_,
+                                       overrun_progress = 0.5,
+                                       min_calibration_seconds = 30,
+                                       max_slowdown = 20) {
+  active_base <- if (!is.null(active_stage) && !is.na(active_stage)) {
+    estimate_odm_stage_seconds(active_stage, image_count)
+  } else NA_real_
+
+  overrun <- is.finite(active_base) &&
+             active_base > 0 &&
+             active_elapsed_seconds > active_base
+
+  slowdown <- if (overrun && active_base >= min_calibration_seconds) {
+    min(active_elapsed_seconds / active_base, max_slowdown)
+  } else 1
+
+  active_est <- if (!is.finite(active_base)) {
+    0
+  } else if (overrun) {
+    active_elapsed_seconds * (1 - overrun_progress) / overrun_progress
+  } else {
+    max(0, active_base - active_elapsed_seconds)
+  }
+
   pending_est <- if (length(pending_stages)) {
     sum(vapply(pending_stages, estimate_odm_stage_seconds, numeric(1),
-               image_count = image_count))
+               image_count = image_count)) * slowdown
   } else 0
+
   active_est + pending_est
 }
 
