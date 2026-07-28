@@ -25,7 +25,7 @@
 #' @keywords internal
 #' @importFrom grDevices chull rgb
 #' @importFrom stats as.formula complete.cases dist lm quantile setNames
-#' @importFrom utils head read.csv write.csv
+#' @importFrom utils head modifyList read.csv write.csv
 "_PACKAGE"
 
 .onLoad <- function(libname, pkgname) {

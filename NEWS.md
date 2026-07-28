@@ -2,6 +2,45 @@
 
 ## Bug fixes
 
+* **`register_flight()` no longer silently drops flights that share a date.**
+  The `flight_id` embeds a hash of `project_dir`, and that hash accumulated in
+  a 32-bit integer: it overflowed to `NA` after about nine characters, so every
+  realistic project path produced the same digest and every flight on a given
+  date got the id `<date>-NA`. Registering a second plot flown the same day
+  therefore looked like a duplicate, and `register_flight()` returned without
+  writing — the flight was missing from `list_flights()` and
+  `flight_time_series()` with no error and no warning. The hash now runs in
+  double precision reduced modulo `2^31 - 1` at every step, and the duplicate
+  check matches on `date` + `project_dir` directly rather than on the derived
+  id, so registries written by the old code do not gain duplicate rows the
+  first time each flight is re-registered.
+
+* **Documented examples no longer call an unexported function.** The
+  `@examples` blocks of `register_flight()`, `flight_time_series()`, the
+  `flight_*_mean()` helpers and `render_dronebio_report()` still called
+  `dronebio_sample_project()`, which had been demoted to internal test
+  infrastructure. Anyone copying an example out of a help page got
+  `could not find function`, and `R CMD check` failed on it. The examples now
+  use a temporary directory where only a path is needed, and `\dontrun{}` with
+  a real project directory where actual ODM products are required.
+  `_pkgdown.yml` no longer lists the helper in its reference index either,
+  which is what had been breaking the pkgdown site build.
+
+* **The pkgdown reference index covers the whole public API again.** Every
+  function added since May was exported without being listed in
+  `_pkgdown.yml`, and pkgdown treats an unlisted public topic as a fatal
+  error, so the site build failed after the first problem was cleared. The
+  46 missing topics are now filed under sections that match the modules they
+  live in, including new ones for WebODM, for the DJI Mavic 3M / PPK /
+  GeoScan geolocation helpers, and for field-calibrated biomass mapping.
+
+* **The `app-reference` vignette builds again.** The line documenting the PLY
+  vertex layout wrote the property names as `` `r g b views` ``, which knitr
+  parses as inline R code and fails on. They are now spelled out as
+  `red blue green views`, matching what `read_ply_point_cloud()` actually
+  reads. Together with the two fixes above this restores `R CMD check`, which
+  had failed on every platform since mid-May.
+
 * **`harmonize_dem_products()` now removes isolated reconstruction spikes
   (the SfM "cones") the height filter missed.** Low-texture grazed pasture
   produces isolated few-metre cone/needle spikes in the DSM; because they are

@@ -31,9 +31,11 @@ from the date plus a short hash of the project directory, so repeated
 calls with the same date and project_dir are idempotent.
 }
 \examples{
+# Registering a flight only records a path, so a throwaway directory is
+# enough to demonstrate it; in practice project_dir is the ODM project
+# directory produced by the flight.
 reg <- tempfile(fileext = ".csv")
-project <- dronebio_sample_project(target_dir = tempfile("flight-1-"))
-register_flight(date = Sys.Date(), project_dir = project$project_dir,
+register_flight(date = Sys.Date(), project_dir = tempdir(),
                 registry_path = reg)
 list_flights(reg)
 }
