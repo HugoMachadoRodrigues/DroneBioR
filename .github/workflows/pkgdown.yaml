@@ -25,6 +25,9 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
+          # lidR was archived from CRAN; pull it from the maintainer's
+          # r-universe so the Suggests dependency still resolves.
+          extra-repositories: https://r-lidar.r-universe.dev
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
