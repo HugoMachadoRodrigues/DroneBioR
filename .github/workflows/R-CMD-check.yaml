@@ -58,7 +58,12 @@ jobs:
           extra-packages: >-
             any::rcmdcheck
             ${{ matrix.config.skiplidr && ', any::testthat, any::knitr, any::rmarkdown, any::withr' || '' }}
-          dependencies: ${{ matrix.config.skiplidr && '"hard"' || 'NA' }}
+          # The action splices this into `dependencies = c(needs, (<value>))`,
+          # so it has to be a valid dependency type: NA mixed with a needs
+          # string is rejected by pkgdepends. "all" is what needs:check gives
+          # by default; "hard" is the narrowing that drops the optional
+          # packages on the job that would compile lidR.
+          dependencies: ${{ matrix.config.skiplidr && '"hard"' || '"all"' }}
           needs: check
 
       - uses: r-lib/actions/check-r-package@v2
