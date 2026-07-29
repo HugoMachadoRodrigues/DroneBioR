@@ -203,7 +203,7 @@ test_that("build_chm_raster computes CHM = DSM - DTM, clamped to 0", {
   terra::writeRaster(dsm, file.path(dem_dir, "dsm.tif"), overwrite = TRUE)
   terra::writeRaster(dtm, file.path(dem_dir, "dtm.tif"), overwrite = TRUE)
 
-  out <- build_chm_raster(p, cache_aware = FALSE)
+  out <- build_chm_raster(p)
   expect_true(file.exists(out))
   chm <- terra::rast(out)
   mm <- terra::minmax(chm)
@@ -234,13 +234,13 @@ test_that("build_chm_raster clips the upper-tail outliers above the percentile",
 
   # With the default P99.5 clip, the 200 m spikes (0.2% of pixels)
   # become NA, so the max drops to the real canopy ceiling (~2 m).
-  out <- build_chm_raster(p, cache_aware = FALSE, force = TRUE)
+  out <- build_chm_raster(p, force = TRUE)
   mm <- terra::minmax(terra::rast(out))
   expect_lt(mm[2, 1], 10)       # spikes removed -> max is the real canopy
   expect_gte(mm[1, 1], 0)
 
   # Disabling the clip keeps the spikes (max ~200 m).
-  out2 <- build_chm_raster(p, cache_aware = FALSE, force = TRUE,
+  out2 <- build_chm_raster(p, force = TRUE,
                            outlier_percentile = 100)
   mm2 <- terra::minmax(terra::rast(out2))
   expect_gt(mm2[2, 1], 150)
@@ -252,6 +252,44 @@ test_that("build_chm_raster errors when DSM or DTM missing", {
   p <- dronebio_project(project_dir = tmp,
                         odm_dataset_subdir = "ds", odm_project_name = "proj")
   expect_error(build_chm_raster(p), "CHM needs DSM \\+ DTM")
+})
+
+test_that("quick_outputs_check reads only the project, never a stray cache", {
+  # Regression: product availability used to fall back to
+  # ~/.dronebior/cache/<slug>/<basename>. Since the slug was just the
+  # project folder name, a new set of images under the same root inherited
+  # a previous run's cached files and reported products as present when the
+  # project had none. quick_outputs_check must now see only the real files.
+  home <- tempfile("home_"); dir.create(home)
+  withr::local_envvar(HOME = home)
+
+  tmp <- tempfile("dronebio_qc_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(c(tmp, home), recursive = TRUE), add = TRUE)
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  paths <- odm_product_paths(p)
+
+  # Plant a >1 MB file in the would-be cache dir under the project's slug.
+  slug <- gsub("[^A-Za-z0-9._-]+", "_", basename(p$project_dir))
+  cache_dir <- file.path(home, ".dronebior", "cache", slug)
+  dir.create(cache_dir, recursive = TRUE)
+  blob <- as.raw(rep(0L, 1024 * 1024 + 16))
+  for (key in c("orthomosaic", "dsm", "dtm")) {
+    writeBin(blob, file.path(cache_dir, basename(unname(paths[[key]]))))
+  }
+
+  # No canonical products on disk -> everything FALSE, cache notwithstanding.
+  qc <- quick_outputs_check(p)
+  expect_false(qc[["orthomosaic"]])
+  expect_false(qc[["dsm"]])
+  expect_false(qc[["dtm"]])
+  expect_false(qc[["outputs_complete"]])
+
+  # Now write the real orthomosaic; only then does it read as present.
+  ortho <- unname(paths[["orthomosaic"]])
+  dir.create(dirname(ortho), recursive = TRUE, showWarnings = FALSE)
+  writeBin(blob, ortho)
+  expect_true(quick_outputs_check(p)[["orthomosaic"]])
 })
 
 test_that("configure_proj_database returns a logical without raising", {

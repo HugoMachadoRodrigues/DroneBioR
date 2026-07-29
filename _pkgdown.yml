@@ -208,7 +208,6 @@ reference:
       - validate_odm_outputs
       - quick_outputs_check
       - is_cloud_sync_path
-      - sync_outputs_to_local_cache
 
   - title: "Shiny app"
     contents:

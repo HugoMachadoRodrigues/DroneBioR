@@ -1,5 +1,38 @@
 # DroneBioR (development version)
 
+## OneDrive / cloud-sync robustness
+
+* **Product availability is read only from the project, never from a stale
+  cache.** The app kept an optional local copy of the heavy outputs under
+  `~/.dronebior/cache/<slug>/`, and product checks fell back to it. Because the
+  slug was just the project folder name, loading a new set of images under the
+  same root inherited a previous run's cached files: the status card lit
+  Ortho / DSM / DTM green while "no products on disk yet" showed right beside
+  it, and the app read products that did not belong to the new flight. The
+  entire local-copy cache is removed — `sync_outputs_to_local_cache()`,
+  `cache_aware_path()`, `local_cache_dir()`, the "Copy outputs to local cache"
+  banner and every cache fallback in `quick_outputs_check()`,
+  `validate_odm_outputs()`, `build_chm_raster()` and the CSF path. Reads and
+  writes now go straight to the project's own files. (The in-memory raster-tile
+  and PLY-header memos, keyed on file identity, are unaffected.)
+
+* **Editing the point cloud on a cloud-synced project is no longer glacial.**
+  `write_ply_subset()` streamed its chunks into a staging file *inside* the
+  project folder; on a macOS OneDrive folder every read/write is proxied
+  through the OS file provider, turning a ~0.3 s rewrite of a 300k-vertex cloud
+  into minutes of an apparently frozen "Rewriting the point cloud…". It now
+  detects a cloud-sync destination and streams to local disk, copying the
+  finished cloud in once, and takes the original-snapshot with a cheap rename
+  instead of a full-file copy. On a plain disk the behaviour is unchanged (it
+  still stages beside the destination for an atomic rename). `write_ply_subset()`
+  gains no new arguments.
+
+* **CSF ground refinement fails fast when `RCSF` is missing.** lidR's
+  cloth-simulation filter delegates to the separate `RCSF` package; without it
+  the run died deep inside lidR with a terse "Package 'RCSF' needed".
+  `classify_ground_csf()` now checks for it up front and names both packages,
+  and `RCSF` is declared in `Suggests`.
+
 ## Point cloud editing (Stage 0)
 
 * **Editing the cloud no longer overwrites the reconstruction.** Deleting

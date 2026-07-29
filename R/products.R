@@ -123,18 +123,6 @@ is_cloud_sync_path <- function(path) {
   NA_character_
 }
 
-#' Local cache directory for project outputs (outside any cloud sync)
-#'
-#' @param project A `dronebio_project` object.
-#' @param cache_root Root directory for the cache. Defaults to
-#'   `~/.dronebior/cache`.
-#' @return Absolute path to `<cache_root>/<sanitized-project-name>/`.
-#' @noRd
-local_cache_dir <- function(project, cache_root = file.path(Sys.getenv("HOME"), ".dronebior", "cache")) {
-  slug <- gsub("[^A-Za-z0-9._-]+", "_", basename(project$project_dir))
-  file.path(cache_root, slug)
-}
-
 #' Path to the run-history manifest for a project.
 #'
 #' Returns `<project_dir>/dronebio_runs.csv`, the per-project audit
@@ -229,87 +217,6 @@ read_dronebio_runs <- function(project) {
   df
 }
 
-#' Resolve a project file path to its local-cache copy when available.
-#'
-#' Reads against the cloud-synced project folder (OneDrive / iCloud /
-#' Dropbox) can stall the UI for seconds at a time, especially in the
-#' 3D Modeling tab where the DSM, point cloud and orthomosaic are all
-#' large. After `sync_outputs_to_local_cache()` has run, those files
-#' live under `~/.dronebior/cache/<slug>/`. This helper returns the
-#' cached copy when it exists (same basename inside `local_cache_dir`),
-#' and the original path otherwise. Cheap and safe to call on every
-#' reactive invocation.
-#'
-#' @param path Canonical filesystem path (typically from
-#'   `odm_product_paths(project)`).
-#' @param project A `dronebio_project` object whose cache directory
-#'   will be inspected. When `NULL`, returns `path` unchanged.
-#' @return Cached path if a copy exists, otherwise the input `path`.
-#' @noRd
-cache_aware_path <- function(path, project) {
-  if (is.null(project) || !is.character(path) || !length(path) ||
-      !nzchar(path)) {
-    return(path)
-  }
-  cache_dir <- tryCatch(local_cache_dir(project), error = function(e) NULL)
-  if (is.null(cache_dir) || !nzchar(cache_dir)) return(path)
-  cached <- file.path(cache_dir, basename(path))
-  if (file.exists(cached)) cached else path
-}
-
-#' Copy ODM outputs to a fast local cache once, return the new paths
-#'
-#' Use when the project root lives inside OneDrive / Google Drive /
-#' Dropbox and the heavy raster + point-cloud files keep triggering
-#' background re-syncs. After this returns, the Shiny app can be
-#' repointed at the local cache and never touch the cloud-synced
-#' folder again. Files are skipped if a same-size copy already exists.
-#'
-#' @param project A `dronebio_project` object pointing at the
-#'   (typically cloud-synced) outputs you want to migrate.
-#' @param cache_root Root for the cache. Defaults to
-#'   `~/.dronebior/cache`.
-#' @param products Subset of product keys (see [odm_product_paths()])
-#'   to copy. Default covers the analysis essentials.
-#' @return List with `cache_dir` and a named `paths` character vector
-#'   keyed by product (only entries actually present on disk).
-#' @examples
-#' \dontrun{
-#'   project <- dronebio_project("~/cloud_project")
-#'   cache <- sync_outputs_to_local_cache(project)
-#'   cache$paths[["orthomosaic"]]
-#' }
-#' @export
-sync_outputs_to_local_cache <- function(project,
-                                        cache_root = file.path(Sys.getenv("HOME"),
-                                                               ".dronebior", "cache"),
-                                        products = c("orthomosaic", "dsm", "dtm",
-                                                     "point_cloud_copc",
-                                                     "point_cloud_laz",
-                                                     "textured_obj",
-                                                     "textured_glb")) {
-  cache_dir <- local_cache_dir(project, cache_root = cache_root)
-  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
-  paths <- odm_product_paths(project)
-  out <- character()
-  for (key in products) {
-    src <- unname(paths[[key]])
-    if (!length(src) || !nzchar(src) || !file.exists(src)) next
-    dest <- file.path(cache_dir, basename(src))
-    src_size  <- file.info(src)$size
-    dest_size <- if (file.exists(dest)) file.info(dest)$size else NA_real_
-    if (!is.na(dest_size) && dest_size == src_size) {
-      out[key] <- dest
-      next
-    }
-    ok <- tryCatch(file.copy(src, dest, overwrite = TRUE),
-                   error = function(e) FALSE)
-    if (isTRUE(ok)) {
-      out[key] <- dest
-    }
-  }
-  list(cache_dir = cache_dir, paths = out)
-}
 
 #' Lightweight existence + size check on ODM outputs
 #'
@@ -330,17 +237,8 @@ sync_outputs_to_local_cache <- function(project,
 #' @export
 quick_outputs_check <- function(project, min_size_mb = 1) {
   paths <- odm_product_paths(project)
-  cache_dir <- local_cache_dir(project)
   size_ok <- function(p) {
-    # Prefer the cache copy when the project path is missing -- this
-    # catches CHM (which we always write to the cache when DSM + DTM
-    # are cached) and migrated outputs that no longer round-trip
-    # through the OneDrive folder.
-    if (!file.exists(p)) {
-      cached <- file.path(cache_dir, basename(p))
-      if (!file.exists(cached)) return(FALSE)
-      p <- cached
-    }
+    if (!file.exists(p)) return(FALSE)
     info <- tryCatch(file.info(p), error = function(e) NULL)
     if (is.null(info) || !is.finite(info$size)) return(FALSE)
     info$size / 1e6 >= min_size_mb
@@ -374,16 +272,6 @@ quick_outputs_check <- function(project, min_size_mb = 1) {
 #' @export
 validate_odm_outputs <- function(project) {
   paths <- odm_product_paths(project)
-  cache_dir <- local_cache_dir(project)
-  # Prefer cache paths over project paths for the validation pass --
-  # we want to validate the file the app will actually read, which
-  # is the cache copy once migration / Build CHM has run.
-  for (k in names(paths)) {
-    cached <- file.path(cache_dir, basename(paths[[k]]))
-    if (!file.exists(paths[[k]]) && file.exists(cached)) {
-      paths[[k]] <- cached
-    }
-  }
 
   empty_row <- function(name, key, type, msg) {
     p <- unname(paths[[key]])
@@ -492,15 +380,10 @@ validate_odm_outputs <- function(project) {
 #'
 #' Computes `CHM = DSM - DTM`, clamps negatives to zero (small noise from
 #' SMRF ground classification), and writes the result as a COG-style
-#' GeoTIFF. By default reads/writes from the local cache directory
-#' (`~/.dronebior/cache/<slug>/`) when DSM + DTM are already cached
-#' there, so we never touch the cloud-synced project folder. Falls
-#' back to writing into the project's `odm_dem/` directory otherwise.
+#' GeoTIFF into the project's `odm_dem/` directory, alongside the DSM.
 #'
 #' @param project A `dronebio_project` object.
 #' @param force Logical. Recompute even when `chm.tif` already exists.
-#' @param cache_aware Logical. Prefer the local cache when DSM + DTM
-#'   already live there.
 #' @param outlier_percentile Numeric in (0, 100], default `99.5`.
 #'   After differencing, canopy-height pixels strictly above this
 #'   percentile are set to `NA` and a message reports how many were
@@ -522,19 +405,12 @@ validate_odm_outputs <- function(project) {
 #'   build_chm_raster(project, outlier_percentile = 100)
 #' }
 #' @export
-build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
+build_chm_raster <- function(project, force = FALSE,
                              outlier_percentile = 99.5) {
   paths <- odm_product_paths(project)
   dsm_path <- unname(paths[["dsm"]])
   dtm_path <- unname(paths[["dtm"]])
 
-  if (isTRUE(cache_aware)) {
-    cache_dir <- local_cache_dir(project)
-    cached_dsm <- file.path(cache_dir, basename(dsm_path))
-    cached_dtm <- file.path(cache_dir, basename(dtm_path))
-    if (file.exists(cached_dsm)) dsm_path <- cached_dsm
-    if (file.exists(cached_dtm)) dtm_path <- cached_dtm
-  }
   if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
     stop("CHM needs DSM + DTM on disk. Missing: ",
          paste(c(if (!file.exists(dsm_path)) "DSM", if (!file.exists(dtm_path)) "DTM"),
@@ -542,8 +418,7 @@ build_chm_raster <- function(project, force = FALSE, cache_aware = TRUE,
          call. = FALSE)
   }
 
-  # Default output: alongside the DSM. Either the cached copy (if cache
-  # is in use) or the project's odm_dem/ folder.
+  # Default output: alongside the DSM, in the project's odm_dem/ folder.
   chm_path <- file.path(dirname(dsm_path), "chm.tif")
 
   if (!isTRUE(force) && file.exists(chm_path)) {
