@@ -68,6 +68,18 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' @param orthophoto_resolution_cm Orthophoto resolution in centimeters.
 #' @param max_concurrency Maximum concurrent ODM workers.
 #' @param fast_orthophoto Logical. Add `--fast-orthophoto`.
+#' @param pc_filter Statistical outlier removal, in standard deviations from
+#'   the local mean (`--pc-filter`). Applied in ODM's `odm_filterpoints`
+#'   stage, which runs *before* meshing, texturing, the DEMs and the
+#'   orthophoto, so it is the one knob that cleans reconstruction noise out of
+#'   every downstream product at once. ODM's own default is 5, which is loose
+#'   enough to leave floating specks and needles in the point cloud; the
+#'   default here is 2.5. Use `0` to disable filtering.
+#' @param pc_sample Optional thinning radius in metres (`--pc-sample`): keeps a
+#'   single point per sphere of this radius. `NULL` (default) keeps every
+#'   point.
+#' @param pc_rectify Logical. Re-classify wrongly classified ground points and
+#'   fill gaps (`--pc-rectify`). Worth enabling when the DTM matters.
 #' @param build_dsm Logical. Add DSM generation.
 #' @param build_dtm Logical. Add DTM generation options.
 #' @param pc_las Logical. Export LAS point cloud.
@@ -117,6 +129,9 @@ build_odm_args <- function(dataset_dir,
                            fast_orthophoto = TRUE,
                            build_dsm = FALSE,
                            build_dtm = FALSE,
+                           pc_filter = 2.5,
+                           pc_sample = NULL,
+                           pc_rectify = FALSE,
                            pc_las = FALSE,
                            pc_csv = FALSE,
                            pc_copc = FALSE,
@@ -155,6 +170,32 @@ build_odm_args <- function(dataset_dir,
   }
   if (isTRUE(build_dtm)) {
     odm_args <- c(odm_args, "--dtm", "--smrf-threshold", "0.5")
+  }
+  # Point-cloud cleanup. ODM applies these in `odm_filterpoints`, stage 6 of
+  # 13 -- before meshing, texturing, the DEMs and the orthophoto -- so this is
+  # the one place where removing reconstruction noise fixes every downstream
+  # product at once, rather than patching the DSM after the fact. ODM's own
+  # default is 5 standard deviations, which is permissive enough to leave the
+  # floating specks and needles that show up in the 3D view; 2.5 is the
+  # tighter default used here. Set 0 to disable filtering entirely.
+  if (!is.null(pc_filter)) {
+    pc_filter <- suppressWarnings(as.numeric(pc_filter)[1L])
+    if (!is.finite(pc_filter) || pc_filter < 0) {
+      stop("`pc_filter` must be a non-negative number of standard deviations ",
+           "(0 disables filtering).", call. = FALSE)
+    }
+    odm_args <- c(odm_args, "--pc-filter", format(pc_filter, scientific = FALSE))
+  }
+  if (!is.null(pc_sample)) {
+    pc_sample <- suppressWarnings(as.numeric(pc_sample)[1L])
+    if (!is.finite(pc_sample) || pc_sample <= 0) {
+      stop("`pc_sample` must be a positive radius in metres, or NULL to keep ",
+           "every point.", call. = FALSE)
+    }
+    odm_args <- c(odm_args, "--pc-sample", format(pc_sample, scientific = FALSE))
+  }
+  if (isTRUE(pc_rectify)) {
+    odm_args <- c(odm_args, "--pc-rectify")
   }
   if (isTRUE(pc_las)) {
     odm_args <- c(odm_args, "--pc-las")
@@ -430,4 +471,54 @@ run_odm_project <- function(project,
   }
 
   list(command = command, status = status, orthomosaic = project$odm_orthomosaic)
+}
+
+#' Re-clean an ODM point cloud without redoing the reconstruction
+#'
+#' Reruns an existing ODM project from the `odm_filterpoints` stage with new
+#' point-cloud filter settings. Everything before that stage -- `opensfm` and
+#' `openmvs`, which together are the bulk of the runtime and disk of a run --
+#' is reused from the project directory, while meshing, texturing, the DEMs and
+#' the orthophoto are rebuilt from the newly filtered cloud.
+#'
+#' This is the loop to use when tuning `pc_filter` against the 3D view: the
+#' reconstruction is paid for once, and each retune costs only the downstream
+#' stages.
+#'
+#' @param project A `dronebio_project` whose ODM project directory already
+#'   holds a finished (or at least past-`openmvs`) run.
+#' @param pc_filter,pc_sample,pc_rectify Point-cloud cleanup settings, as in
+#'   [build_odm_args()].
+#' @param ... Further arguments passed to [run_odm_project()], e.g.
+#'   `build_dsm`, `build_dtm`, `camera_type`.
+#' @return Invisibly, the list returned by [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' project <- dronebio_project("~/flights/2026-05-01")
+#' # First pass at ODM's default-ish setting, then tighten twice; only the
+#' # stages after odm_filterpoints are recomputed each time.
+#' refilter_odm_point_cloud(project, pc_filter = 2.5, build_dsm = TRUE)
+#' refilter_odm_point_cloud(project, pc_filter = 1.5, pc_rectify = TRUE,
+#'                          build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+refilter_odm_point_cloud <- function(project,
+                                     pc_filter = 2.5,
+                                     pc_sample = NULL,
+                                     pc_rectify = FALSE,
+                                     ...) {
+  opensfm <- file.path(project$odm_project_dir, "opensfm")
+  if (!dir.exists(project$odm_project_dir) || !dir.exists(opensfm)) {
+    stop("No reconstruction to reuse at ", project$odm_project_dir,
+         ": run run_odm_project() first, or the SfM stage has been cleaned ",
+         "away (opensfm/ is the folder this reuses).", call. = FALSE)
+  }
+  run_odm_project(
+    project,
+    pc_filter  = pc_filter,
+    pc_sample  = pc_sample,
+    pc_rectify = pc_rectify,
+    rerun_from = "odm_filterpoints",
+    ...
+  )
 }

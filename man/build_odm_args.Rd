@@ -15,6 +15,9 @@ build_odm_args(
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,
+  pc_filter = 2.5,
+  pc_sample = NULL,
+  pc_rectify = FALSE,
   pc_las = FALSE,
   pc_csv = FALSE,
   pc_copc = FALSE,
@@ -53,6 +56,21 @@ multispectral, omitted for RGB. Set to \code{"none"} to skip explicitly.}
 \item{build_dsm}{Logical. Add DSM generation.}
 
 \item{build_dtm}{Logical. Add DTM generation options.}
+
+\item{pc_filter}{Statistical outlier removal, in standard deviations from
+the local mean (\code{--pc-filter}). Applied in ODM's \code{odm_filterpoints}
+stage, which runs \emph{before} meshing, texturing, the DEMs and the
+orthophoto, so it is the one knob that cleans reconstruction noise out of
+every downstream product at once. ODM's own default is 5, which is loose
+enough to leave floating specks and needles in the point cloud; the
+default here is 2.5. Use \code{0} to disable filtering.}
+
+\item{pc_sample}{Optional thinning radius in metres (\code{--pc-sample}): keeps a
+single point per sphere of this radius. \code{NULL} (default) keeps every
+point.}
+
+\item{pc_rectify}{Logical. Re-classify wrongly classified ground points and
+fill gaps (\code{--pc-rectify}). Worth enabling when the DTM matters.}
 
 \item{pc_las}{Logical. Export LAS point cloud.}
 

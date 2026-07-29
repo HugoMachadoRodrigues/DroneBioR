@@ -183,3 +183,63 @@ test_that("keep_only_final_odm_products honours keep_extra allowlist", {
   # The standard intermediates are still stripped.
   expect_false(dir.exists(file.path(proj, "openmvs")))
 })
+
+test_that("build_odm_args emits point-cloud cleanup flags", {
+  a <- build_odm_args(tempdir(), "demo")
+  # Tighter than ODM's own default of 5: that leaves the floating specks and
+  # needles this stage exists to remove.
+  expect_true("--pc-filter" %in% a)
+  expect_equal(a[which(a == "--pc-filter") + 1L], "2.5")
+  expect_false("--pc-sample" %in% a)
+  expect_false("--pc-rectify" %in% a)
+
+  b <- build_odm_args(tempdir(), "demo", pc_filter = 1.5,
+                      pc_sample = 0.04, pc_rectify = TRUE)
+  expect_equal(b[which(b == "--pc-filter") + 1L], "1.5")
+  expect_equal(b[which(b == "--pc-sample") + 1L], "0.04")
+  expect_true("--pc-rectify" %in% b)
+})
+
+test_that("pc_filter = 0 is passed through as ODM's disable value", {
+  a <- build_odm_args(tempdir(), "demo", pc_filter = 0)
+  expect_equal(a[which(a == "--pc-filter") + 1L], "0")
+})
+
+test_that("build_odm_args omits --pc-filter when pc_filter is NULL", {
+  a <- build_odm_args(tempdir(), "demo", pc_filter = NULL)
+  expect_false("--pc-filter" %in% a)
+})
+
+test_that("build_odm_args rejects nonsensical point-cloud settings", {
+  expect_error(build_odm_args(tempdir(), "demo", pc_filter = -1),
+               "non-negative")
+  expect_error(build_odm_args(tempdir(), "demo", pc_sample = 0),
+               "positive radius")
+})
+
+test_that("the numbers are written plainly, never in scientific notation", {
+  # ODM parses these as floats; "1e-04" would be passed through verbatim.
+  a <- build_odm_args(tempdir(), "demo", pc_sample = 0.0001)
+  expect_equal(a[which(a == "--pc-sample") + 1L], "0.0001")
+})
+
+test_that("refilter_odm_point_cloud reruns from odm_filterpoints only", {
+  # The point of the helper: opensfm/openmvs are reused, so the retune costs
+  # only the stages after the filter.
+  dir <- tempfile("refilter-")
+  p <- dronebio_project(dir)
+  expect_error(refilter_odm_point_cloud(p), "No reconstruction to reuse")
+
+  dir.create(file.path(p$odm_project_dir, "opensfm"), recursive = TRUE)
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) {
+      called <<- list(...)
+      invisible(TRUE)
+    }
+  )
+  refilter_odm_point_cloud(p, pc_filter = 1.5, pc_rectify = TRUE)
+  expect_equal(called$rerun_from, "odm_filterpoints")
+  expect_equal(called$pc_filter, 1.5)
+  expect_true(called$pc_rectify)
+})
