@@ -3362,19 +3362,11 @@ ui <- page_navbar(
         numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
         checkboxInput("build_dsm", "Generate DSM", value = TRUE),
         checkboxInput("build_dtm", "Generate DTM", value = TRUE),
-        # Point-cloud cleanup. ODM applies this in odm_filterpoints, before
-        # meshing, texturing, the DEMs and the orthophoto, so it is the only
-        # place where removing reconstruction noise fixes every downstream
-        # product at once.
-        sliderInput("pc_filter",
-                    "Point-cloud outlier filter (std. dev.)",
-                    min = 0, max = 6, value = 2.5, step = 0.5),
-        div(class = "small text-muted mb-2",
-            "Removes points deviating more than N standard deviations from the local mean. ",
-            "Lower is more aggressive; 0 disables it. ODM's own default is 5, which leaves ",
-            "the floating specks and needles seen in the 3D view."),
-        checkboxInput("pc_rectify",
-                      "Rectify ground points (better DTM)", value = FALSE),
+        # The outlier filter and ground-rectify controls used to live here as a
+        # second, independent copy of the Point Cloud tab's inputs, so the two
+        # drifted apart silently. They are point-cloud reconstruction settings,
+        # so they now live only on the Point Cloud tab (alongside the detail
+        # level), and this run reads those values. See the note below.
         numericInput("pc_sample",
                      "Thin to one point per N metres (0 = keep all)",
                      value = 0, min = 0, step = 0.01),
@@ -3386,7 +3378,7 @@ ui <- page_navbar(
         checkboxInput("gltf", "Export glTF model", value = FALSE),
         actionButton("refresh_command", "Build command", class = "btn-primary"),
         actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "Reconstruction always runs dense: the DSM, DTM and orthomosaic are all derived from the point cloud, and a sparse one yields jagged surfaces. Use the Point Cloud tab to set the detail level and to clean the cloud before the products are built. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
+        div(class = "sidebar-note", "Reconstruction always runs dense: the DSM, DTM and orthomosaic are all derived from the point cloud, and a sparse one yields jagged surfaces. The Point Cloud tab owns the reconstruction settings — detail level, the outlier filter (std. dev.) and ground-point rectify — and this run uses those values; set them there, and clean the cloud there before the products are built. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
       ),
       panel_intro_card(
         "Processing Engine",
@@ -3618,6 +3610,7 @@ ui <- page_navbar(
         # The interaction-tool selectInput is hidden because the
         # selection toolbar above the viewer now drives it.
         accordion(
+          id = "modeling_sidebar",
           open = c("Scene source", "GIS Workspace ROI"),
           accordion_panel(
             "Scene source",
@@ -3725,24 +3718,28 @@ ui <- page_navbar(
                          class = "btn-outline-secondary w-100")
           ),
           accordion_panel(
-            "Clean the cloud (edits the PLY)",
+            "Point Cloud step 2 - clean the cloud",
             div(class = "small text-muted mb-2",
-                "Select the bad points with box / lasso / polygon, then delete ",
-                "them from the file. Do this on ",
-                tags$code("odm_filterpoints/point_cloud.ply"),
-                " and rerun ODM from ", tags$code("odm_meshing"),
-                ": the mesh, texture, DEMs and orthophoto are then built from ",
-                "the cloud you cleaned, without redoing the reconstruction."),
+                "This is step 2 of the Point Cloud tab's flow. Select the bad ",
+                "points with box / lasso / polygon and delete them, then use ",
+                "the button below to go back and build the products from the ",
+                "cloud you cleaned - the reconstruction is reused, not redone."),
             textOutput("cloud_edit_status"),
             actionButton("delete_selected_points",
-                         "Delete selected points from the PLY",
+                         "Delete selected points from the cloud",
                          class = "btn-outline-danger w-100 mt-2"),
             actionButton("restore_cloud_backup",
                          "Restore the original cloud",
                          class = "btn-outline-secondary w-100 mt-2"),
+            hr(class = "my-2"),
+            actionButton("back_to_point_cloud",
+                         "← Back to Point Cloud (build products)",
+                         class = "btn-primary w-100"),
             div(class = "small text-muted mt-2",
-                "The first edit keeps an untouched copy as ",
-                tags$code("point_cloud.ply.orig"), ".")
+                "Edits are written to the working cloud; the untouched ",
+                "reconstruction is set aside as ",
+                tags$code("point_cloud.original.ply"),
+                " and restored by the button above.")
           ),
           accordion_panel(
             "Tree detection",
@@ -8133,9 +8130,9 @@ server <- function(input, output, session) {
         fast_orthophoto = FALSE,
         build_dsm = input$build_dsm,
         build_dtm = input$build_dtm,
-        pc_filter = input$pc_filter %||% 2.5,
+        pc_filter = input$pc_filter_stage0 %||% 2.5,
         pc_sample = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
-        pc_rectify = isTRUE(input$pc_rectify),
+        pc_rectify = isTRUE(input$pc_rectify_stage0),
         pc_las = input$pc_las,
         pc_copc = input$pc_copc,
         pc_csv = input$pc_csv,
@@ -8839,9 +8836,9 @@ server <- function(input, output, session) {
                                         # reconstruction every DEM depends on
       build_dsm               = input$build_dsm,
       build_dtm               = input$build_dtm,
-      pc_filter               = input$pc_filter %||% 2.5,
+      pc_filter               = input$pc_filter_stage0 %||% 2.5,
       pc_sample               = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
-      pc_rectify              = isTRUE(input$pc_rectify),
+      pc_rectify              = isTRUE(input$pc_rectify_stage0),
       pc_las                  = input$pc_las,
       pc_copc                 = input$pc_copc,
       pc_csv                  = input$pc_csv,
@@ -8992,6 +8989,13 @@ server <- function(input, output, session) {
           fast_orthophoto          = FALSE,
           build_dsm                = input$build_dsm,
           build_dtm                = input$build_dtm,
+          # Reconstruction cleanup, read from the Point Cloud tab (the single
+          # source of truth). This local Docker run previously omitted these,
+          # so the outlier filter / rectify sliders and the preview / WebODM
+          # command silently disagreed with what actually ran.
+          pc_filter                = input$pc_filter_stage0 %||% 2.5,
+          pc_sample                = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+          pc_rectify               = isTRUE(input$pc_rectify_stage0),
           pc_las                   = input$pc_las,
           pc_copc                  = input$pc_copc,
           pc_csv                   = input$pc_csv,
@@ -9915,13 +9919,16 @@ server <- function(input, output, session) {
     }
     h <- tryCatch(parse_ply_header(ply), error = function(e) NULL)
     if (is.null(h)) return(paste0("Present but unreadable as a binary PLY:\n", ply))
-    orig <- paste0(ply, ".orig")
+    orig <- cloud_original_path(ply)
+    legacy <- paste0(ply, ".orig")
+    if (!file.exists(orig) && file.exists(legacy)) orig <- legacy
     paste0(
       format(h$n_vertices, big.mark = ","), " vertices, ",
       round(file.size(ply) / 1024^2, 1), " MB\n", ply,
       if (file.exists(orig))
-        sprintf("\n\nEdited: an untouched copy of %s vertices is kept as .orig",
-                format(parse_ply_header(orig)$n_vertices, big.mark = ",")) else "",
+        sprintf("\n\nEdited: the untouched reconstruction (%s vertices) is kept as %s",
+                format(parse_ply_header(orig)$n_vertices, big.mark = ","),
+                basename(orig)) else "",
       "\nLast written: ", format(file.info(ply)$mtime, "%Y-%m-%d %H:%M")
     )
   })
@@ -9945,10 +9952,31 @@ server <- function(input, output, session) {
 
   observeEvent(input$goto_cloud_editor, {
     ply <- stage0_ply()
-    if (!is.na(ply) && file.exists(ply)) {
-      updateTextInput(session, "ply_path", value = ply)
+    if (is.na(ply) || !file.exists(ply)) {
+      showNotification(
+        "Build the point cloud first (step 1); there is nothing to inspect yet.",
+        type = "warning", duration = 8)
+      return()
     }
+    updateTextInput(session, "ply_path", value = ply)
+    # The 3D viewer and its select tools are heavy, shared infrastructure that
+    # lives on the 3D Modeling tab, so cleaning happens there - but land the
+    # user directly on the cleaning panel and give them a one-click way back,
+    # so it reads as step 2 of the Point Cloud flow rather than a dead-end.
     updateNavbarPage(session, "main_nav", selected = "3D Modeling")
+    bslib::accordion_panel_open("modeling_sidebar",
+                                "Point Cloud step 2 - clean the cloud")
+    showNotification(
+      paste0("Select the bad points (box / lasso / polygon) and delete them, ",
+             "then click “Back to Point Cloud” to build the products."),
+      type = "message", duration = 12)
+  })
+
+  observeEvent(input$back_to_point_cloud, {
+    updateNavbarPage(session, "main_nav", selected = "Point Cloud")
+    showNotification(
+      "Back on the Point Cloud tab. Run step 3 to build DSM, DTM and orthomosaic from the cleaned cloud.",
+      type = "message", duration = 10)
   })
 
   observeEvent(input$run_stage0, {
@@ -9968,6 +9996,11 @@ server <- function(input, output, session) {
       )
       stage0_tick(isolate(stage0_tick()) + 1L)
       if (isTRUE(res$exists)) {
+        # A fresh reconstruction replaces the working cloud, so any snapshot
+        # from a previous build is stale (it describes a different cloud).
+        # Drop it, so the next edit snapshots THIS reconstruction.
+        stale <- cloud_original_path(res$point_cloud)
+        if (nzchar(stale) && file.exists(stale)) unlink(stale)
         updateTextInput(session, "ply_path", value = res$point_cloud)
         showNotification(
           sprintf("Point cloud ready: %s vertices. Inspect it in 3D before building the products.",
@@ -10033,6 +10066,17 @@ server <- function(input, output, session) {
     same <- normalizePath(shown, mustWork = FALSE) ==
             normalizePath(canonical, mustWork = FALSE)
     list(path = canonical, shown = shown, is_cache = !same)
+  }
+
+  # The named, visible snapshot of the untouched reconstruction. Editing works
+  # on a copy: the pristine cloud ODM produced is preserved here before the
+  # first edit and is never overwritten, so it is always recoverable. ODM has
+  # no flag to name its point-cloud input -- it always meshes
+  # odm_filterpoints/point_cloud.ply -- so the edited working copy has to keep
+  # that canonical name while the original is set aside under this one.
+  cloud_original_path <- function(ply) {
+    if (!nzchar(ply)) return("")
+    paste0(sub("\\.ply$", "", ply, ignore.case = TRUE), ".original.ply")
   }
 
   output$cloud_edit_status <- renderText({
@@ -10102,8 +10146,10 @@ server <- function(input, output, session) {
                 format(length(ids), big.mark = ","),
                 format(h$n_vertices, big.mark = ","))),
       tags$pre(p),
-      p("The file is rewritten in place. An untouched copy is kept as ",
-        tags$code(paste0(basename(p), ".orig")), " so this is reversible."),
+      p("The edit is written to the working cloud. The untouched ",
+        "reconstruction is kept beside it as ",
+        tags$code(basename(cloud_original_path(p))),
+        " and is used by \"Restore\", so this is reversible."),
       footer = tagList(
         modalButton("Cancel"),
         actionButton("confirm_delete_points", "Delete", class = "btn-danger")
@@ -10120,10 +10166,12 @@ server <- function(input, output, session) {
       ids <- unique(as.integer(selected_ids_value() %||% integer()))
       h <- parse_ply_header(p)
       keep <- setdiff(seq_len(h$n_vertices), ids)
+      orig <- cloud_original_path(p)
       n <- with_gis_task(session, "Rewriting the point cloud",
                          detail = sprintf("keeping %s vertices",
                                           format(length(keep), big.mark = ",")),
-                         write_ply_subset(p, p, keep = keep, backup = TRUE))
+                         write_ply_subset(p, p, keep = keep, backup = TRUE,
+                                          backup_path = orig))
       # The cached preview copy is now a different cloud; drop it so the next
       # load re-caches instead of showing the points that were just deleted.
       if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
@@ -10131,7 +10179,7 @@ server <- function(input, output, session) {
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
       updateTextInput(session, "ply_path", value = p)
       showNotification(
-        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, then rerun ODM from odm_meshing.",
+        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Point Cloud” to build the products from the cleaned cloud.",
                 format(length(ids), big.mark = ","), format(n, big.mark = ",")),
         type = "message", duration = 12)
     })
@@ -10141,11 +10189,16 @@ server <- function(input, output, session) {
     with_error_toast("Restore the original cloud", {
       tgt <- cloud_edit_target()
       p <- tgt$path
-      orig <- paste0(p, ".orig")
+      # Prefer the named snapshot; fall back to the historical .orig dotfile so
+      # clouds edited before this change stay restorable.
+      orig <- cloud_original_path(p)
+      if (nzchar(p) && !file.exists(orig) && file.exists(paste0(p, ".orig"))) {
+        orig <- paste0(p, ".orig")
+      }
       # validate() would abort silently and leave the button looking dead.
       if (!nzchar(p) || !file.exists(orig)) {
         showNotification(
-          paste0("There is no .orig backup beside ", basename(p),
+          paste0("There is no untouched copy beside ", basename(p),
                  "; nothing to restore."),
           type = "warning", duration = 8)
         return()

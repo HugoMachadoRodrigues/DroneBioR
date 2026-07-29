@@ -293,9 +293,13 @@ derive_tree_candidates <- function(points,
 #' @param keep Either a logical vector of length `n_vertices`, or the integer
 #'   indices of the vertices to keep (1-based, as `point_id` reports them).
 #' @param backup When `TRUE` (the default) and `out_path` is the same file as
-#'   `path`, the original is copied to `<path>.orig` first, unless that copy
-#'   already exists -- so the very first edit is always recoverable and later
-#'   edits never overwrite that safety net.
+#'   `path`, the original is snapshotted first, unless that snapshot already
+#'   exists -- so the very first edit is always recoverable and later edits
+#'   never overwrite that safety net.
+#' @param backup_path Where to write that snapshot. `NULL` (the default) keeps
+#'   the historical `<path>.orig`; pass an explicit path (for example
+#'   `point_cloud.original.ply` beside the cloud) to keep a visible, named copy
+#'   of the untouched reconstruction instead of a hidden dotfile.
 #' @param chunk_size Vertices per streamed chunk.
 #' @return Invisibly, the number of vertices written.
 #' @examples
@@ -308,7 +312,7 @@ derive_tree_candidates <- function(points,
 #' }
 #' @export
 write_ply_subset <- function(path, out_path, keep, backup = TRUE,
-                             chunk_size = 500000L) {
+                             backup_path = NULL, chunk_size = 500000L) {
   h <- parse_ply_header(path)
   n <- h$n_vertices
   if (is.logical(keep)) {
@@ -347,7 +351,16 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
   same_file <- normalizePath(path, mustWork = FALSE) ==
                normalizePath(out_path, mustWork = FALSE)
   if (isTRUE(backup) && same_file) {
-    orig <- paste0(path, ".orig")
+    orig <- backup_path %||% paste0(path, ".orig")
+    # Never let the snapshot be the file we are about to overwrite, and only
+    # take it once: the point is to preserve the reconstruction as it stood
+    # before the FIRST edit, not after the most recent one.
+    same_as_out <- normalizePath(orig, mustWork = FALSE) ==
+                   normalizePath(out_path, mustWork = FALSE)
+    if (same_as_out) {
+      stop("`backup_path` must differ from `out_path`; it cannot be the file ",
+           "being written.", call. = FALSE)
+    }
     if (!file.exists(orig)) file.copy(path, orig, overwrite = FALSE)
   }
 

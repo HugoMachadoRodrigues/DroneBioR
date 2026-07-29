@@ -1,5 +1,32 @@
 # DroneBioR (development version)
 
+## Point cloud editing (Stage 0)
+
+* **Editing the cloud no longer overwrites the reconstruction.** Deleting
+  points used to rewrite `odm_filterpoints/point_cloud.ply` in place, keeping
+  only a hidden `point_cloud.ply.orig` dotfile. The edit now works on a copy:
+  before the first deletion the untouched reconstruction is set aside under a
+  visible, named `point_cloud.original.ply`, and the working cloud ODM meshes
+  keeps the canonical name (ODM has no flag to point meshing at any other
+  file). "Restore the original cloud" reads that snapshot; clouds edited before
+  this change still restore from the legacy `.orig`. A fresh Stage-0 build
+  clears a stale snapshot so the next edit captures the new reconstruction.
+  `write_ply_subset()` gains a `backup_path` argument for this.
+
+* **The point-cloud reconstruction controls live in one place.** The outlier
+  filter (std. dev.) and "Rectify ground points" existed as independent copies
+  on both the Point Cloud tab and the Processing Engine tab, with no sync, so
+  the two drifted apart silently. They now live only on the Point Cloud tab
+  (which already owned the detail level), and the Processing Engine run reads
+  those values.
+
+* **Cleaning the cloud is no longer a dead-end.** "2. Inspect and clean it in
+  3D" now opens directly on the cleaning panel and explains the round-trip, the
+  panel is framed as "Point Cloud step 2", and a "← Back to Point Cloud (build
+  products)" button returns to the Stage-0 flow — where previously the user was
+  dropped into the 3D Modeling tab with no signal to return for step 3. The
+  button also refuses to open the editor when no cloud has been built yet.
+
 ## Bug fixes
 
 * **Buttons that refused a guard no longer do nothing at all.** Twenty-four
