@@ -342,6 +342,16 @@ run_odm_project <- function(project,
                             auto_geoscan = TRUE,
                             ...) {
   camera_type <- match.arg(camera_type)
+  # Record the sensor model, not just the class: a MicaSense set and a DJI
+  # Mavic 3M flight are both "multispectral" and cost wildly different amounts
+  # per image, so sharing an ETA history between them is worthless.
+  sensor <- if (has_djim3m_images(project$images_dir)) {
+    "dji_mavic_3m"
+  } else if (identical(camera_type, "multispectral")) {
+    "micasense"
+  } else {
+    "rgb"
+  }
   dir.create(project$odm_images_dir, recursive = TRUE, showWarnings = FALSE)
   manifest <- switch(camera_type,
                      multispectral = list_micasense_images(project$images_dir),
@@ -404,7 +414,7 @@ run_odm_project <- function(project,
     project_dir  = project$odm_project_dir,
     image_count  = nrow(manifest),
     band_label   = NULL,
-    camera       = camera_type
+    camera       = sensor
   )
 
   # Exit 137 = OOM kill inside the Docker container. Retry once with
@@ -430,7 +440,7 @@ run_odm_project <- function(project,
       project_dir = project$odm_project_dir,
       image_count = nrow(manifest),
       band_label  = "oom-retry",
-      camera      = camera_type
+      camera      = sensor
     )
   }
 
@@ -449,7 +459,7 @@ run_odm_project <- function(project,
         project_dir = project$odm_project_dir,
         image_count = nrow(manifest),
         band_label  = "retry",
-        camera      = camera_type
+        camera      = sensor
       )
     }
   }

@@ -55,11 +55,34 @@ normalize_camera_type <- function(camera) {
   if (is.null(camera) || !length(camera)) return(NA_character_)
   cam <- tolower(trimws(as.character(camera)[1L]))
   if (is.na(cam) || !nzchar(cam)) return(NA_character_)
-  if (grepl("^(multispectral|multi|ms)\\b|^(multispectral|multi|ms)[_/-]", cam)) {
+  cam <- gsub("[^a-z0-9]+", "_", cam)
+
+  # Sensor models first. A MicaSense set and a DJI Mavic 3M flight are both
+  # "multispectral" and their per-image cost is not remotely comparable: on
+  # this project a 210-image MicaSense opensfm took 70 seconds while a
+  # 39-image DJI one took 39 minutes. Pooling them made the ETA overestimate
+  # a MicaSense run by a factor of about 200.
+  if (grepl("mavic|djim3m|dji_m3m|m3m", cam)) return("dji_mavic_3m")
+  if (grepl("micasense|rededge|altum", cam))  return("micasense")
+  if (grepl("sequoia|parrot", cam))           return("sequoia")
+  if (grepl("^(multispectral|multi|ms)($|_)", cam)) return("multispectral")
+  if (grepl("^rgb($|_)", cam)) return("rgb")
+  NA_character_
+}
+
+#' The coarse class a camera label belongs to
+#'
+#' Used as the fallback tier when no history exists for the exact sensor: a
+#' MicaSense estimate is better served by another multispectral run than by an
+#' RGB one, even though neither is the same camera.
+#' @noRd
+camera_class <- function(camera) {
+  cam <- normalize_camera_type(camera)
+  if (is.na(cam)) return(NA_character_)
+  if (cam %in% c("dji_mavic_3m", "micasense", "sequoia", "multispectral")) {
     return("multispectral")
   }
-  if (grepl("^rgb\\b|^rgb[_/-]|^rgb$", cam)) return("rgb")
-  NA_character_
+  "rgb"
 }
 
 #' Empty history frame, used for a missing or unreadable file.
@@ -146,11 +169,26 @@ estimate_odm_stage_seconds <- function(stage, image_count = NA_integer_,
 
   cam <- normalize_camera_type(camera)
   if (!is.na(cam) && nrow(rows)) {
-    same_camera <- rows[!is.na(rows$camera) & rows$camera == cam, , drop = FALSE]
-    rows <- if (nrow(same_camera)) {
-      same_camera
+    # Exact sensor, or nothing. Borrowing across sensors is what produced the
+    # 200x error: on this project a 210-image MicaSense opensfm took 70 s and
+    # a 39-image DJI Mavic 3M one took 39 min, so each would mis-estimate the
+    # other by more than the estimate is worth -- in opposite directions.
+    # Rows labelled only "multispectral" name a class, not a camera, so they
+    # carry no more information here than an unlabelled row.
+    specific <- c("dji_mavic_3m", "micasense", "sequoia")
+    exact <- rows[!is.na(rows$camera) & rows$camera == cam, , drop = FALSE]
+    rows <- if (nrow(exact)) {
+      exact
     } else {
-      rows[is.na(rows$camera), , drop = FALSE]
+      # Ambiguous rows only: no camera at all, or the coarse label of this same
+      # class. A row from a different class, or from a different named sensor,
+      # is excluded -- borrowing either way is what the split exists to stop.
+      klass <- camera_class(cam)
+      ambiguous <- is.na(rows$camera) |
+        (!rows$camera %in% specific &
+           vapply(rows$camera, function(x) identical(camera_class(x), klass),
+                  logical(1)))
+      rows[ambiguous, , drop = FALSE]
     }
   }
 
