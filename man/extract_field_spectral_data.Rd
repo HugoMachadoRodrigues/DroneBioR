@@ -7,7 +7,9 @@
 extract_field_spectral_data(
   field_data,
   predictors,
-  predictor_crs = terra::crs(predictors)
+  predictor_crs = terra::crs(predictors),
+  window = 1L,
+  fun = "mean"
 )
 }
 \arguments{
@@ -16,12 +18,23 @@ extract_field_spectral_data(
 \item{predictors}{Raster stack with bands and indices.}
 
 \item{predictor_crs}{CRS of x/y coordinates when x/y are used.}
+
+\item{window}{Odd window size in pixels (1, 3, 5, ... 21). \code{1} keeps the
+original single-cell behaviour.}
+
+\item{fun}{Aggregation applied over the window: \code{"mean"}, \code{"median"},
+\code{"max"}, \code{"min"} or \code{"sd"}. Ignored when \code{window = 1}.}
 }
 \value{
 A data frame with field columns and extracted raster values.
 }
 \description{
-Extract raster values at field sample points
+With the default \code{window = 1} this is a plain single-pixel extraction and
+the result is byte-identical to earlier releases. A larger odd \code{window}
+aggregates the \code{window} x \code{window} block of native-resolution pixels
+around each point with \code{fun}, which smooths GPS error and mixed pixels;
+see \code{\link[=extract_field_covariates]{extract_field_covariates()}} for the richer version used by the Field
+Models tab.
 }
 \examples{
 ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")

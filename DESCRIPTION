@@ -35,6 +35,7 @@ Imports:
 Suggests:
     bslib,
     callr,
+    caret,
     future,
     htmltools,
     httr,

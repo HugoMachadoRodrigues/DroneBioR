@@ -41,6 +41,15 @@
 # Regression skill metrics used by both papers: variance explained (R2),
 # RMSE / MAE / bias, plus the slope and intercept of the observed-vs-predicted
 # 1:1 line that Vahidi et al. report.
+#
+# `r2` is 1 - SSres/SStot throughout DroneBioR. That is deliberately NOT
+# caret's `Rsquared`, which is the squared Pearson correlation and ignores
+# any bias or slope error in the predictions. Every number the Field Models
+# tab displays comes from here so a single definition is on screen.
+#
+# `rpiq` (ratio of performance to interquartile distance, Bellon-Maurel et
+# al. 2010) is the unitless companion to RMSE that agronomy reviewers ask
+# for; it is undefined when the residuals or the observations are constant.
 .biomass_metrics <- function(observed, predicted) {
   ok <- is.finite(observed) & is.finite(predicted)
   observed  <- observed[ok]
@@ -48,21 +57,25 @@
   n <- length(observed)
   if (n < 2L) {
     return(list(n = n, r2 = NA_real_, rmse = NA_real_, mae = NA_real_,
-                bias = NA_real_, slope = NA_real_, intercept = NA_real_))
+                bias = NA_real_, slope = NA_real_, intercept = NA_real_,
+                rpiq = NA_real_))
   }
   resid  <- observed - predicted
   ss_res <- sum(resid^2)
   ss_tot <- sum((observed - mean(observed))^2)
   r2 <- if (ss_tot > 0) 1 - ss_res / ss_tot else NA_real_
   fit11 <- tryCatch(stats::lm(observed ~ predicted), error = function(e) NULL)
+  rmse <- sqrt(mean(resid^2))
+  iqr <- as.numeric(diff(stats::quantile(observed, c(0.25, 0.75), na.rm = TRUE)))
   list(
     n         = n,
     r2        = r2,
-    rmse      = sqrt(mean(resid^2)),
+    rmse      = rmse,
     mae       = mean(abs(resid)),
     bias      = mean(predicted - observed),
     slope     = if (is.null(fit11)) NA_real_ else unname(stats::coef(fit11)[2]),
-    intercept = if (is.null(fit11)) NA_real_ else unname(stats::coef(fit11)[1])
+    intercept = if (is.null(fit11)) NA_real_ else unname(stats::coef(fit11)[1]),
+    rpiq      = if (!is.finite(rmse) || rmse == 0 || !is.finite(iqr)) NA_real_ else iqr / rmse
   )
 }
 
