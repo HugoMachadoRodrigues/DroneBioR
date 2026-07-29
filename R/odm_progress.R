@@ -89,7 +89,8 @@ format_seconds_human <- function(seconds) {
 make_odm_stage_poller <- function(project_dir,
                                   image_count = NA_integer_,
                                   expected_stages = odm_stage_order(),
-                                  band_label = NULL) {
+                                  band_label = NULL,
+                                  camera = NA_character_) {
   seen_stages   <- character()
   prefix        <- if (!is.null(band_label)) sprintf("[%s] ", band_label) else ""
   started_at    <- Sys.time()
@@ -174,7 +175,8 @@ make_odm_stage_poller <- function(project_dir,
       active_stage           = active,
       pending_stages         = pending,
       active_elapsed_seconds = active_elapsed,
-      image_count            = image_count
+      image_count            = image_count,
+      camera                 = camera
     )
     elapsed_total <- as.numeric(difftime(now, started_at, units = "secs"))
 
@@ -233,8 +235,14 @@ run_docker_with_progress <- function(args,
                                      project_dir,
                                      image_count = NA_integer_,
                                      band_label = NULL,
+                                     camera = NA_character_,
                                      poll_interval_secs = 15,
                                      command = "docker") {
+  # The DJI Mavic 3M runner already labels each per-band run "RGB" or "MS_*",
+  # which is exactly the split the history needs, so use it when the caller
+  # did not name the sensor explicitly.
+  camera <- normalize_camera_type(camera)
+  if (is.na(camera)) camera <- normalize_camera_type(band_label)
   if (!requireNamespace("processx", quietly = TRUE)) {
     # Without processx we cannot poll while the subprocess runs, so
     # emit a single banner and fall back to the blocking call.
@@ -249,7 +257,8 @@ run_docker_with_progress <- function(args,
   poller <- make_odm_stage_poller(
     project_dir = project_dir,
     image_count = image_count,
-    band_label  = band_label
+    band_label  = band_label,
+    camera      = camera
   )
 
   # Redirect docker's verbose stdout/stderr to a per-run log file so
@@ -337,7 +346,7 @@ run_docker_with_progress <- function(args,
       s <- stage_order_seen[i]
       dur <- as.numeric(ends[i]) - as.numeric(stage_starts[[s]])
       tryCatch(
-        record_odm_stage_completion(run_id, image_count, s, dur),
+        record_odm_stage_completion(run_id, image_count, s, dur, camera = camera),
         error = function(e) NULL
       )
     }

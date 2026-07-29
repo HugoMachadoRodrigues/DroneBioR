@@ -211,9 +211,19 @@ test_that("run_docker_with_progress exposes the expected signature", {
   expect_true(is.function(fn))
   expect_setequal(
     names(formals(fn)),
-    c("args", "project_dir", "image_count", "band_label",
+    c("args", "project_dir", "image_count", "band_label", "camera",
       "poll_interval_secs", "command")
   )
+})
+
+test_that("run_docker_with_progress derives the camera from the band label", {
+  # The DJI runner passes band_label = "RGB" / "MS_NIR" and no camera; the
+  # history split must still land those runs in the right bucket.
+  expect_equal(DroneBioR:::normalize_camera_type("MS_NIR"), "multispectral")
+  expect_equal(DroneBioR:::normalize_camera_type("RGB"), "rgb")
+  # An explicit camera wins over a label that names no sensor.
+  expect_equal(DroneBioR:::normalize_camera_type("multispectral"), "multispectral")
+  expect_true(is.na(DroneBioR:::normalize_camera_type("oom-retry")))
 })
 
 test_that("run_docker_with_progress drives a real subprocess to clean exit", {

@@ -1208,7 +1208,8 @@ run_odm_dji_mavic_3m <- function(project,
       active_stage           = NULL,
       pending_stages         = stages,
       active_elapsed_seconds = 0,
-      image_count            = nrow(spec$manifest)
+      image_count            = nrow(spec$manifest),
+      camera                 = spec$band
     )
   }, numeric(1))
   total_estimate_secs <- sum(est_per_band)

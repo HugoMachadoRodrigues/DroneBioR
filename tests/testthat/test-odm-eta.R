@@ -38,7 +38,8 @@ test_that("read_odm_stage_history returns empty frame when CSV is missing", {
     expect_s3_class(hist, "data.frame")
     expect_equal(nrow(hist), 0L)
     expect_setequal(names(hist),
-                    c("run_started_at", "image_count", "stage", "duration_seconds"))
+                    c("run_started_at", "image_count", "stage", "duration_seconds",
+                      "camera"))
   })
 })
 
@@ -186,6 +187,114 @@ test_that("the carried-over slowdown is capped", {
       image_count            = 100L
     )
     expect_equal(rem, 10000 + 10 * 20)
+  })
+})
+
+test_that("normalize_camera_type collapses camera and band labels", {
+  n <- DroneBioR:::normalize_camera_type
+  expect_equal(n("multispectral"), "multispectral")
+  expect_equal(n("MS"), "multispectral")
+  expect_equal(n("MS_NIR"), "multispectral")
+  expect_equal(n("MS/oom-retry"), "multispectral")
+  expect_equal(n("rgb"), "rgb")
+  expect_equal(n("RGB"), "rgb")
+  expect_equal(n("RGB/retry"), "rgb")
+  # Anything that does not name a sensor means "do not filter".
+  expect_true(is.na(n(NULL)))
+  expect_true(is.na(n("")))
+  expect_true(is.na(n(NA)))
+  expect_true(is.na(n("oom-retry")))
+  expect_true(is.na(n("retry")))
+})
+
+test_that("estimates prefer history recorded for the same camera", {
+  with_fake_home({
+    # An RGB-heavy history plus one multispectral run, same image count.
+    DroneBioR:::record_odm_stage_completion("rgb-1", 100L, "opensfm", 100, camera = "rgb")
+    DroneBioR:::record_odm_stage_completion("rgb-2", 100L, "opensfm", 120, camera = "rgb")
+    DroneBioR:::record_odm_stage_completion("ms-1", 100L, "opensfm", 3000, camera = "multispectral")
+
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "multispectral"),
+      3000
+    )
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "rgb"),
+      110
+    )
+    # Without a camera the pooled median is used, as before.
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L), 120)
+  })
+})
+
+test_that("unlabelled rows are the fallback, never a different sensor's rows", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("rgb-1", 100L, "opensfm", 200, camera = "rgb")
+    # Only RGB rows exist. A multispectral query must not borrow them -- that
+    # is the mixing this split exists to prevent -- so it drops to the baseline.
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "multispectral"),
+      unname(DroneBioR:::odm_stage_baseline_seconds()["opensfm"])
+    )
+
+    # Add an unlabelled row: now that is the fallback, in preference to RGB.
+    DroneBioR:::record_odm_stage_completion("old-1", 100L, "opensfm", 3000)
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "multispectral"),
+      3000
+    )
+    # And the RGB estimate stays on its own rows, unpolluted by that addition.
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "rgb"),
+      200
+    )
+  })
+})
+
+test_that("history written before camera tracking stays usable", {
+  with_fake_home({
+    # Simulate a legacy CSV: the columns the old code wrote, no `camera`.
+    legacy <- data.frame(
+      run_started_at   = "old-run",
+      image_count      = 100L,
+      stage            = "opensfm",
+      duration_seconds = 900,
+      stringsAsFactors = FALSE
+    )
+    utils::write.csv(legacy, DroneBioR:::odm_history_path(), row.names = FALSE)
+
+    hist <- DroneBioR:::read_odm_stage_history()
+    expect_true("camera" %in% names(hist))
+    expect_true(is.na(hist$camera[1]))
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L), 900)
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 100L, camera = "multispectral"),
+      900
+    )
+    # A new row appends cleanly alongside the legacy ones.
+    expect_true(DroneBioR:::record_odm_stage_completion("new-run", 100L, "opensfm",
+                                                       120, camera = "rgb"))
+    expect_equal(nrow(DroneBioR:::read_odm_stage_history()), 2)
+  })
+})
+
+test_that("estimate_remaining_seconds threads the camera through", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("rgb-1", 100L, "opensfm", 100, camera = "rgb")
+    DroneBioR:::record_odm_stage_completion("rgb-1", 100L, "openmvs", 50, camera = "rgb")
+    DroneBioR:::record_odm_stage_completion("ms-1", 100L, "opensfm", 1000, camera = "multispectral")
+    DroneBioR:::record_odm_stage_completion("ms-1", 100L, "openmvs", 500, camera = "multispectral")
+
+    rem_ms <- DroneBioR:::estimate_remaining_seconds(
+      active_stage = "opensfm", pending_stages = "openmvs",
+      active_elapsed_seconds = 0, image_count = 100L, camera = "multispectral"
+    )
+    rem_rgb <- DroneBioR:::estimate_remaining_seconds(
+      active_stage = "opensfm", pending_stages = "openmvs",
+      active_elapsed_seconds = 0, image_count = 100L, camera = "rgb"
+    )
+    expect_equal(rem_ms, 1500)
+    expect_equal(rem_rgb, 150)
   })
 })
 
