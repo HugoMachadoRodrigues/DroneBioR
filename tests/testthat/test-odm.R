@@ -407,11 +407,20 @@ test_that("the unified default keeps both sets of guards", {
   cache$value <- NA_integer_
 
   # The cap the DJI helper contributed: unbounded workers on a very large
-  # machine trade speed for memory pressure.
+  # machine trade speed for memory pressure. The cap is an upper bound, not a
+  # target -- on a small runner the n-1 rule binds first, so asserting equality
+  # against the real core count would only test the CI hardware.
   expect_lte(default_max_concurrency(), 16L)
-  expect_equal(default_max_concurrency(cap = 3L), 3L)
+  expect_lte(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(cap = 1L), 1L)
 
-  # The Docker budget the other helper contributed.
+  # Pinning the host high makes the cap the binding constraint on any machine.
+  local_mocked_bindings(detectCores = function(...) 64L, .package = "parallel")
+  expect_equal(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(), 16L)
+
+  # The Docker budget the other helper contributed. Still binding with a
+  # 64-core host: min(64, 2) - 1.
   cache$value <- 2L
   expect_equal(default_max_concurrency(), 1L)
 })
