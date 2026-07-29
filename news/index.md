@@ -4,6 +4,24 @@
 
 ### Bug fixes
 
+- **The ODM progress ETA now corrects itself when a stage overruns.**
+  The remaining time was the active stage’s `max(0, estimate - elapsed)`
+  plus the untouched estimates of the pending stages. Once the active
+  stage passed its estimate its term pinned to zero, so the ETA froze at
+  “sum of the pending estimates” no matter how far the run overran — and
+  those estimates came from the same history the run had just disproved.
+  A 39-image multispectral run, predicted from a history of 300-image
+  RGB runs, sat at `~3m 18s remaining` while a stage estimated at 48s
+  went past 10 minutes. The active stage’s overrun ratio is now carried
+  over to the stages that have not started, and an overrunning stage is
+  treated as half-done rather than as finished, so the same run reports
+  about 50 minutes. Guards keep the correction sane: the ratio is
+  ignored when the active stage’s own estimate is under 30s (real
+  histories put `odm_report` at ~0.02s, which would otherwise become a
+  100x multiplier) and is capped at 20x. Estimates behave exactly as
+  before while a stage is inside its estimate, and the value is
+  continuous across the boundary.
+
 - **[`register_flight()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/register_flight.md)
   no longer silently drops flights that share a date.** The `flight_id`
   embeds a hash of `project_dir`, and that hash accumulated in a 32-bit

@@ -25,5 +25,5 @@ yet) as a sensible default.
 ``` r
 project <- dronebio_project(project_dir = tempdir())
 pick_best_textured_obj(project)
-#> [1] "/tmp/RtmpNLza3t/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj"
+#> [1] "/tmp/RtmpanhAAa/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj"
 ```
