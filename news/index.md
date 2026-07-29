@@ -4,6 +4,49 @@
 
 ### Bug fixes
 
+- **Buttons that refused a guard no longer do nothing at all.**
+  Twenty-four guards across the app were written as
+  `validate(need(...))` inside an `observeEvent()`. `validate()` raises
+  `shiny.silent.error`, which Shiny displays only in a `render*()`
+  output; in an observer there is nothing to display it in, so the
+  condition was discarded and the click produced no toast, no console
+  message and no visible change. The most costly case was Field Models:
+  **Train** looked completely dead whenever a prerequisite was missing.
+  New
+  [`observer_need()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/observer_need.md)
+  shows the reason first and then aborts the observer the same way, and
+  every observer guard now uses it — including the three WebODM
+  credential checks in `launch_odm_run()` and the two overlay checks in
+  `render_gis_overlays()`, both of which are only ever reached from
+  observers. A test parses `app.R` and fails if a `validate()` reappears
+  in an observer.
+
+- **Two warnings printed their own format string as data.** A long
+  message was split across four string literals without
+  [`paste0()`](https://rdrr.io/r/base/paste.html), so
+  [`sprintf()`](https://rdrr.io/r/base/sprintf.html) took the first
+  fragment as the format and the other three as arguments: the user saw
+  `ODM exited with status post-processing stage (PDF report, hillshade preview) failed; the but orthomosaic ... is present`
+  plus `3 arguments not used by format`. Fixed in
+  [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
+  and `run_one_dji_band()`, with a test that walks every
+  [`sprintf()`](https://rdrr.io/r/base/sprintf.html) in the package and
+  the app — folding literal
+  [`paste0()`](https://rdrr.io/r/base/paste.html) formats so the fixed
+  shape stays covered — and checks the conversion count against the
+  argument count.
+
+- **“No CHM is available” now says which part is missing.** The message
+  could not distinguish “no DEMs were discovered” from “the DSM and DTM
+  are there but the subtraction failed”, which need different fixes.
+  Relatedly, `chm_raster()` called
+  [`file.exists()`](https://rdrr.io/r/base/files.html) on a product path
+  that is `NULL` when the product was never discovered;
+  `file.exists(NULL)` is `logical(0)`, so `if (!...)` raised “argument
+  is of length zero”, which the caller’s
+  [`tryCatch()`](https://rdrr.io/r/base/conditions.html) swallowed and
+  reported as a missing CHM.
+
 - **The ODM stage history no longer mixes RGB and multispectral runs.**
   Stage durations were pooled across every past run and scaled linearly
   by image count, so a 39-image multispectral run estimated against a
@@ -18,11 +61,26 @@
   before this change have no `camera` column; the column is added as
   `NA` on read, so those runs stay usable as the unlabelled tier and
   estimates are unchanged until the first labelled run is recorded. The
-  camera is taken from `camera_type` in
-  [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md),
-  from the per-band label in the DJI Mavic 3M runner (`"RGB"`,
+  camera is taken from the sensor
+  [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
+  detects, from the per-band label in the DJI Mavic 3M runner (`"RGB"`,
   `"MS_NIR"`, …), and from the camera selector in the Shiny app, pinned
   at run discovery.
+
+- **A MicaSense set and a DJI Mavic 3M flight no longer share a stage
+  history.** Both are “multispectral”, so the tiers above pooled them —
+  and their per-image cost is not comparable. On a 210-image MicaSense
+  dataset whose `opensfm` takes about 90 seconds, history rows from
+  39-image DJI runs scaled linearly to 3.5 hours, and the run was quoted
+  `5h 23m remaining` against a real cost near 90 seconds.
+  `normalize_camera_type()` now resolves the sensor model
+  (`"micasense"`, `"dji_mavic_3m"`, `"sequoia"`) rather than the class,
+  and only an exact-sensor match is borrowed. When no history exists for
+  the sensor, the fallback tier is rows that are genuinely ambiguous —
+  unlabelled, or carrying the bare class label of the same class — so a
+  MicaSense estimate can fall back on a generic multispectral run but
+  never on a DJI or an RGB one. Rows written with the previous coarse
+  labels stay usable in that ambiguous tier.
 
 - **The ODM progress ETA now corrects itself when a stage overruns.**
   The remaining time was the active stage’s `max(0, estimate - elapsed)`

@@ -24,5 +24,5 @@ Absolute path to an existing `.glb`, or the 3D path as default.
 ``` r
 project <- dronebio_project(project_dir = tempdir())
 pick_best_textured_glb(project)
-#> [1] "/tmp/RtmppVJJUW/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb"
+#> [1] "/tmp/RtmpTFgppz/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb"
 ```
