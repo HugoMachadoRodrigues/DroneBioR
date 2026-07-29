@@ -194,6 +194,8 @@ from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
   : Run ODM through Docker for a DroneBioR project
 - [`refilter_odm_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/refilter_odm_point_cloud.md)
   : Re-clean an ODM point cloud without redoing the reconstruction
+- [`rebuild_from_edited_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/rebuild_from_edited_cloud.md)
+  : Build the ODM products from an edited point cloud
 - [`convert_undistorted_tiffs_for_texturing()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/convert_undistorted_tiffs_for_texturing.md)
   : Convert ODM undistorted Float TIFFs to UInt16 for texturing
 - [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/odm_product_paths.md)
@@ -438,6 +440,11 @@ attach heights to selected points.
   : Read an uncompressed LAS point cloud
 - [`read_ply_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/read_ply_point_cloud.md)
   : Read a binary little-endian PLY point cloud sample
+- [`parse_ply_header()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/parse_ply_header.md)
+  : Parse the header of a binary little-endian PLY file
+- [`write_ply_subset()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/write_ply_subset.md)
+  : Write a filtered copy of a binary PLY, preserving its exact vertex
+  layout
 - [`build_chm_from_dsm_dtm()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_from_dsm_dtm.md)
   : Build a canopy height model from DSM and DTM rasters
 - [`build_chm_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_raster.md)

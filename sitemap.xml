@@ -85,6 +85,7 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/orthomosaic_band_presence.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/parse_djim3m_mrk.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/parse_djim3m_mrk_folder.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/parse_ply_header.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/pick_best_point_cloud.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/pick_best_textured_glb.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/pick_best_textured_obj.html</loc></url>
@@ -104,6 +105,7 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/read_las_point_cloud.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/read_multispectral_orthomosaic.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/read_ply_point_cloud.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/rebuild_from_edited_cloud.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/refilter_odm_point_cloud.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/register_flight.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/render_dronebio_report.html</loc></url>
@@ -133,5 +135,6 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_djim3m_geo_txt.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_dronebio_rasters.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_field_model_summary.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_ply_subset.html</loc></url>
 </urlset>
 
