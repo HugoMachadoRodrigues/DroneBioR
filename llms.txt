@@ -192,6 +192,8 @@ from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
   : Build an ODM Docker command
 - [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
   : Run ODM through Docker for a DroneBioR project
+- [`refilter_odm_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/refilter_odm_point_cloud.md)
+  : Re-clean an ODM point cloud without redoing the reconstruction
 - [`convert_undistorted_tiffs_for_texturing()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/convert_undistorted_tiffs_for_texturing.md)
   : Convert ODM undistorted Float TIFFs to UInt16 for texturing
 - [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/odm_product_paths.md)

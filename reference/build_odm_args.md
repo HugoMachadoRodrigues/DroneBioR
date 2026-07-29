@@ -16,6 +16,9 @@ build_odm_args(
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,
+  pc_filter = 2.5,
+  pc_sample = NULL,
+  pc_rectify = FALSE,
   pc_las = FALSE,
   pc_csv = FALSE,
   pc_copc = FALSE,
@@ -76,6 +79,26 @@ build_odm_args(
 - build_dtm:
 
   Logical. Add DTM generation options.
+
+- pc_filter:
+
+  Statistical outlier removal, in standard deviations from the local
+  mean (`--pc-filter`). Applied in ODM's `odm_filterpoints` stage, which
+  runs *before* meshing, texturing, the DEMs and the orthophoto, so it
+  is the one knob that cleans reconstruction noise out of every
+  downstream product at once. ODM's own default is 5, which is loose
+  enough to leave floating specks and needles in the point cloud; the
+  default here is 2.5. Use `0` to disable filtering.
+
+- pc_sample:
+
+  Optional thinning radius in metres (`--pc-sample`): keeps a single
+  point per sphere of this radius. `NULL` (default) keeps every point.
+
+- pc_rectify:
+
+  Logical. Re-classify wrongly classified ground points and fill gaps
+  (`--pc-rectify`). Worth enabling when the DTM matters.
 
 - pc_las:
 
@@ -141,7 +164,7 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/RtmpgJjnUi:/datasets"
+#> [3] "-v"                        "/tmp/RtmpfVKH2Q:/datasets"
 #> [5] "opendronemap/odm"          "--project-path"           
 
 # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.

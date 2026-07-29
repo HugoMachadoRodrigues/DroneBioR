@@ -57,6 +57,9 @@
 <span>  fast_orthophoto <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  build_dsm <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  build_dtm <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  pc_filter <span class="op">=</span> <span class="fl">2.5</span>,</span>
+<span>  pc_sample <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  pc_rectify <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  pc_las <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  pc_csv <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  pc_copc <span class="op">=</span> <span class="cn">FALSE</span>,</span>
@@ -118,6 +121,27 @@ multispectral, omitted for RGB. Set to <code>"none"</code> to skip explicitly.</
 
 <dt id="arg-build-dtm">build_dtm<a class="anchor" aria-label="anchor" href="#arg-build-dtm"></a></dt>
 <dd><p>Logical. Add DTM generation options.</p></dd>
+
+
+<dt id="arg-pc-filter">pc_filter<a class="anchor" aria-label="anchor" href="#arg-pc-filter"></a></dt>
+<dd><p>Statistical outlier removal, in standard deviations from
+the local mean (<code>--pc-filter</code>). Applied in ODM's <code>odm_filterpoints</code>
+stage, which runs <em>before</em> meshing, texturing, the DEMs and the
+orthophoto, so it is the one knob that cleans reconstruction noise out of
+every downstream product at once. ODM's own default is 5, which is loose
+enough to leave floating specks and needles in the point cloud; the
+default here is 2.5. Use <code>0</code> to disable filtering.</p></dd>
+
+
+<dt id="arg-pc-sample">pc_sample<a class="anchor" aria-label="anchor" href="#arg-pc-sample"></a></dt>
+<dd><p>Optional thinning radius in metres (<code>--pc-sample</code>): keeps a
+single point per sphere of this radius. <code>NULL</code> (default) keeps every
+point.</p></dd>
+
+
+<dt id="arg-pc-rectify">pc_rectify<a class="anchor" aria-label="anchor" href="#arg-pc-rectify"></a></dt>
+<dd><p>Logical. Re-classify wrongly classified ground points and
+fill gaps (<code>--pc-rectify</code>). Worth enabling when the DTM matters.</p></dd>
 
 
 <dt id="arg-pc-las">pc_las<a class="anchor" aria-label="anchor" href="#arg-pc-las"></a></dt>
@@ -186,7 +210,7 @@ known <code>gdal_translate</code> / numpy ABI crash inside some
 <span class="r-in"><span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">args</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> [1] "run"                       "--rm"                     </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3] "-v"                        "/tmp/RtmpgJjnUi:/datasets"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3] "-v"                        "/tmp/RtmpfVKH2Q:/datasets"</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> [5] "opendronemap/odm"          "--project-path"           </span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co"># RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.</span></span></span>
