@@ -33,6 +33,40 @@ test_that("extract_field_spectral_data joins indices to field samples", {
   expect_true(all(c("biomass_kgha", "NDVI", "NDRE") %in% names(joined)))
 })
 
+test_that("extract_field_spectral_data with default args is the single-cell extract", {
+  ortho <- read_multispectral_orthomosaic(ortho_fixture())
+  refl <- scale_to_reflectance(ortho$bands)
+  ix <- compute_spectral_indices(refl)
+  field <- read_field_data(field_fixture())
+
+  # The three-argument call must stay byte-identical: R/report.R and the
+  # Shiny studio both depend on it.
+  joined <- extract_field_spectral_data(field, ix)
+  pts <- sf::st_as_sf(field, coords = c("x", "y"), crs = terra::crs(ix),
+                      remove = FALSE)
+  want <- data.frame(
+    sf::st_drop_geometry(pts),
+    terra::extract(ix, terra::vect(pts), ID = FALSE),
+    check.names = FALSE
+  )
+  expect_equal(joined, want)
+})
+
+test_that("extract_field_spectral_data keeps its shape with a 3x3 window", {
+  ortho <- read_multispectral_orthomosaic(ortho_fixture())
+  refl <- scale_to_reflectance(ortho$bands)
+  ix <- compute_spectral_indices(refl)
+  field <- read_field_data(field_fixture())
+
+  single <- extract_field_spectral_data(field, ix)
+  windowed <- extract_field_spectral_data(field, ix, window = 3, fun = "mean")
+  expect_equal(dim(windowed), dim(single))
+  expect_identical(names(windowed), names(single))
+  expect_identical(windowed$sample_id, single$sample_id)
+  # Averaging over 9 pixels must actually change something.
+  expect_false(isTRUE(all.equal(windowed$NDVI, single$NDVI)))
+})
+
 test_that("fit_biomass_lm picks default predictors automatically", {
   set.seed(1)
   ndvi <- runif(30, 0.3, 0.9)

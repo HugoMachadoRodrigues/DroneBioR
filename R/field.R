@@ -27,9 +27,20 @@ read_field_data <- function(path) {
 
 #' Extract raster values at field sample points
 #'
+#' With the default `window = 1` this is a plain single-pixel extraction and
+#' the result is byte-identical to earlier releases. A larger odd `window`
+#' aggregates the `window` x `window` block of native-resolution pixels
+#' around each point with `fun`, which smooths GPS error and mixed pixels;
+#' see [extract_field_covariates()] for the richer version used by the Field
+#' Models tab.
+#'
 #' @param field_data Field data frame.
 #' @param predictors Raster stack with bands and indices.
 #' @param predictor_crs CRS of x/y coordinates when x/y are used.
+#' @param window Odd window size in pixels (1, 3, 5, ... 21). `1` keeps the
+#'   original single-cell behaviour.
+#' @param fun Aggregation applied over the window: `"mean"`, `"median"`,
+#'   `"max"`, `"min"` or `"sd"`. Ignored when `window = 1`.
 #' @return A data frame with field columns and extracted raster values.
 #' @examples
 #' ortho_path <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
@@ -39,7 +50,9 @@ read_field_data <- function(path) {
 #' field <- read_field_data(field_path)
 #' head(extract_field_spectral_data(field, ix))
 #' @export
-extract_field_spectral_data <- function(field_data, predictors, predictor_crs = terra::crs(predictors)) {
+extract_field_spectral_data <- function(field_data, predictors,
+                                        predictor_crs = terra::crs(predictors),
+                                        window = 1L, fun = "mean") {
   if (all(c("x", "y") %in% names(field_data))) {
     points <- sf::st_as_sf(field_data, coords = c("x", "y"), crs = predictor_crs, remove = FALSE)
   } else if (all(c("longitude", "latitude") %in% names(field_data))) {
@@ -51,8 +64,24 @@ extract_field_spectral_data <- function(field_data, predictors, predictor_crs = 
     stop("Field data needs x/y or longitude/latitude columns.", call. = FALSE)
   }
 
-  vect_points <- terra::vect(points)
-  values <- terra::extract(predictors, vect_points, ID = FALSE)
+  if (as.integer(window) == 1L) {
+    vect_points <- terra::vect(points)
+    values <- terra::extract(predictors, vect_points, ID = FALSE)
+    return(data.frame(sf::st_drop_geometry(points), values, check.names = FALSE))
+  }
+
+  # Windowed route: out-of-extent points keep their row with NA values, so
+  # the output still lines up with `field_data` row for row.
+  wc <- window_cells(predictors, points, window)
+  values <- as.data.frame(
+    matrix(NA_real_, nrow = nrow(points), ncol = terra::nlyr(predictors)),
+    stringsAsFactors = FALSE
+  )
+  names(values) <- names(predictors)
+  if (length(wc$index) > 0L) {
+    agg <- extract_window_values(predictors, wc$cells, fun = fun)
+    values[wc$index, ] <- agg[, names(predictors), drop = FALSE]
+  }
   data.frame(sf::st_drop_geometry(points), values, check.names = FALSE)
 }
 

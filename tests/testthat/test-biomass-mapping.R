@@ -133,3 +133,21 @@ test_that("method = 'auto' compares both routes and keeps the lower-RMSE one", {
   expect_lte(m$metrics$rmse,
              max(vapply(m$comparison, function(x) x$rmse, numeric(1))))
 })
+
+test_that(".biomass_metrics gains RPIQ without disturbing the existing fields", {
+  obs <- c(10, 20, 30, 40, 50, 60, 70, 80)
+  pred <- obs + c(2, -2, 2, -2, 2, -2, 2, -2)
+  m <- .biomass_metrics(obs, pred)
+  expect_equal(m$rmse, 2)
+  expect_equal(m$rpiq,
+               as.numeric(diff(stats::quantile(obs, c(0.25, 0.75)))) / m$rmse)
+  # The elements the rest of the suite relies on are unchanged.
+  expect_true(all(c("n", "r2", "rmse", "mae", "bias", "slope",
+                    "intercept", "rpiq") %in% names(m)))
+})
+
+test_that(".biomass_metrics returns NA RPIQ when RMSE is zero or n < 2", {
+  obs <- c(100, 200, 300, 400)
+  expect_true(is.na(.biomass_metrics(obs, obs)$rpiq))
+  expect_true(is.na(.biomass_metrics(1, 1)$rpiq))
+})
