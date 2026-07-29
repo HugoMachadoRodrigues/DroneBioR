@@ -192,6 +192,8 @@ from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
   : Build an ODM Docker command
 - [`build_point_cloud_only()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_point_cloud_only.md)
   : Reconstruct up to the point cloud and stop
+- [`default_max_concurrency()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_max_concurrency.md)
+  : Default number of ODM workers for this machine
 - [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
   : Run ODM through Docker for a DroneBioR project
 - [`refilter_odm_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/refilter_odm_point_cloud.md)

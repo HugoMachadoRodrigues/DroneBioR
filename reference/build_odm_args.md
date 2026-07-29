@@ -12,7 +12,7 @@ build_odm_args(
   camera_type = c("multispectral", "rgb"),
   radiometric_calibration = NULL,
   orthophoto_resolution_cm = 5,
-  max_concurrency = 4,
+  max_concurrency = default_max_concurrency(),
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,
@@ -172,7 +172,7 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/RtmpC065jB:/datasets"
+#> [3] "-v"                        "/tmp/RtmppVJJUW:/datasets"
 #> [5] "opendronemap/odm"          "--project-path"           
 
 # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.

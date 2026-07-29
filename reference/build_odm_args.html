@@ -53,7 +53,7 @@
 <span>  camera_type <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"multispectral"</span>, <span class="st">"rgb"</span><span class="op">)</span>,</span>
 <span>  radiometric_calibration <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  orthophoto_resolution_cm <span class="op">=</span> <span class="fl">5</span>,</span>
-<span>  max_concurrency <span class="op">=</span> <span class="fl">4</span>,</span>
+<span>  max_concurrency <span class="op">=</span> <span class="fu"><a href="default_max_concurrency.html">default_max_concurrency</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  fast_orthophoto <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  build_dsm <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  build_dtm <span class="op">=</span> <span class="cn">FALSE</span>,</span>
@@ -218,7 +218,7 @@ known <code>gdal_translate</code> / numpy ABI crash inside some
 <span class="r-in"><span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">args</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> [1] "run"                       "--rm"                     </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3] "-v"                        "/tmp/RtmpC065jB:/datasets"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3] "-v"                        "/tmp/RtmppVJJUW:/datasets"</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> [5] "opendronemap/odm"          "--project-path"           </span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co"># RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.</span></span></span>
