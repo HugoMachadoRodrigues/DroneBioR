@@ -25,6 +25,7 @@
 #' @keywords internal
 #' @importFrom grDevices chull rgb
 #' @importFrom stats as.formula complete.cases dist lm quantile setNames
+#' @importFrom parallel detectCores
 #' @importFrom utils head modifyList read.csv write.csv
 "_PACKAGE"
 

@@ -129,7 +129,7 @@ build_odm_args <- function(dataset_dir,
                            camera_type = c("multispectral", "rgb"),
                            radiometric_calibration = NULL,
                            orthophoto_resolution_cm = 5,
-                           max_concurrency = 4,
+                           max_concurrency = default_max_concurrency(),
                            fast_orthophoto = TRUE,
                            build_dsm = FALSE,
                            build_dtm = FALSE,
@@ -657,7 +657,7 @@ build_point_cloud_only <- function(project,
       odm_image       = dots$odm_image %||% "opendronemap/odm",
       force           = isTRUE(dots$force),
       orthophoto_resolution_cm = dots$orthophoto_resolution_cm %||% 5,
-      max_concurrency = dots$max_concurrency %||% 4,
+      max_concurrency = dots$max_concurrency %||% default_max_concurrency(),
       build_dsm       = FALSE,
       build_dtm       = FALSE,
       pc_filter       = pc_filter,
@@ -686,4 +686,33 @@ build_point_cloud_only <- function(project,
   ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
   invisible(list(point_cloud = ply, exists = file.exists(ply),
                  camera = "generic", run = res))
+}
+
+#' Default number of ODM workers for this machine
+#'
+#' One less than the number of cores R can see, floored at 1. Leaving a core
+#' free keeps the machine usable while a reconstruction runs, which matters
+#' because these runs last tens of minutes.
+#'
+#' The previous fixed default of 4 was written for a modest laptop and quietly
+#' throttled bigger ones: on a 10-core M1 Max a run sat at ~320% CPU and 7% of
+#' the memory Docker had been given, with feature matching -- the longest part
+#' of `opensfm` -- using less than a third of the machine.
+#'
+#' Set `options(dronebior.max_concurrency = n)` to pin a value, for instance
+#' when Docker Desktop is allowed fewer cores than the host has.
+#'
+#' @return A positive integer.
+#' @examples
+#' default_max_concurrency()
+#' @export
+default_max_concurrency <- function() {
+  pinned <- getOption("dronebior.max_concurrency", NULL)
+  if (!is.null(pinned)) {
+    n <- suppressWarnings(as.integer(pinned)[1L])
+    if (is.finite(n) && n >= 1L) return(n)
+  }
+  n <- suppressWarnings(parallel::detectCores())
+  if (!is.finite(n) || n < 2L) return(1L)
+  as.integer(max(1L, n - 1L))
 }

@@ -335,3 +335,32 @@ test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run
   expect_equal(seen$pc_filter, 1.5)
   expect_equal(res$camera, "dji_mavic_3m")
 })
+
+test_that("default_max_concurrency leaves one core free and can be pinned", {
+  n <- default_max_concurrency()
+  expect_true(is.finite(n) && n >= 1L)
+  cores <- suppressWarnings(parallel::detectCores())
+  if (is.finite(cores) && cores >= 2L) expect_equal(n, as.integer(cores - 1L))
+
+  withr::with_options(list(dronebior.max_concurrency = 3L), {
+    expect_equal(default_max_concurrency(), 3L)
+  })
+  # A nonsense pin falls back rather than producing --max-concurrency 0.
+  withr::with_options(list(dronebior.max_concurrency = 0L), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+  withr::with_options(list(dronebior.max_concurrency = "abc"), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+})
+
+test_that("the ODM command uses the machine default instead of a fixed 4", {
+  # The old fixed 4 throttled a 10-core machine to about a third of it.
+  withr::with_options(list(dronebior.max_concurrency = 9L), {
+    a <- build_odm_args(tempdir(), "demo")
+    expect_equal(a[which(a == "--max-concurrency") + 1L], "9")
+  })
+  # An explicit argument still wins.
+  a <- build_odm_args(tempdir(), "demo", max_concurrency = 2)
+  expect_equal(a[which(a == "--max-concurrency") + 1L], "2")
+})
