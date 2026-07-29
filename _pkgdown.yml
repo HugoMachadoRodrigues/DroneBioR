@@ -160,6 +160,8 @@ reference:
       - read_full_point_cloud
       - read_las_point_cloud
       - read_ply_point_cloud
+      - parse_ply_header
+      - write_ply_subset
       - build_chm_from_dsm_dtm
       - build_chm_raster
       - despike_dem
