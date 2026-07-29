@@ -81,6 +81,7 @@ reference:
       - default_dji_mavic_3m_band_map
       - orthomosaic_band_presence
       - canonical_band_names
+      - default_band_map_for_layers
       - scale_to_reflectance
       - summarize_spatraster
       - write_dronebio_rasters

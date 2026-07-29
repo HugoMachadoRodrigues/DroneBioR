@@ -155,9 +155,15 @@ test_that("orthomosaic_band_presence trusts band names over layer count", {
   expect_true(b$has_rededge)
   expect_equal(b$by, "name")
 
-  # Case and spelling of "RedEdge" vary between writers.
-  expect_true(orthomosaic_band_presence(c("red", "RedEdge", "nir"))$has_rededge)
-  expect_true(orthomosaic_band_presence(c("Red_Edge", "NIR"))$has_rededge)
+  # Case and spelling of "RedEdge" vary between writers. Checked on the naming
+  # layer, because presence is additionally gated by the band map the reader
+  # would pick for that layer count -- a 3-layer file is mapped as RGB no
+  # matter what its layers are called.
+  expect_equal(canonical_band_names(c("red", "RedEdge", "nir")),
+               c("Red", "RedEdge", "NIR"))
+  expect_equal(canonical_band_names(c("Red_Edge", "NIR")), c("RedEdge", "NIR"))
+  expect_true(orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "NIR", "Red_Edge"), nlyr = 5)$has_rededge)
 })
 
 test_that("orthomosaic_band_presence says no for a genuinely RGB file", {
@@ -253,4 +259,43 @@ test_that("a DJI stack yields the calibrated index set, without the Blue ones", 
   # out, and the UI must agree rather than offering them.
   expect_true(all(c("NDVI", "NDRE", "NDRE", "GNDVI", "CIrededge") %in% names(ix)))
   expect_false(any(c("EVI", "VARI", "RGBVI") %in% names(ix)))
+})
+
+test_that("default_band_map_for_layers is the single rule the reader follows", {
+  # One function, so availability in the UI cannot drift from what
+  # read_multispectral_orthomosaic() will actually map.
+  expect_setequal(names(default_band_map_for_layers(7)),
+                  c("Green", "Red", "RedEdge", "NIR"))
+  expect_setequal(names(default_band_map_for_layers(5)),
+                  c("Red", "Green", "Blue", "NIR", "RedEdge"))
+  expect_setequal(names(default_band_map_for_layers(3)), c("Red", "Green", "Blue"))
+  expect_setequal(names(default_band_map_for_layers(NA)), c("Red", "Green", "Blue"))
+})
+
+test_that("band availability matches the map the reader would use", {
+  # 7 layers: a blue layer is physically present but the calibrated-only map
+  # does not expose it, so reporting Blue would offer EVI and then not deliver.
+  b7 <- orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "MS_G", "MS_R", "MS_RE", "MS_NIR"), nlyr = 7)
+  expect_false(b7$has_blue)
+  expect_setequal(b7$bands, c("Red", "Green", "RedEdge", "NIR"))
+
+  b5 <- orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"),
+                                  nlyr = 5)
+  expect_true(b5$has_blue)
+
+  # One duplicated name is not evidence of a stacked RGB+MS file; a 5-layer
+  # ortho still gets the MicaSense map, Blue included.
+  b5b <- orthomosaic_band_presence(c("Red", "Green", "Blue", "MS_R", "NIR"),
+                                   nlyr = 5)
+  expect_true(b5b$has_blue)
+})
+
+test_that("canonical_band_names survives degenerate input", {
+  expect_length(canonical_band_names(NULL), 0)
+  expect_length(canonical_band_names(character(0)), 0)
+  expect_true(is.na(canonical_band_names(NA_character_)))
+  expect_true(is.na(canonical_band_names("")))
+  expect_equal(canonical_band_names(c("Red", NA)), c("Red", NA))
+  expect_equal(canonical_band_names("REDEDGE"), "RedEdge")
 })

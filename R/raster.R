@@ -89,13 +89,7 @@ read_multispectral_orthomosaic <- function(orthomosaic,
   n_layers <- terra::nlyr(raw)
 
   if (is.null(band_map)) {
-    band_map <- if (n_layers >= 7L) {
-      default_dji_mavic_3m_band_map()
-    } else if (n_layers >= 5L) {
-      default_micasense_band_map()
-    } else {
-      default_rgb_band_map()
-    }
+    band_map <- default_band_map_for_layers(n_layers)
   }
 
   required <- names(band_map)
@@ -295,15 +289,16 @@ orthomosaic_band_presence <- function(x, nlyr = NULL) {
   named <- canon[!is.na(canon)]
   if (length(named)) {
     present <- unique(named)
-    # A stack that carries BOTH an uncalibrated RGB triplet and a calibrated
-    # multispectral set repeats some canonical names (the DJI Mavic 3M's
-    # Red/Green appear twice). There the MS set is what the indices use, so a
-    # band that exists only in the RGB triplet -- Blue on a Mavic 3M -- is not
-    # actually available to them, and reporting it would offer EVI in the UI
-    # only for it to be absent from the result.
-    if (anyDuplicated(named)) {
-      rgb_only <- setdiff(present, unique(named[duplicated(named)]))
-      present <- setdiff(present, intersect(rgb_only, "Blue"))
+    # Availability must mirror what read_multispectral_orthomosaic() will
+    # actually map, or the UI offers an index that is then missing from the
+    # result. That function picks its band map from the layer count, so a
+    # 7-layer DJI stack gets the calibrated-only map with no Blue even though
+    # a blue layer is physically there. Intersecting with that map keeps the
+    # two in step by construction instead of by a heuristic.
+    n <- as.integer(nlyr %||% length(canon))
+    if (is.finite(n)) {
+      mapped <- names(default_band_map_for_layers(n))
+      present <- intersect(present, mapped)
     }
     return(list(
       bands       = present,
@@ -324,6 +319,27 @@ orthomosaic_band_presence <- function(x, nlyr = NULL) {
     has_nir     = proxy, has_rededge = proxy,
     by          = "count"
   )
+}
+
+#' The band map [read_multispectral_orthomosaic()] picks for a layer count
+#'
+#' Kept as one function so the reader and anything that has to predict what the
+#' reader will do -- band availability in the app, for one -- cannot drift
+#' apart. A 7-layer DJI stack maps only the calibrated bands, which is why Blue
+#' is absent there even though the stack carries an RGB triplet.
+#'
+#' @param n_layers Number of layers in the orthomosaic.
+#' @return A named integer vector of layer positions.
+#' @examples
+#' names(default_band_map_for_layers(7))
+#' names(default_band_map_for_layers(5))
+#' @export
+default_band_map_for_layers <- function(n_layers) {
+  n_layers <- as.integer(n_layers)
+  if (!is.finite(n_layers)) return(default_rgb_band_map())
+  if (n_layers >= 7L) return(default_dji_mavic_3m_band_map())
+  if (n_layers >= 5L) return(default_micasense_band_map())
+  default_rgb_band_map()
 }
 
 #' Canonical band names from whatever a raster calls its layers
