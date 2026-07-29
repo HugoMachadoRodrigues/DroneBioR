@@ -399,3 +399,26 @@ test_that("the OOM retries still pin concurrency to 1", {
   src2 <- paste(deparse(run_odm_project), collapse = " ")
   expect_true(grepl("max_concurrency\\s*=\\s*1L", src2))
 })
+
+test_that("the unified default keeps both sets of guards", {
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+
+  # The cap the DJI helper contributed: unbounded workers on a very large
+  # machine trade speed for memory pressure.
+  expect_lte(default_max_concurrency(), 16L)
+  expect_equal(default_max_concurrency(cap = 3L), 3L)
+
+  # The Docker budget the other helper contributed.
+  cache$value <- 2L
+  expect_equal(default_max_concurrency(), 1L)
+})
+
+test_that("run_odm_dji_mavic_3m resolves NULL through the unified default", {
+  expect_null(eval(formals(run_odm_dji_mavic_3m)$max_concurrency))
+  src <- paste(deparse(run_odm_dji_mavic_3m), collapse = " ")
+  expect_true(grepl("default_max_concurrency\\(\\)", src))
+  expect_false(grepl("default_odm_concurrency", src))
+})

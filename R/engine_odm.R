@@ -690,9 +690,11 @@ build_point_cloud_only <- function(project,
 
 #' Default number of ODM workers for this machine
 #'
-#' One less than the number of cores R can see, floored at 1. Leaving a core
-#' free keeps the machine usable while a reconstruction runs, which matters
-#' because these runs last tens of minutes.
+#' One less than the usable physical cores, floored at 1 and capped at `cap`.
+#' Leaving a core free keeps the machine usable while a reconstruction runs,
+#' which matters because these runs last tens of minutes. Physical cores rather
+#' than logical ones: OpenSfM and OpenMVS workers are compute- and memory-bound,
+#' so hyperthreads buy little while doubling the memory demand.
 #'
 #' The previous fixed default of 4 was written for a modest laptop and quietly
 #' throttled bigger ones: on a 10-core M1 Max a run sat at ~320% CPU and 7% of
@@ -706,26 +708,39 @@ build_point_cloud_only <- function(project,
 #'
 #' Set `options(dronebior.max_concurrency = n)` to pin a value outright.
 #'
+#' @param cap Upper bound on the result. Each worker costs on the order of
+#'   1-2 GB, so an unbounded count on a very large machine trades speed for
+#'   memory pressure; on a 16 GB machine a smaller explicit `max_concurrency`
+#'   is worth passing.
 #' @return A positive integer.
 #' @examples
 #' default_max_concurrency()
 #' @export
-default_max_concurrency <- function() {
+default_max_concurrency <- function(cap = 16L) {
   pinned <- getOption("dronebior.max_concurrency", NULL)
   if (!is.null(pinned)) {
     n <- suppressWarnings(as.integer(pinned)[1L])
     if (is.finite(n) && n >= 1L) return(n)
   }
-  host <- suppressWarnings(parallel::detectCores())
+  # Physical cores, not logical: OpenSfM and OpenMVS workers are compute- and
+  # memory-bound, so hyperthreads buy little while doubling the memory demand.
+  host <- suppressWarnings(tryCatch(parallel::detectCores(logical = FALSE),
+                                    error = function(e) NA_integer_))
+  if (!is.finite(host) || host < 1L) {
+    host <- suppressWarnings(tryCatch(parallel::detectCores(),
+                                      error = function(e) NA_integer_))
+  }
   if (!is.finite(host) || host < 2L) return(1L)
   # detectCores() reports the HOST. ODM runs inside Docker, and Docker Desktop
   # is routinely given fewer CPUs than the machine has; sizing to the host
   # there would start more workers than the container has cores, and each
-  # worker holds imagery, so the run gets slower and likelier to be OOM-killed.
-  # Take whichever is smaller.
+  # worker holds imagery, so the run gets slower and likelier to be
+  # OOM-killed. Take whichever is smaller.
   budget <- .docker_ncpu()
   n <- if (is.finite(budget) && budget >= 1L) min(host, budget) else host
-  as.integer(max(1L, n - 1L))
+  # Cap: each worker costs on the order of 1-2 GB, so an unbounded count on a
+  # very large machine trades speed for memory pressure.
+  as.integer(max(1L, min(n - 1L, cap)))
 }
 
 # Cached because it shells out; NA when docker is absent or does not answer.
