@@ -140,6 +140,8 @@ DroneBioR raster products to disk.
   : Default band map for a 3-band RGB orthomosaic (Sony / DJI / Phantom)
 - [`default_dji_mavic_3m_band_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_dji_mavic_3m_band_map.md)
   : Default band map for the DJI Mavic 3M 7-band stacked orthomosaic
+- [`orthomosaic_band_presence()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/orthomosaic_band_presence.md)
+  : Which spectral bands an orthomosaic actually carries
 - [`scale_to_reflectance()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/scale_to_reflectance.md)
   : Scale raster values to reflectance-like 0-1 values
 - [`summarize_spatraster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/summarize_spatraster.md)
