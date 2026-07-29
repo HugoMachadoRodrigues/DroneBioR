@@ -173,6 +173,72 @@ DroneBioR raster products to disk.
 - [`fit_biomass_lm()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/fit_biomass_lm.md)
   : Fit a baseline biomass linear model
 
+## Field sample ingest and windowed extraction
+
+Load field points from a CSV or shapefile, pick the covariates built in
+the earlier tabs, and aggregate them over an n x n pixel window around
+each sample.
+
+- [`stage_uploaded_vector()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/stage_uploaded_vector.md)
+  : Stage a Shiny multi-file upload back onto disk
+- [`field_source_columns()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/field_source_columns.md)
+  : Probe a field-sample file for columns, CRS and a column-mapping
+  guess
+- [`read_field_points()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/read_field_points.md)
+  : Read field sample points from a CSV or vector file
+- [`prepare_field_table()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/prepare_field_table.md)
+  : Rename, convert and reproject field points for modelling
+- [`field_covariate_catalogue()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/field_covariate_catalogue.md)
+  : Catalogue the covariates available for field modelling
+- [`normalize_covariate_names()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/normalize_covariate_names.md)
+  : Canonicalise covariate / layer names
+- [`window_cells()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_cells.md)
+  : Cell numbers of the n x n window around each field point
+- [`extract_window_values()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/extract_window_values.md)
+  : Aggregate raster values over pre-computed window cells
+- [`synthesize_pixel_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/synthesize_pixel_raster.md)
+  : Pack pixel values into a one-row SpatRaster
+- [`covariate_frame_from_pixels()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/covariate_frame_from_pixels.md)
+  : Compute a covariate frame from pixel values
+- [`extract_field_covariates()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/extract_field_covariates.md)
+  : Extract windowed covariates at field sample points
+
+## caret field models
+
+Train caret regression models with a shared 10-fold split, compare them,
+map the winner and save it as a runnable bundle.
+
+- [`caret_model_catalogue()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/caret_model_catalogue.md)
+  : Catalogue caret models of a given type
+- [`caret_model_available()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/caret_model_available.md)
+  : Check whether a caret model can be trained here
+- [`field_train_split()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/field_train_split.md)
+  : Build the train / test partition and CV folds for a model sweep
+- [`fit_field_caret_model()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/fit_field_caret_model.md)
+  : Fit one caret model on a shared train / test split
+- [`field_model_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/field_model_metrics.md)
+  : Metrics for a fitted field model
+- [`format_field_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/format_field_metrics.md)
+  : Format field model metrics for display
+- [`predict(`*`<dronebio_field_model>`*`)`](https://hugomachadorodrigues.github.io/DroneBioR/reference/predict.dronebio_field_model.md)
+  : Predict from a fitted field model
+- [`build_prediction_stack()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_prediction_stack.md)
+  : Build an aggregated covariate stack for map prediction
+- [`predict_field_model_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/predict_field_model_map.md)
+  : Predict a biomass map from a covariate stack
+- [`export_field_biomass_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/export_field_biomass_map.md)
+  : Export the exact full-resolution biomass map
+- [`biomass_map_breaks()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/biomass_map_breaks.md)
+  : Quantile breaks and a robust stretch for a biomass map
+- [`classify_biomass_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_biomass_map.md)
+  : Classify a biomass map into labelled classes
+- [`save_field_model_bundle()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/save_field_model_bundle.md)
+  : Save a trained field model as a self-contained zip bundle
+- [`load_field_model_bundle()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/load_field_model_bundle.md)
+  : Load a field model bundle written by save_field_model_bundle()
+- [`write_field_model_summary()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/write_field_model_summary.md)
+  : Write a plain-text summary of a fitted field model
+
 ## Field-calibrated biomass mapping
 
 Calibrate against field samples or a rising-plate meter, then predict a

@@ -461,6 +461,206 @@
         </dt>
         <dd>Fit a baseline biomass linear model</dd>
       </dl></div><div class="section level2">
+      <h2 id="field-sample-ingest-and-windowed-extraction">Field sample ingest and windowed extraction<a class="anchor" aria-label="anchor" href="#field-sample-ingest-and-windowed-extraction"></a></h2>
+
+      <div class="section-desc"><p>Load field points from a CSV or shapefile, pick the covariates built in the earlier tabs, and aggregate them over an n x n pixel window around each sample.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="stage_uploaded_vector.html">stage_uploaded_vector()</a></code>
+
+        </dt>
+        <dd>Stage a Shiny multi-file upload back onto disk</dd>
+
+        <dt>
+
+          <code><a href="field_source_columns.html">field_source_columns()</a></code>
+
+        </dt>
+        <dd>Probe a field-sample file for columns, CRS and a column-mapping guess</dd>
+
+        <dt>
+
+          <code><a href="read_field_points.html">read_field_points()</a></code>
+
+        </dt>
+        <dd>Read field sample points from a CSV or vector file</dd>
+
+        <dt>
+
+          <code><a href="prepare_field_table.html">prepare_field_table()</a></code>
+
+        </dt>
+        <dd>Rename, convert and reproject field points for modelling</dd>
+
+        <dt>
+
+          <code><a href="field_covariate_catalogue.html">field_covariate_catalogue()</a></code>
+
+        </dt>
+        <dd>Catalogue the covariates available for field modelling</dd>
+
+        <dt>
+
+          <code><a href="normalize_covariate_names.html">normalize_covariate_names()</a></code>
+
+        </dt>
+        <dd>Canonicalise covariate / layer names</dd>
+
+        <dt>
+
+          <code><a href="window_cells.html">window_cells()</a></code>
+
+        </dt>
+        <dd>Cell numbers of the n x n window around each field point</dd>
+
+        <dt>
+
+          <code><a href="extract_window_values.html">extract_window_values()</a></code>
+
+        </dt>
+        <dd>Aggregate raster values over pre-computed window cells</dd>
+
+        <dt>
+
+          <code><a href="synthesize_pixel_raster.html">synthesize_pixel_raster()</a></code>
+
+        </dt>
+        <dd>Pack pixel values into a one-row SpatRaster</dd>
+
+        <dt>
+
+          <code><a href="covariate_frame_from_pixels.html">covariate_frame_from_pixels()</a></code>
+
+        </dt>
+        <dd>Compute a covariate frame from pixel values</dd>
+
+        <dt>
+
+          <code><a href="extract_field_covariates.html">extract_field_covariates()</a></code>
+
+        </dt>
+        <dd>Extract windowed covariates at field sample points</dd>
+      </dl></div><div class="section level2">
+      <h2 id="caret-field-models">caret field models<a class="anchor" aria-label="anchor" href="#caret-field-models"></a></h2>
+
+      <div class="section-desc"><p>Train caret regression models with a shared 10-fold split, compare them, map the winner and save it as a runnable bundle.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="caret_model_catalogue.html">caret_model_catalogue()</a></code>
+
+        </dt>
+        <dd>Catalogue caret models of a given type</dd>
+
+        <dt>
+
+          <code><a href="caret_model_available.html">caret_model_available()</a></code>
+
+        </dt>
+        <dd>Check whether a caret model can be trained here</dd>
+
+        <dt>
+
+          <code><a href="field_train_split.html">field_train_split()</a></code>
+
+        </dt>
+        <dd>Build the train / test partition and CV folds for a model sweep</dd>
+
+        <dt>
+
+          <code><a href="fit_field_caret_model.html">fit_field_caret_model()</a></code>
+
+        </dt>
+        <dd>Fit one caret model on a shared train / test split</dd>
+
+        <dt>
+
+          <code><a href="field_model_metrics.html">field_model_metrics()</a></code>
+
+        </dt>
+        <dd>Metrics for a fitted field model</dd>
+
+        <dt>
+
+          <code><a href="format_field_metrics.html">format_field_metrics()</a></code>
+
+        </dt>
+        <dd>Format field model metrics for display</dd>
+
+        <dt>
+
+          <code><a href="predict.dronebio_field_model.html">predict(<i>&lt;dronebio_field_model&gt;</i>)</a></code>
+
+        </dt>
+        <dd>Predict from a fitted field model</dd>
+
+        <dt>
+
+          <code><a href="build_prediction_stack.html">build_prediction_stack()</a></code>
+
+        </dt>
+        <dd>Build an aggregated covariate stack for map prediction</dd>
+
+        <dt>
+
+          <code><a href="predict_field_model_map.html">predict_field_model_map()</a></code>
+
+        </dt>
+        <dd>Predict a biomass map from a covariate stack</dd>
+
+        <dt>
+
+          <code><a href="export_field_biomass_map.html">export_field_biomass_map()</a></code>
+
+        </dt>
+        <dd>Export the exact full-resolution biomass map</dd>
+
+        <dt>
+
+          <code><a href="biomass_map_breaks.html">biomass_map_breaks()</a></code>
+
+        </dt>
+        <dd>Quantile breaks and a robust stretch for a biomass map</dd>
+
+        <dt>
+
+          <code><a href="classify_biomass_map.html">classify_biomass_map()</a></code>
+
+        </dt>
+        <dd>Classify a biomass map into labelled classes</dd>
+
+        <dt>
+
+          <code><a href="save_field_model_bundle.html">save_field_model_bundle()</a></code>
+
+        </dt>
+        <dd>Save a trained field model as a self-contained zip bundle</dd>
+
+        <dt>
+
+          <code><a href="load_field_model_bundle.html">load_field_model_bundle()</a></code>
+
+        </dt>
+        <dd>Load a field model bundle written by save_field_model_bundle()</dd>
+
+        <dt>
+
+          <code><a href="write_field_model_summary.html">write_field_model_summary()</a></code>
+
+        </dt>
+        <dd>Write a plain-text summary of a fitted field model</dd>
+      </dl></div><div class="section level2">
       <h2 id="field-calibrated-biomass-mapping">Field-calibrated biomass mapping<a class="anchor" aria-label="anchor" href="#field-calibrated-biomass-mapping"></a></h2>
 
       <div class="section-desc"><p>Calibrate against field samples or a rising-plate meter, then predict a biomass surface over the flight.</p></div>

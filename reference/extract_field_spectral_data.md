@@ -1,6 +1,12 @@
 # Extract raster values at field sample points
 
-Extract raster values at field sample points
+With the default `window = 1` this is a plain single-pixel extraction
+and the result is byte-identical to earlier releases. A larger odd
+`window` aggregates the `window` x `window` block of native-resolution
+pixels around each point with `fun`, which smooths GPS error and mixed
+pixels; see
+[`extract_field_covariates()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/extract_field_covariates.md)
+for the richer version used by the Field Models tab.
 
 ## Usage
 
@@ -8,7 +14,9 @@ Extract raster values at field sample points
 extract_field_spectral_data(
   field_data,
   predictors,
-  predictor_crs = terra::crs(predictors)
+  predictor_crs = terra::crs(predictors),
+  window = 1L,
+  fun = "mean"
 )
 ```
 
@@ -25,6 +33,16 @@ extract_field_spectral_data(
 - predictor_crs:
 
   CRS of x/y coordinates when x/y are used.
+
+- window:
+
+  Odd window size in pixels (1, 3, 5, ... 21). `1` keeps the original
+  single-cell behaviour.
+
+- fun:
+
+  Aggregation applied over the window: `"mean"`, `"median"`, `"max"`,
+  `"min"` or `"sd"`. Ignored when `window = 1`.
 
 ## Value
 
