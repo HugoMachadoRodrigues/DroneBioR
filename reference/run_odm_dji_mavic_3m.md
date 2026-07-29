@@ -24,6 +24,9 @@ run_odm_dji_mavic_3m(
   primary_band = "auto",
   build_dsm = TRUE,
   build_dtm = TRUE,
+  pc_filter = 2.5,
+  pc_sample = NULL,
+  pc_rectify = FALSE,
   fast_orthophoto = FALSE,
   auto_boundary = TRUE,
   pc_las = FALSE,
@@ -92,6 +95,14 @@ run_odm_dji_mavic_3m(
   Logical, default `TRUE`. Build the DSM / DTM on the RGB run. Set both
   to `FALSE` when you only need the orthomosaic + spectral indices —
   combined with `fast_orthophoto = TRUE` this is the fastest path.
+
+- pc_filter, pc_sample, pc_rectify:
+
+  Point-cloud cleanup, as in
+  [`build_odm_args()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_odm_args.md).
+  They are applied to the RGB run, which is the one whose geometry the
+  DEMs and the stacked orthomosaic inherit; the four MS runs contribute
+  calibrated radiance only and already use `--fast-orthophoto`.
 
 - fast_orthophoto:
 

@@ -22,8 +22,10 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_from_dsm_dtm.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_raster.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_odm_args.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_point_cloud_only.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_prediction_stack.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/build_roi_polygon.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/canonical_band_names.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/caret_model_available.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/caret_model_catalogue.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/classify_biomass_map.html</loc></url>
@@ -41,6 +43,7 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/convert_undistorted_tiffs_for_texturing.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/copy_images_for_odm.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/covariate_frame_from_pixels.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/default_band_map_for_layers.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/default_dji_mavic_3m_band_map.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/default_flight_registry.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/default_rgb_band_map.html</loc></url>

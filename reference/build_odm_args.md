@@ -16,6 +16,7 @@ build_odm_args(
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,
+  pc_quality = NULL,
   pc_filter = 2.5,
   pc_sample = NULL,
   pc_rectify = FALSE,
@@ -79,6 +80,13 @@ build_odm_args(
 - build_dtm:
 
   Logical. Add DTM generation options.
+
+- pc_quality:
+
+  Densification detail (`--pc-quality`): one of `"ultra"`, `"high"`,
+  `"medium"`, `"low"`, `"lowest"`. Each step up produces a denser cloud
+  and costs roughly four times the time. `NULL` (default) leaves ODM's
+  own default of `"medium"`.
 
 - pc_filter:
 
@@ -164,7 +172,7 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/RtmpqNh1Jg:/datasets"
+#> [3] "-v"                        "/tmp/Rtmphv6WBJ:/datasets"
 #> [5] "opendronemap/odm"          "--project-path"           
 
 # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.

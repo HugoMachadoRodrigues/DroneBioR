@@ -190,6 +190,8 @@ from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
   : Copy images into an ODM project folder
 - [`build_odm_args()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_odm_args.md)
   : Build an ODM Docker command
+- [`build_point_cloud_only()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_point_cloud_only.md)
+  : Reconstruct up to the point cloud and stop
 - [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
   : Run ODM through Docker for a DroneBioR project
 - [`refilter_odm_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/refilter_odm_point_cloud.md)
@@ -302,16 +304,32 @@ DroneBioR raster products to disk.
 
 - [`read_multispectral_orthomosaic()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/read_multispectral_orthomosaic.md)
   : Read a multispectral or RGB orthomosaic
+
 - [`default_rgb_band_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_rgb_band_map.md)
   : Default band map for a 3-band RGB orthomosaic (Sony / DJI / Phantom)
+
 - [`default_dji_mavic_3m_band_map()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_dji_mavic_3m_band_map.md)
   : Default band map for the DJI Mavic 3M 7-band stacked orthomosaic
+
 - [`orthomosaic_band_presence()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/orthomosaic_band_presence.md)
   : Which spectral bands an orthomosaic actually carries
+
+- [`canonical_band_names()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/canonical_band_names.md)
+  : Canonical band names from whatever a raster calls its layers
+
+- [`default_band_map_for_layers()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_band_map_for_layers.md)
+  :
+
+  The band map
+  [`read_multispectral_orthomosaic()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/read_multispectral_orthomosaic.md)
+  picks for a layer count
+
 - [`scale_to_reflectance()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/scale_to_reflectance.md)
   : Scale raster values to reflectance-like 0-1 values
+
 - [`summarize_spatraster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/summarize_spatraster.md)
   : Summarize a SpatRaster by layer
+
 - [`write_dronebio_rasters()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/write_dronebio_rasters.md)
   : Write DroneBioR raster products
 

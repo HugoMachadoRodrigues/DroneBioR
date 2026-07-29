@@ -86,6 +86,9 @@ resampled onto the RGB ortho's grid and stacked into a single
 <span>  primary_band <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  build_dsm <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  build_dtm <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  pc_filter <span class="op">=</span> <span class="fl">2.5</span>,</span>
+<span>  pc_sample <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  pc_rectify <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  fast_orthophoto <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  auto_boundary <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  pc_las <span class="op">=</span> <span class="cn">FALSE</span>,</span>
@@ -156,6 +159,14 @@ drive the reconstruction, passed as <code>--primary-band</code>. <code>"auto"</c
 DTM on the RGB run. Set both to <code>FALSE</code> when you only need the
 orthomosaic + spectral indices — combined with
 <code>fast_orthophoto = TRUE</code> this is the fastest path.</p></dd>
+
+
+<dt id="arg-pc-filter-pc-sample-pc-rectify">pc_filter, pc_sample, pc_rectify<a class="anchor" aria-label="anchor" href="#arg-pc-filter-pc-sample-pc-rectify"></a></dt>
+<dd><p>Point-cloud cleanup, as in
+<code><a href="build_odm_args.html">build_odm_args()</a></code>. They are applied to the RGB run, which is the one
+whose geometry the DEMs and the stacked orthomosaic inherit; the four MS
+runs contribute calibrated radiance only and already use
+<code>--fast-orthophoto</code>.</p></dd>
 
 
 <dt id="arg-fast-orthophoto">fast_orthophoto<a class="anchor" aria-label="anchor" href="#arg-fast-orthophoto"></a></dt>

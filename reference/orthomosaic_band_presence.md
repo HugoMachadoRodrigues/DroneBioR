@@ -40,6 +40,18 @@ indistinguishable by count.
 
 ``` r
 orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"))
+#> $bands
+#> [1] "Red"     "Green"   "Blue"    "NIR"     "RedEdge"
+#> 
+#> $has_blue
+#> [1] TRUE
+#> 
+#> $has_green
+#> [1] TRUE
+#> 
+#> $has_red
+#> [1] TRUE
+#> 
 #> $has_nir
 #> [1] TRUE
 #> 
@@ -50,6 +62,18 @@ orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"))
 #> [1] "name"
 #> 
 orthomosaic_band_presence(c("red", "green", "blue"), nlyr = 3)
+#> $bands
+#> [1] "Red"   "Green" "Blue" 
+#> 
+#> $has_blue
+#> [1] TRUE
+#> 
+#> $has_green
+#> [1] TRUE
+#> 
+#> $has_red
+#> [1] TRUE
+#> 
 #> $has_nir
 #> [1] FALSE
 #> 
@@ -57,6 +81,6 @@ orthomosaic_band_presence(c("red", "green", "blue"), nlyr = 3)
 #> [1] FALSE
 #> 
 #> $by
-#> [1] "count"
+#> [1] "name"
 #> 
 ```
