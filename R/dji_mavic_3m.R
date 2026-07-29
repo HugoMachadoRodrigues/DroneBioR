@@ -232,6 +232,7 @@ run_one_dji_band <- function(project,
                              pc_las       = FALSE,
                              skip_3dmodel = TRUE,
                              skip_report  = TRUE,
+                             end_with     = NULL,
                              use_ppk_mrk  = TRUE,
                              ppk_min_fix_quality = 4L,
                              ppk_cli      = "auto") {
@@ -379,6 +380,7 @@ run_one_dji_band <- function(project,
     pc_las          = is_rgb && isTRUE(pc_las),
     skip_3dmodel    = isTRUE(skip_3dmodel),
     skip_report     = isTRUE(skip_report),
+    end_with        = end_with,
     extra_args      = c(if (is_rgb) rgb_extra_args else ms_extra_args,
                         ppk_geo_args, boundary_args)
   )

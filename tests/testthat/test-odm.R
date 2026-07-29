@@ -305,3 +305,33 @@ test_that("the DJI runner threads the point-cloud settings to the RGB run", {
   b <- names(formals(DroneBioR:::run_one_dji_band))
   expect_true(all(c("pc_filter", "pc_sample", "pc_rectify") %in% b))
 })
+
+test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run", {
+  # run_odm_project() would read the folder with list_micasense_images(), which
+  # rejects DJI_..._MS_NIR.TIF for not matching capture_band.tif. The geometry
+  # of a Mavic 3M flight comes from its RGB sub-run, so that is what stage 0
+  # takes to odm_filterpoints.
+  dir <- tempfile("djistage0-")
+  p <- dronebio_project(dir, images_subdir = "imgs")
+  dir.create(p$images_dir, recursive = TRUE)
+  for (f in c("DJI_20260501132033_0001_D.JPG",
+              "DJI_20260501132034_0002_MS_G.TIF",
+              "DJI_20260501132034_0002_MS_R.TIF",
+              "DJI_20260501132034_0002_MS_RE.TIF",
+              "DJI_20260501132034_0002_MS_NIR.TIF")) {
+    file.create(file.path(p$images_dir, f))
+  }
+  expect_true(has_djim3m_images(p$images_dir))
+
+  seen <- NULL
+  testthat::local_mocked_bindings(
+    run_one_dji_band = function(...) { seen <<- list(...); invisible(TRUE) },
+    run_odm_project = function(...) stop("must not take the MicaSense path")
+  )
+  res <- build_point_cloud_only(p, pc_quality = "low", pc_filter = 1.5)
+  expect_equal(seen$band, "RGB")
+  expect_equal(seen$end_with, "odm_filterpoints")
+  expect_false(seen$fast_orthophoto)
+  expect_equal(seen$pc_filter, 1.5)
+  expect_equal(res$camera, "dji_mavic_3m")
+})
