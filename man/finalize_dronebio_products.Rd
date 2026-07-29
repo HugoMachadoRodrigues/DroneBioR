@@ -12,7 +12,8 @@ finalize_dronebio_products(
   out_dir = NULL,
   extra_metadata = list(),
   remove_scaffolding = TRUE,
-  expect = character()
+  expect = character(),
+  products = names(finalize_product_dests())
 )
 }
 \arguments{
@@ -38,7 +39,16 @@ intermediate tree after the products are copied out.}
 caller knows it asked for (e.g. \code{c("spectral_indices", "biomass_proxy")} when indices were requested). Any of these whose
 source file is missing trigger a warning, so an incomplete
 \verb{products/} folder (e.g. indices that crashed before being written)
-is never shipped silently. Default \code{character()} warns about nothing.}
+is never shipped silently. Default \code{character()} warns about nothing.
+Products that exist on disk but are not collected warn regardless of
+\code{expect} — see the disk-space section.}
+
+\item{products}{Character vector of product keys to collect, from
+\code{\link[=odm_product_paths]{odm_product_paths()}} plus \code{"spectral_indices"} and
+\code{"biomass_proxy"}. Defaults to all of them. Narrow it when disk
+space is tight and you do not need, say, the redundant point-cloud
+formats; anything you drop that exists on disk is reported and stops
+the scaffolding from being removed.}
 }
 \value{
 Invisibly, a named character vector of the final product
@@ -53,19 +63,43 @@ usually want just the handful of products you will actually reuse,
 in one place, with a machine-readable description.
 }
 \details{
-This copies the final products into \code{out_dir} under simple names —
-\code{orthomosaic.tif}, \code{dsm.tif}, \code{dtm.tif}, \code{chm.tif},
-\code{spectral_indices.tif}, \code{biomass_proxy.tif} — writes a single
-\code{metadata.json} (run parameters plus, per raster, the CRS,
-resolution, extent, band names and per-band min/mean/max), and —
+This copies every product \code{\link[=odm_product_paths]{odm_product_paths()}} resolves into
+\code{out_dir} under simple names — the rasters as \code{orthomosaic.tif},
+\code{dsm.tif}, \code{dtm.tif}, \code{chm.tif}, \code{dtm_csf.tif}, \code{chm_csf.tif},
+\code{spectral_indices.tif} and \code{biomass_proxy.tif}; the 3D deliverables as
+\code{point_cloud.copc.laz} / \code{.laz} / \code{.las} / \code{.ply}, \code{mesh.ply},
+\code{textured_model.glb} (plus the \verb{_25d} variants) and \code{report.pdf} —
+writes a single \code{metadata.json} (run parameters plus, per raster, the
+CRS, resolution, extent, band names and per-band min/mean/max), and —
 unless \code{remove_scaffolding = FALSE} — deletes the ODM scaffolding,
 the raw DEM backups, the RGB-only ortho, the reflectance stack and
 the logs, leaving only \code{out_dir}.
+
+Multi-file products are copied as folders rather than flattened,
+because their internal references are by bare filename and would break
+otherwise: the textured OBJ lands in \verb{textured_model/} alongside its
+\code{.mtl} and texture images under their original names, and the tile sets
+land whole in \verb{3d_tiles/} and \verb{orthomosaic_tiles/}.
 }
+\section{Disk space and the no-loss guarantee}{
+
+The point clouds and textured meshes are by far the largest files a run
+produces — several GB is routine — and they are copied, not moved, so
+\code{out_dir} needs as much free space as the products themselves before
+the scaffolding goes away. Every copy is size-checked afterwards, and
+if any of them fails, or if \code{products} excludes something that is on
+disk, the scaffolding is \strong{kept} and a warning is raised. Nothing is
+deleted on the strength of a copy that did not land.
+}
+
 \examples{
 \dontrun{
   res <- run_odm_dji_mavic_3m(project)
   wf  <- run_dronebio_workflow(project, res$stacked_orthomosaic)
   finalize_dronebio_products(project, extra_metadata = list(flight = "f1"))
+  # Rasters and the COPC cloud only, skipping the redundant LAS/LAZ/PLY:
+  finalize_dronebio_products(project,
+                             products = c("orthomosaic", "dsm", "dtm", "chm",
+                                          "point_cloud_copc", "textured_glb"))
 }
 }
