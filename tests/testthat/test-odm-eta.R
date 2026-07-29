@@ -111,16 +111,81 @@ test_that("estimate_remaining_seconds subtracts elapsed from the active stage", 
   })
 })
 
-test_that("estimate_remaining_seconds clamps active elapsed at 0 when overshooting", {
+test_that("an overrunning active stage still reports time remaining", {
   with_fake_home({
     DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 1000)
     rem <- DroneBioR:::estimate_remaining_seconds(
       active_stage           = "opensfm",
       pending_stages         = character(),
-      active_elapsed_seconds = 5000,  # already past estimate
+      active_elapsed_seconds = 5000,  # already past the 1000s estimate
       image_count            = 100L
     )
-    expect_equal(rem, 0)
+    # Assumed half-done, so expect as much again rather than the old 0.
+    expect_equal(rem, 5000)
+  })
+})
+
+test_that("an overrun carries its slowdown over to the pending stages", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 1000)
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 500)
+    # opensfm at 4000s against a 1000s estimate: this run is 4x slower than
+    # history predicts, so the 500s openmvs estimate should be read as 2000s.
+    rem <- DroneBioR:::estimate_remaining_seconds(
+      active_stage           = "opensfm",
+      pending_stages         = "openmvs",
+      active_elapsed_seconds = 4000,
+      image_count            = 100L
+    )
+    expect_equal(rem, 4000 + 500 * 4)
+  })
+})
+
+test_that("the ETA grows while a stage keeps overrunning", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 1000)
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 500)
+    at <- function(elapsed) {
+      DroneBioR:::estimate_remaining_seconds(
+        active_stage = "opensfm", pending_stages = "openmvs",
+        active_elapsed_seconds = elapsed, image_count = 100L
+      )
+    }
+    # Inside the estimate it still counts down; past it, it must not flatline.
+    expect_lt(at(900), at(100))
+    expect_gt(at(4000), at(2000))
+  })
+})
+
+test_that("a sub-second baseline stage cannot inflate the tail", {
+  with_fake_home({
+    # odm_report medians are a fraction of a second in real histories; a few
+    # seconds of runtime must not become a 100x multiplier on what follows.
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "odm_report", 0.02)
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "odm_postprocess", 30)
+    rem <- DroneBioR:::estimate_remaining_seconds(
+      active_stage           = "odm_report",
+      pending_stages         = "odm_postprocess",
+      active_elapsed_seconds = 5,
+      image_count            = 100L
+    )
+    # Pending stays unscaled (30); only the active stage's own tail is added.
+    expect_equal(rem, 5 + 30)
+  })
+})
+
+test_that("the carried-over slowdown is capped", {
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "opensfm", 100)
+    DroneBioR:::record_odm_stage_completion("run-1", 100L, "openmvs", 10)
+    # 100x over the estimate, but the multiplier on pending is capped at 20.
+    rem <- DroneBioR:::estimate_remaining_seconds(
+      active_stage           = "opensfm",
+      pending_stages         = "openmvs",
+      active_elapsed_seconds = 10000,
+      image_count            = 100L
+    )
+    expect_equal(rem, 10000 + 10 * 20)
   })
 })
 
