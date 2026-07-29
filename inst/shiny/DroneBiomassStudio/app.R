@@ -5444,16 +5444,23 @@ server <- function(input, output, session) {
     hdr <- raster_header(path, progress_msg = "Reading orthomosaic band count")
     if (is.null(hdr)) return(NULL)
     b <- orthomosaic_band_presence(hdr$lyr_names %||% character(), nlyr = hdr$nlyr)
-    list(nlyr = hdr$nlyr, has_nir = b$has_nir, has_re = b$has_rededge)
+    c(list(nlyr = hdr$nlyr), b)
   })
   available_overlays <- reactive({
     bands <- overlay_orthomosaic_bands()
     # First pass: spectral filtering by band requirements.
     candidates <- if (is.null(bands)) overlay_choices else {
+      # Check EVERY band a layer declares, not just NIR / RedEdge. The DJI
+      # Mavic 3M has no blue multispectral band, so EVI used to be offered on
+      # a DJI stack and then fail to compute -- available in the list, absent
+      # from the result.
+      have <- c(Blue = isTRUE(bands$has_blue), Green = isTRUE(bands$has_green),
+                Red = isTRUE(bands$has_red), NIR = isTRUE(bands$has_nir),
+                RedEdge = isTRUE(bands$has_rededge))
       keep <- vapply(overlay_choices, function(layer) {
         req_bands <- overlay_band_requirements[[layer]] %||% character()
-        (!("NIR" %in% req_bands)     || isTRUE(bands$has_nir)) &&
-        (!("RedEdge" %in% req_bands) || isTRUE(bands$has_re))
+        req_bands <- intersect(req_bands, names(have))
+        !length(req_bands) || all(have[req_bands])
       }, logical(1))
       overlay_choices[keep]
     }

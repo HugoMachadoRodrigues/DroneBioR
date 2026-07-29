@@ -80,6 +80,7 @@ reference:
       - default_rgb_band_map
       - default_dji_mavic_3m_band_map
       - orthomosaic_band_presence
+      - canonical_band_names
       - scale_to_reflectance
       - summarize_spatraster
       - write_dronebio_rasters

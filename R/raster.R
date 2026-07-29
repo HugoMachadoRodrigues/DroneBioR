@@ -35,6 +35,15 @@ default_rgb_band_map <- function() {
 #' @return Named integer vector with `Green`, `Red`, `RedEdge`, `NIR`.
 #' @export
 default_dji_mavic_3m_band_map <- function() {
+  # Layers 1-3 are the RGB camera; 4-7 the calibrated multispectral set.
+  # Green and Red come from the MS bands, never the RGB camera, because only
+  # those carry the sun-sensor radiometric calibration the indices assume.
+  #
+  # Blue is deliberately absent: the Mavic 3M has no blue MS band, and the RGB
+  # camera's blue is not comparable to the calibrated bands. Including it would
+  # make EVI / VARI / ExG / GLI / TGI / RGBVI compute a number that looks like
+  # the index but is not, so those six stay unavailable and the honest 16
+  # remain. Callers who accept the caveat can pass an explicit band_map.
   c(Green = 4, Red = 5, RedEdge = 6, NIR = 7)
 }
 
@@ -282,14 +291,83 @@ orthomosaic_band_presence <- function(x, nlyr = NULL) {
     if (is.null(nlyr)) nlyr <- terra::nlyr(x)
     x <- names(x)
   }
-  nm <- tolower(gsub("[^A-Za-z]", "", as.character(x %||% character())))
-  has_nir <- any(nm == "nir") || any(grepl("nearinfra", nm, fixed = TRUE))
-  has_re  <- any(nm %in% c("rededge", "re")) ||
-             any(grepl("rededge", nm, fixed = TRUE))
-  if (has_nir || has_re) {
-    return(list(has_nir = has_nir, has_rededge = has_re, by = "name"))
+  canon <- canonical_band_names(x)
+  named <- canon[!is.na(canon)]
+  if (length(named)) {
+    present <- unique(named)
+    # A stack that carries BOTH an uncalibrated RGB triplet and a calibrated
+    # multispectral set repeats some canonical names (the DJI Mavic 3M's
+    # Red/Green appear twice). There the MS set is what the indices use, so a
+    # band that exists only in the RGB triplet -- Blue on a Mavic 3M -- is not
+    # actually available to them, and reporting it would offer EVI in the UI
+    # only for it to be absent from the result.
+    if (anyDuplicated(named)) {
+      rgb_only <- setdiff(present, unique(named[duplicated(named)]))
+      present <- setdiff(present, intersect(rgb_only, "Blue"))
+    }
+    return(list(
+      bands       = present,
+      has_blue    = "Blue"    %in% present,
+      has_green   = "Green"   %in% present,
+      has_red     = "Red"     %in% present,
+      has_nir     = "NIR"     %in% present,
+      has_rededge = "RedEdge" %in% present,
+      by          = "name"
+    ))
   }
-  # No band names to go on: >4 layers is the weaker legacy proxy.
+  # Nothing recognisable to go on: >4 layers is the weak legacy proxy for a
+  # multispectral file, and it cannot say which bands those layers are.
   proxy <- isTRUE(as.integer(nlyr %||% NA_integer_) > 4L)
-  list(has_nir = proxy, has_rededge = proxy, by = "count")
+  list(
+    bands       = character(),
+    has_blue    = proxy, has_green = proxy, has_red = proxy,
+    has_nir     = proxy, has_rededge = proxy,
+    by          = "count"
+  )
+}
+
+#' Canonical band names from whatever a raster calls its layers
+#'
+#' Maps layer names to the canonical `Blue` / `Green` / `Red` / `RedEdge` /
+#' `NIR` used throughout the package, so band detection does not depend on one
+#' vendor's spelling. Recognises the common forms seen in the wild:
+#' MicaSense (`Red`, `Rededge`, `NIR`), the DJI Mavic 3M stack (`MS_R`,
+#' `MS_RE`, `MS_NIR`), Parrot Sequoia (`red`, `red_edge`, `nir`), plain
+#' one-letter names, and `band_*` / `b*` prefixes.
+#'
+#' Order matters and the rules are deliberately specific-first: `RE` and
+#' `rededge` must win over `red`, and `NIR` over `N`, or a red-edge layer gets
+#' silently filed as red and every index built on it is quietly wrong.
+#'
+#' Anything unrecognised returns `NA`, which callers should treat as "this band
+#' is absent" rather than guessing.
+#'
+#' @param x Character vector of layer names, or a `SpatRaster`.
+#' @return A character vector the same length as `x`, holding canonical names
+#'   or `NA`.
+#' @examples
+#' canonical_band_names(c("Red", "Green", "Blue", "MS_RE", "MS_NIR"))
+#' canonical_band_names(c("b1", "b2", "b3"))
+#' @export
+canonical_band_names <- function(x) {
+  if (inherits(x, "SpatRaster")) x <- names(x)
+  raw <- as.character(x %||% character())
+  # Normalise separators and case, then drop a leading vendor prefix so
+  # "MS_NIR", "band_nir" and "nir" collapse to the same token.
+  key <- tolower(gsub("[^A-Za-z0-9]", "", raw))
+  key <- sub("^(ms|band|bnd)", "", key)
+
+  rules <- list(
+    RedEdge = "^(rededge|redege|re|edge|rededge1|reg)$",
+    NIR     = "^(nir|nearinfrared|nearir|infrared|n)$",
+    Blue    = "^(blue|blu|b)$",
+    Green   = "^(green|grn|g)$",
+    Red     = "^(red|r)$"
+  )
+  out <- rep(NA_character_, length(key))
+  for (nm in names(rules)) {
+    hit <- is.na(out) & grepl(rules[[nm]], key)
+    out[hit] <- nm
+  }
+  out
 }
