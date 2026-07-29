@@ -51,9 +51,9 @@ proxy <- compute_biomass_proxy(ix)
 out <- tempfile("dronebior-rasters-")
 write_dronebio_rasters(out, refl, ix, proxy)
 #>                                                              reflectance 
-#>   "/tmp/Rtmphv6WBJ/dronebior-rasters-228c1b5053ae/reflectance_bands.tif" 
+#>   "/tmp/RtmpC065jB/dronebior-rasters-224c7e62c4c6/reflectance_bands.tif" 
 #>                                                                  indices 
-#>    "/tmp/Rtmphv6WBJ/dronebior-rasters-228c1b5053ae/spectral_indices.tif" 
+#>    "/tmp/RtmpC065jB/dronebior-rasters-224c7e62c4c6/spectral_indices.tif" 
 #>                                                            biomass_proxy 
-#> "/tmp/Rtmphv6WBJ/dronebior-rasters-228c1b5053ae/biomass_index_proxy.tif" 
+#> "/tmp/RtmpC065jB/dronebior-rasters-224c7e62c4c6/biomass_index_proxy.tif" 
 ```
