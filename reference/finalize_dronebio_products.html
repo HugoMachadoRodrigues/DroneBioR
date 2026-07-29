@@ -69,7 +69,8 @@ in one place, with a machine-readable description.</p>
 <span>  out_dir <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  extra_metadata <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  remove_scaffolding <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  expect <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/character.html" class="external-link">character</a></span><span class="op">(</span><span class="op">)</span></span>
+<span>  expect <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/character.html" class="external-link">character</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  products <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="fu">finalize_product_dests</span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -112,7 +113,18 @@ intermediate tree after the products are copied out.</p></dd>
 caller knows it asked for (e.g. <code>c("spectral_indices", "biomass_proxy")</code> when indices were requested). Any of these whose
 source file is missing trigger a warning, so an incomplete
 <code>products/</code> folder (e.g. indices that crashed before being written)
-is never shipped silently. Default <code><a href="https://rdrr.io/r/base/character.html" class="external-link">character()</a></code> warns about nothing.</p></dd>
+is never shipped silently. Default <code><a href="https://rdrr.io/r/base/character.html" class="external-link">character()</a></code> warns about nothing.
+Products that exist on disk but are not collected warn regardless of
+<code>expect</code> — see the disk-space section.</p></dd>
+
+
+<dt id="arg-products">products<a class="anchor" aria-label="anchor" href="#arg-products"></a></dt>
+<dd><p>Character vector of product keys to collect, from
+<code><a href="odm_product_paths.html">odm_product_paths()</a></code> plus <code>"spectral_indices"</code> and
+<code>"biomass_proxy"</code>. Defaults to all of them. Narrow it when disk
+space is tight and you do not need, say, the redundant point-cloud
+formats; anything you drop that exists on disk is reported and stops
+the scaffolding from being removed.</p></dd>
 
 </dl></div>
     <div class="section level2">
@@ -122,14 +134,34 @@ paths in <code>out_dir</code>.</p>
     </div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p>This copies the final products into <code>out_dir</code> under simple names —
-<code>orthomosaic.tif</code>, <code>dsm.tif</code>, <code>dtm.tif</code>, <code>chm.tif</code>,
-<code>spectral_indices.tif</code>, <code>biomass_proxy.tif</code> — writes a single
-<code>metadata.json</code> (run parameters plus, per raster, the CRS,
-resolution, extent, band names and per-band min/mean/max), and —
+    <p>This copies every product <code><a href="odm_product_paths.html">odm_product_paths()</a></code> resolves into
+<code>out_dir</code> under simple names — the rasters as <code>orthomosaic.tif</code>,
+<code>dsm.tif</code>, <code>dtm.tif</code>, <code>chm.tif</code>, <code>dtm_csf.tif</code>, <code>chm_csf.tif</code>,
+<code>spectral_indices.tif</code> and <code>biomass_proxy.tif</code>; the 3D deliverables as
+<code>point_cloud.copc.laz</code> / <code>.laz</code> / <code>.las</code> / <code>.ply</code>, <code>mesh.ply</code>,
+<code>textured_model.glb</code> (plus the <code>_25d</code> variants) and <code>report.pdf</code> —
+writes a single <code>metadata.json</code> (run parameters plus, per raster, the
+CRS, resolution, extent, band names and per-band min/mean/max), and —
 unless <code>remove_scaffolding = FALSE</code> — deletes the ODM scaffolding,
 the raw DEM backups, the RGB-only ortho, the reflectance stack and
 the logs, leaving only <code>out_dir</code>.</p>
+<p>Multi-file products are copied as folders rather than flattened,
+because their internal references are by bare filename and would break
+otherwise: the textured OBJ lands in <code>textured_model/</code> alongside its
+<code>.mtl</code> and texture images under their original names, and the tile sets
+land whole in <code>3d_tiles/</code> and <code>orthomosaic_tiles/</code>.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="disk-space-and-the-no-loss-guarantee">Disk space and the no-loss guarantee<a class="anchor" aria-label="anchor" href="#disk-space-and-the-no-loss-guarantee"></a></h2>
+
+
+<p>The point clouds and textured meshes are by far the largest files a run
+produces — several GB is routine — and they are copied, not moved, so
+<code>out_dir</code> needs as much free space as the products themselves before
+the scaffolding goes away. Every copy is size-checked afterwards, and
+if any of them fails, or if <code>products</code> excludes something that is on
+disk, the scaffolding is <strong>kept</strong> and a warning is raised. Nothing is
+deleted on the strength of a copy that did not land.</p>
     </div>
 
     <div class="section level2">
@@ -138,6 +170,10 @@ the logs, leaving only <code>out_dir</code>.</p>
 <span class="r-in"><span>  <span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="run_odm_dji_mavic_3m.html">run_odm_dji_mavic_3m</a></span><span class="op">(</span><span class="va">project</span><span class="op">)</span></span></span>
 <span class="r-in"><span>  <span class="va">wf</span>  <span class="op">&lt;-</span> <span class="fu"><a href="run_dronebio_workflow.html">run_dronebio_workflow</a></span><span class="op">(</span><span class="va">project</span>, <span class="va">res</span><span class="op">$</span><span class="va">stacked_orthomosaic</span><span class="op">)</span></span></span>
 <span class="r-in"><span>  <span class="fu">finalize_dronebio_products</span><span class="op">(</span><span class="va">project</span>, extra_metadata <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>flight <span class="op">=</span> <span class="st">"f1"</span><span class="op">)</span><span class="op">)</span></span></span>
+<span class="r-in"><span>  <span class="co"># Rasters and the COPC cloud only, skipping the redundant LAS/LAZ/PLY:</span></span></span>
+<span class="r-in"><span>  <span class="fu">finalize_dronebio_products</span><span class="op">(</span><span class="va">project</span>,</span></span>
+<span class="r-in"><span>                             products <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"orthomosaic"</span>, <span class="st">"dsm"</span>, <span class="st">"dtm"</span>, <span class="st">"chm"</span>,</span></span>
+<span class="r-in"><span>                                          <span class="st">"point_cloud_copc"</span>, <span class="st">"textured_glb"</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
 </code></pre></div>
     </div>

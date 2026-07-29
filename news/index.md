@@ -78,6 +78,48 @@
   [`tryCatch()`](https://rdrr.io/r/base/conditions.html) swallowed and
   reported as a missing CHM.
 
+- **[`finalize_dronebio_products()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/finalize_dronebio_products.md)
+  no longer destroys the point clouds and 3D models.** It copied out
+  only the rasters — orthomosaic, DSM, DTM, CHM and the computed indices
+  / biomass proxy — and then, with the default
+  `remove_scaffolding = TRUE`, deleted the whole ODM tree. Everything
+  else went with it: on a real 11-product project that was the 1.1 GB
+  LAS, the LAZ and COPC clouds, the 883 MB filtered PLY, the 2.5D mesh,
+  and both textured models including the 314 MB GLB the Shiny app’s “3D
+  Modeling” tab loads.
+  [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/odm_product_paths.md)
+  had resolved every one of them all along; finalize just never copied
+  them. It now collects every product that function resolves, under
+  names that keep the real extension (`point_cloud.copc.laz` — a
+  two-part extension
+  [`tools::file_ext()`](https://rdrr.io/r/tools/fileutils.html) cannot
+  round-trip — plus `point_cloud.laz` / `.las` / `.ply`, `mesh.ply`,
+  `textured_model.glb`, `report.pdf`, and the CSF terrain rasters).
+  Multi-file products travel as folders rather than being flattened,
+  because their internal references are by bare filename: the textured
+  OBJ lands in `textured_model/` with its `.mtl` and all 44 texture PNGs
+  under their original names, so `mtllib` still resolves and the Shiny
+  3D tab’s “serve the OBJ’s folder, probe for `<stem>.mtl`” layout still
+  holds, and the 3D / map tile sets are copied whole (a `tileset.json`
+  alone indexes payload that would no longer exist).
+
+- **[`finalize_dronebio_products()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/finalize_dronebio_products.md)
+  never deletes a source on the strength of a copy that did not land.**
+  Every copy is size-checked afterwards —
+  [`file.copy()`](https://rdrr.io/r/base/files.html) returning `TRUE` is
+  not proof on a full disk or a stalled cloud-sync folder, and this
+  function’s next act is
+  [`unlink()`](https://rdrr.io/r/base/unlink.html). If any copy fails,
+  or if the new `products` argument excludes something that is on disk,
+  the scaffolding is kept and a warning names what was at risk. The
+  scaffolding sweep also skips any directory containing `out_dir`,
+  instead of only one equal to it. Since the 3D deliverables are the
+  biggest files a run makes (about 10 GB for the project above, copied
+  rather than moved), `products` lets you narrow the set when space is
+  tight; anything you drop that exists still blocks the delete.
+  `metadata.json` now inventories the non-raster products too, sizing
+  folder assets by the folder.
+
 - **The ODM stage history no longer mixes RGB and multispectral runs.**
   Stage durations were pooled across every past run and scaled linearly
   by image count, so a 39-image multispectral run estimated against a
