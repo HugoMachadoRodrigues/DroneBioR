@@ -78,6 +78,29 @@ test_that("no observer guards its inputs with validate()", {
   expect_equal(offenders, character())
 })
 
+test_that("the point-cloud reconstruction controls are not duplicated", {
+  # The outlier filter and ground-rectify used to exist twice: once on the
+  # Point Cloud tab (pc_filter_stage0 / pc_rectify_stage0) and once on the
+  # Processing Engine tab (pc_filter / pc_rectify), as independent inputs that
+  # drifted apart. The Point Cloud tab is the single source of truth now.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+
+  # No widget defines the old duplicate ids.
+  expect_false(grepl('(slider|checkbox|numeric|select)Input\\(\\s*"pc_filter"',
+                     src))
+  expect_false(grepl('(slider|checkbox|numeric|select)Input\\(\\s*"pc_rectify"',
+                     src))
+  # The _stage0 inputs still exist exactly once each.
+  expect_equal(length(gregexpr('sliderInput\\("pc_filter_stage0"', src)[[1L]]), 1L)
+  expect_equal(length(gregexpr('checkboxInput\\("pc_rectify_stage0"', src)[[1L]]), 1L)
+  # Nothing reads the removed ids any more (word boundary excludes _stage0).
+  expect_false(grepl("input\\$pc_filter\\b(?!_)", src, perl = TRUE))
+  expect_false(grepl("input\\$pc_rectify\\b(?!_)", src, perl = TRUE))
+})
+
 test_that("literal sprintf formats match their argument count", {
   # Splitting a long format across string literals and forgetting paste0()
   # leaves sprintf() with the first fragment as the format and the rest as

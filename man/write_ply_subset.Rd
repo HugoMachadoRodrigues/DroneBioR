@@ -4,7 +4,14 @@
 \alias{write_ply_subset}
 \title{Write a filtered copy of a binary PLY, preserving its exact vertex layout}
 \usage{
-write_ply_subset(path, out_path, keep, backup = TRUE, chunk_size = 500000L)
+write_ply_subset(
+  path,
+  out_path,
+  keep,
+  backup = TRUE,
+  backup_path = NULL,
+  chunk_size = 500000L
+)
 }
 \arguments{
 \item{path}{Source \code{.ply}.}
@@ -17,9 +24,14 @@ makes that safe.}
 indices of the vertices to keep (1-based, as \code{point_id} reports them).}
 
 \item{backup}{When \code{TRUE} (the default) and \code{out_path} is the same file as
-\code{path}, the original is copied to \verb{<path>.orig} first, unless that copy
-already exists -- so the very first edit is always recoverable and later
-edits never overwrite that safety net.}
+\code{path}, the original is snapshotted first, unless that snapshot already
+exists -- so the very first edit is always recoverable and later edits
+never overwrite that safety net.}
+
+\item{backup_path}{Where to write that snapshot. \code{NULL} (the default) keeps
+the historical \verb{<path>.orig}; pass an explicit path (for example
+\code{point_cloud.original.ply} beside the cloud) to keep a visible, named copy
+of the untouched reconstruction instead of a hidden dotfile.}
 
 \item{chunk_size}{Vertices per streamed chunk.}
 }

@@ -170,6 +170,39 @@ test_that("editing in place keeps one recoverable original", {
   expect_equal(parse_ply_header(p)$n_vertices, 3L)
 })
 
+test_that("backup_path keeps a named, visible snapshot of the original", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 10L)
+  before <- file.size(p)
+  snap <- sub("\\.ply$", ".original.ply", p)
+
+  write_ply_subset(p, p, keep = 1:6, backup = TRUE, backup_path = snap)
+  # The snapshot is the named file, not the .orig dotfile.
+  expect_true(file.exists(snap))
+  expect_false(file.exists(paste0(p, ".orig")))
+  expect_equal(file.size(snap), before)
+  expect_equal(parse_ply_header(snap)$n_vertices, 10L)
+  expect_equal(parse_ply_header(p)$n_vertices, 6L)
+
+  # A second edit must not refresh the snapshot: it captures the cloud as it
+  # stood before the FIRST edit, so it stays restorable to the pristine state.
+  write_ply_subset(p, p, keep = 1:3, backup = TRUE, backup_path = snap)
+  expect_equal(parse_ply_header(snap)$n_vertices, 10L)
+  expect_equal(parse_ply_header(p)$n_vertices, 3L)
+
+  # And it must be byte-identical to the untouched original.
+  orig2 <- tempfile(fileext = ".ply"); .mk_ply(orig2, n = 10L)
+  expect_equal(readBin(snap, "raw", n = file.size(snap) + 1L),
+               readBin(orig2, "raw", n = file.size(orig2) + 1L))
+})
+
+test_that("backup_path refuses to be the file being written", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 8L)
+  expect_error(
+    write_ply_subset(p, p, keep = 1:4, backup = TRUE, backup_path = p),
+    "cannot be the file"
+  )
+})
+
 test_that("a uint32 property is read without a readBin warning", {
   # readBin only allows signed = FALSE for 1- and 2-byte integers; passing it
   # for a uint32 warns on every single call.
