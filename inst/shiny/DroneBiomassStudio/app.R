@@ -12753,7 +12753,19 @@ server <- function(input, output, session) {
                     detail = "first use only",
                     caret_model_catalogue("Regression", installed = installed))
     })
-    caret_catalogue_val(cat_df %||% data.frame())
+    # Storing an empty frame on failure would latch: the early return above
+    # sees a non-NULL value and never retries, so one transient error leaves
+    # both the Family and the caret-method pickers empty for the rest of the
+    # session with no way back. Leave the value NULL so reopening the panel
+    # tries again, and say what happened.
+    if (is.null(cat_df) || !nrow(cat_df)) {
+      caret_catalogue_val(NULL)
+      showNotification(
+        "Could not read caret's model list. Reopen the Model panel to retry.",
+        type = "warning", duration = 8)
+      return(invisible(NULL))
+    }
+    caret_catalogue_val(cat_df)
     invisible(NULL)
   }
 
