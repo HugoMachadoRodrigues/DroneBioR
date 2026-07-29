@@ -15,9 +15,23 @@
   direction. Histories written before this change have no `camera` column; the
   column is added as `NA` on read, so those runs stay usable as the unlabelled
   tier and estimates are unchanged until the first labelled run is recorded.
-  The camera is taken from `camera_type` in `run_odm_project()`, from the
+  The camera is taken from the sensor `run_odm_project()` detects, from the
   per-band label in the DJI Mavic 3M runner (`"RGB"`, `"MS_NIR"`, …), and from
   the camera selector in the Shiny app, pinned at run discovery.
+
+* **A MicaSense set and a DJI Mavic 3M flight no longer share a stage
+  history.** Both are "multispectral", so the tiers above pooled them — and
+  their per-image cost is not comparable. On a 210-image MicaSense dataset
+  whose `opensfm` takes about 90 seconds, history rows from 39-image DJI runs
+  scaled linearly to 3.5 hours, and the run was quoted `5h 23m remaining`
+  against a real cost near 90 seconds. `normalize_camera_type()` now resolves
+  the sensor model (`"micasense"`, `"dji_mavic_3m"`, `"sequoia"`) rather than
+  the class, and only an exact-sensor match is borrowed. When no history exists
+  for the sensor, the fallback tier is rows that are genuinely ambiguous —
+  unlabelled, or carrying the bare class label of the same class — so a
+  MicaSense estimate can fall back on a generic multispectral run but never on
+  a DJI or an RGB one. Rows written with the previous coarse labels stay
+  usable in that ambiguous tier.
 
 * **The ODM progress ETA now corrects itself when a stage overruns.** The
   remaining time was the active stage's `max(0, estimate - elapsed)` plus the

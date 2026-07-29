@@ -394,7 +394,8 @@ run_one_dji_band <- function(project,
     args        = args,
     project_dir = band_proj,
     image_count = nrow(images_manifest),
-    band_label  = band
+    band_label  = band,
+    camera      = "dji_mavic_3m"
   )
 
   # exifread / DJI MakerNote crash: ODM dies in the `dataset` stage
@@ -417,7 +418,8 @@ run_one_dji_band <- function(project,
         args        = args,
         project_dir = band_proj,
         image_count = nrow(images_manifest),
-        band_label  = paste0(band, "/exif-retry")
+        band_label  = paste0(band, "/exif-retry"),
+        camera      = "dji_mavic_3m"
       )
     } else {
       stop(sprintf(
@@ -465,7 +467,8 @@ run_one_dji_band <- function(project,
       args        = oom_retry_args,
       project_dir = band_proj,
       image_count = nrow(images_manifest),
-      band_label  = paste0(band, "/oom-retry")
+      band_label  = paste0(band, "/oom-retry"),
+      camera      = "dji_mavic_3m"
     )
   }
 
@@ -496,7 +499,8 @@ run_one_dji_band <- function(project,
         args        = retry_args,
         project_dir = band_proj,
         image_count = nrow(images_manifest),
-        band_label  = paste0(band, "/retry")
+        band_label  = paste0(band, "/retry"),
+        camera      = "dji_mavic_3m"
       )
     }
   }
@@ -699,7 +703,8 @@ run_dji_ms_multispectral <- function(project,
   message("[MS] running ODM multispectral (all 4 bands, one reconstruction)...")
   status <- run_docker_with_progress(args = args, project_dir = band_proj,
                                      image_count = nrow(ms_manifest),
-                                     band_label = "MS")
+                                     band_label = "MS",
+                                     camera = "dji_mavic_3m")
 
   if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
     message("[MS] exit 137 - retrying once with --max-concurrency 1 --feature-quality medium...")

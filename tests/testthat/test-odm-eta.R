@@ -366,3 +366,63 @@ test_that("active-run record honours max_age_hours gating", {
     expect_false(is.null(DroneBioR:::read_active_run_record(max_age_hours = 200)))
   })
 })
+
+test_that("normalize_camera_type identifies the sensor, not just the class", {
+  n <- DroneBioR:::normalize_camera_type
+  expect_equal(n("dji_mavic_3m"), "dji_mavic_3m")
+  expect_equal(n("DJI Mavic 3M"), "dji_mavic_3m")
+  expect_equal(n("micasense"), "micasense")
+  expect_equal(n("RedEdge-MX"), "micasense")
+  expect_equal(n("Parrot Sequoia"), "sequoia")
+  # The coarse labels still parse, for callers that genuinely do not know.
+  expect_equal(n("multispectral"), "multispectral")
+  expect_equal(n("MS_NIR"), "multispectral")
+  expect_equal(n("rgb"), "rgb")
+  expect_true(is.na(n("oom-retry")))
+})
+
+test_that("estimates never borrow across sensor models", {
+  # Measured on this project: a 210-image MicaSense opensfm took ~70 s while a
+  # 39-image DJI Mavic 3M one took 39 min. Sharing history between them made a
+  # MicaSense run estimate 3.5 hours -- out by about 200x.
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("dji-1", 39L, "opensfm", 2338,
+                                            camera = "dji_mavic_3m")
+    # No MicaSense rows yet: must not fall back to the DJI ones.
+    est_mica <- DroneBioR:::estimate_odm_stage_seconds("opensfm", 210L,
+                                                       camera = "micasense")
+    baseline <- unname(DroneBioR:::odm_stage_baseline_seconds()["opensfm"])
+    expect_equal(est_mica, baseline)
+
+    DroneBioR:::record_odm_stage_completion("mica-1", 210L, "opensfm", 91,
+                                            camera = "micasense")
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm", 210L,
+                                                        camera = "micasense"), 91)
+    # And the DJI estimate is untouched by the MicaSense row.
+    expect_equal(DroneBioR:::estimate_odm_stage_seconds("opensfm", 39L,
+                                                        camera = "dji_mavic_3m"), 2338)
+  })
+})
+
+test_that("a coarse multispectral row is treated as unknown, not as a sensor", {
+  # It names a class, not a camera: a DJI run hiding under that label is
+  # exactly what produced the 200x overestimate.
+  with_fake_home({
+    DroneBioR:::record_odm_stage_completion("old-1", 39L, "opensfm", 2338,
+                                            camera = "multispectral")
+    DroneBioR:::record_odm_stage_completion("old-2", 39L, "opensfm", 2338)
+    # Both rows are ambiguous, so a micasense query sees them as the unlabelled
+    # pool rather than as same-sensor evidence.
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 39L, camera = "micasense"),
+      2338
+    )
+    # Once a real micasense row exists it wins outright.
+    DroneBioR:::record_odm_stage_completion("mica-1", 39L, "opensfm", 70,
+                                            camera = "micasense")
+    expect_equal(
+      DroneBioR:::estimate_odm_stage_seconds("opensfm", 39L, camera = "micasense"),
+      70
+    )
+  })
+})
