@@ -3661,6 +3661,26 @@ ui <- page_navbar(
                          class = "btn-outline-secondary w-100")
           ),
           accordion_panel(
+            "Clean the cloud (edits the PLY)",
+            div(class = "small text-muted mb-2",
+                "Select the bad points with box / lasso / polygon, then delete ",
+                "them from the file. Do this on ",
+                tags$code("odm_filterpoints/point_cloud.ply"),
+                " and rerun ODM from ", tags$code("odm_meshing"),
+                ": the mesh, texture, DEMs and orthophoto are then built from ",
+                "the cloud you cleaned, without redoing the reconstruction."),
+            textOutput("cloud_edit_status"),
+            actionButton("delete_selected_points",
+                         "Delete selected points from the PLY",
+                         class = "btn-outline-danger w-100 mt-2"),
+            actionButton("restore_cloud_backup",
+                         "Restore the original cloud",
+                         class = "btn-outline-secondary w-100 mt-2"),
+            div(class = "small text-muted mt-2",
+                "The first edit keeps an untouched copy as ",
+                tags$code("point_cloud.ply.orig"), ".")
+          ),
+          accordion_panel(
             "Tree detection",
             numericInput("tree_grid",
                          "Tree candidate grid size (m)",
@@ -9777,6 +9797,96 @@ server <- function(input, output, session) {
   observeEvent(input$clear_point_selection, {
     selected_ids_value(integer())
     showNotification("Selection cleared.", type = "message", duration = 3)
+  })
+
+  # --- Cloud editing -------------------------------------------------------
+  # The lasso already reports point_id values, which read_ply_point_cloud()
+  # defines as indices into the FULL cloud, not into the decimated preview.
+  # That is what makes deleting from the file safe: the preview can be 50k of
+  # 2.4M points and the right vertices still go.
+  cloud_edit_tick <- reactiveVal(0L)
+
+  output$cloud_edit_status <- renderText({
+    cloud_edit_tick()
+    p <- input$ply_path %||% ""
+    if (!nzchar(p) || !file.exists(p)) return("No PLY loaded.")
+    h <- tryCatch(parse_ply_header(p), error = function(e) NULL)
+    if (is.null(h)) return("This file is not a binary little-endian PLY.")
+    n_sel <- length(selected_ids_value() %||% integer())
+    sprintf("%s vertices in the file; %s selected.",
+            format(h$n_vertices, big.mark = ","), format(n_sel, big.mark = ","))
+  })
+
+  observeEvent(input$delete_selected_points, {
+    p <- input$ply_path %||% ""
+    ids <- unique(as.integer(selected_ids_value() %||% integer()))
+    validate(need(nzchar(p) && file.exists(p), "Load a PLY point cloud first."))
+    if (!length(ids)) {
+      showNotification("Select the points to delete first (box, lasso or polygon).",
+                       type = "warning", duration = 6)
+      return()
+    }
+    h <- tryCatch(parse_ply_header(p), error = function(e) NULL)
+    if (is.null(h)) {
+      showNotification("This file is not a binary little-endian PLY.",
+                       type = "error", duration = 8)
+      return()
+    }
+    # Deleting rewrites the file ODM will mesh from, so confirm with the count.
+    showModal(modalDialog(
+      title = "Delete points from the point cloud?",
+      p(sprintf("This removes %s of %s vertices from:",
+                format(length(ids), big.mark = ","),
+                format(h$n_vertices, big.mark = ","))),
+      tags$pre(p),
+      p("The file is rewritten in place. An untouched copy is kept as ",
+        tags$code(paste0(basename(p), ".orig")), " so this is reversible."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_delete_points", "Delete", class = "btn-danger")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$confirm_delete_points, {
+    removeModal()
+    with_error_toast("Delete points from the cloud", {
+      p <- input$ply_path
+      ids <- unique(as.integer(selected_ids_value() %||% integer()))
+      h <- parse_ply_header(p)
+      keep <- setdiff(seq_len(h$n_vertices), ids)
+      n <- with_gis_task(session, "Rewriting the point cloud",
+                         detail = sprintf("keeping %s vertices",
+                                          format(length(keep), big.mark = ",")),
+                         write_ply_subset(p, p, keep = keep, backup = TRUE))
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      # Re-point the input at itself so every reader of the cloud reloads.
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Deleted %s points; %s remain. Rerun ODM from odm_meshing to rebuild the products.",
+                format(length(ids), big.mark = ","), format(n, big.mark = ",")),
+        type = "message", duration = 12)
+    })
+  })
+
+  observeEvent(input$restore_cloud_backup, {
+    with_error_toast("Restore the original cloud", {
+      p <- input$ply_path %||% ""
+      orig <- paste0(p, ".orig")
+      validate(need(nzchar(p) && file.exists(orig),
+                    "There is no .orig backup beside this cloud."))
+      ok <- file.copy(orig, p, overwrite = TRUE)
+      if (!ok) stop("Could not copy the backup back over ", p, call. = FALSE)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Restored the original cloud (%s vertices).",
+                format(parse_ply_header(p)$n_vertices, big.mark = ",")),
+        type = "message", duration = 8)
+    })
   })
 
   # Surface the JS-detected coordinate-frame mismatch as a one-shot

@@ -522,3 +522,53 @@ refilter_odm_point_cloud <- function(project,
     ...
   )
 }
+
+#' Build the ODM products from an edited point cloud
+#'
+#' Reruns an existing ODM project from `odm_meshing`, so the mesh, texture,
+#' DEMs and orthophoto are rebuilt from whatever
+#' `odm_filterpoints/point_cloud.ply` currently holds -- including a cloud you
+#' cleaned by hand with [write_ply_subset()] or the app's 3D editor.
+#'
+#' This works because ODM hands that single file from `odm_filterpoints` to
+#' `odm_meshing`, and `odm_filterpoints` skips itself when the file already
+#' exists and it is not the stage being rerun. Starting at `odm_meshing`
+#' therefore leaves the edited cloud untouched, while `opensfm` and `openmvs`
+#' -- the bulk of the runtime -- are reused.
+#'
+#' @param project A `dronebio_project` with a finished (or at least
+#'   past-`odm_filterpoints`) run.
+#' @param ... Passed to [run_odm_project()], e.g. `build_dsm`, `build_dtm`,
+#'   `camera_type`.
+#' @return Invisibly, the list returned by [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' p <- dronebio_project("~/flights/2026-05-01")
+#' ply <- file.path(p$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+#' pc <- read_ply_point_cloud(ply, max_points = 5e5)
+#' keep <- setdiff(seq_len(parse_ply_header(ply)$n_vertices),
+#'                 pc$point_id[pc$z > quantile(pc$z, 0.999)])
+#' write_ply_subset(ply, ply, keep = keep)
+#' rebuild_from_edited_cloud(p, build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+rebuild_from_edited_cloud <- function(project, ...) {
+  ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  if (!file.exists(ply)) {
+    stop("No filtered point cloud at ", ply,
+         ": run the pipeline at least as far as odm_filterpoints first ",
+         "(run_odm_project(..., end_with = \"odm_filterpoints\")).",
+         call. = FALSE)
+  }
+  # Guard the whole point of this function: a rerun that includes
+  # odm_filterpoints would regenerate the cloud and silently discard the edit.
+  dots <- list(...)
+  if (!is.null(dots$rerun_from) && !identical(dots$rerun_from, "odm_meshing")) {
+    stop("`rerun_from` is fixed to \"odm_meshing\" here; rerunning from ",
+         dots$rerun_from, " would rebuild odm_filterpoints and throw the ",
+         "edited cloud away.", call. = FALSE)
+  }
+  dots$rerun_from <- NULL
+  do.call(run_odm_project,
+          c(list(project, rerun_from = "odm_meshing"), dots))
+}
