@@ -254,3 +254,42 @@ write_dronebio_rasters <- function(output_dir,
 
   paths
 }
+
+#' Which spectral bands an orthomosaic actually carries
+#'
+#' Decides whether NIR and RedEdge are present from the layer *names* a
+#' raster declares, falling back to the layer count only when the file was
+#' written without informative names.
+#'
+#' Counting layers alone is not enough, and getting this wrong is expensive:
+#' it silently hides NDVI, NDRE, EVI and every other multispectral index from
+#' a flight that has the bands. A MicaSense orthomosaic labels its bands
+#' `Red, Green, Blue, NIR, Rededge` (plus alpha), and a DJI Mavic 3M stack
+#' likewise, so the names are the reliable signal; a 4-band RGB + alpha file
+#' and a 4-band multispectral subset are indistinguishable by count.
+#'
+#' @param x A `SpatRaster`, or a character vector of layer names.
+#' @param nlyr Layer count, used only as a fallback when `x` carries no
+#'   recognisable band names. Taken from `x` when it is a `SpatRaster`.
+#' @return A list with `has_nir`, `has_rededge` and `by`, the last being
+#'   `"name"` or `"count"` depending on which signal was used.
+#' @examples
+#' orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"))
+#' orthomosaic_band_presence(c("red", "green", "blue"), nlyr = 3)
+#' @export
+orthomosaic_band_presence <- function(x, nlyr = NULL) {
+  if (inherits(x, "SpatRaster")) {
+    if (is.null(nlyr)) nlyr <- terra::nlyr(x)
+    x <- names(x)
+  }
+  nm <- tolower(gsub("[^A-Za-z]", "", as.character(x %||% character())))
+  has_nir <- any(nm == "nir") || any(grepl("nearinfra", nm, fixed = TRUE))
+  has_re  <- any(nm %in% c("rededge", "re")) ||
+             any(grepl("rededge", nm, fixed = TRUE))
+  if (has_nir || has_re) {
+    return(list(has_nir = has_nir, has_rededge = has_re, by = "name"))
+  }
+  # No band names to go on: >4 layers is the weaker legacy proxy.
+  proxy <- isTRUE(as.integer(nlyr %||% NA_integer_) > 4L)
+  list(has_nir = proxy, has_rededge = proxy, by = "count")
+}

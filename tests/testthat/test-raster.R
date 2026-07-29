@@ -145,3 +145,43 @@ test_that("write_dronebio_rasters also writes valid_mask when supplied", {
   expect_true("valid_data_mask" %in% names(paths))
   expect_true(file.exists(paths[["valid_data_mask"]]))
 })
+
+test_that("orthomosaic_band_presence trusts band names over layer count", {
+  # The real MicaSense / DJI layout: NIR and RedEdge are named, so a 6-band
+  # file with an alpha channel must not be read as RGB.
+  b <- orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "NIR", "Rededge", "odm_orthophoto_6"))
+  expect_true(b$has_nir)
+  expect_true(b$has_rededge)
+  expect_equal(b$by, "name")
+
+  # Case and spelling of "RedEdge" vary between writers.
+  expect_true(orthomosaic_band_presence(c("red", "RedEdge", "nir"))$has_rededge)
+  expect_true(orthomosaic_band_presence(c("Red_Edge", "NIR"))$has_rededge)
+})
+
+test_that("orthomosaic_band_presence says no for a genuinely RGB file", {
+  b <- orthomosaic_band_presence(c("red", "green", "blue", "orthomosaic_4"),
+                                 nlyr = 4)
+  expect_false(b$has_nir)
+  expect_false(b$has_rededge)
+  expect_equal(b$by, "count")
+})
+
+test_that("orthomosaic_band_presence falls back to the count when unnamed", {
+  # No usable names: >4 layers is the only signal left.
+  expect_true(orthomosaic_band_presence(c("b1", "b2", "b3", "b4", "b5"),
+                                        nlyr = 5)$has_nir)
+  expect_false(orthomosaic_band_presence(c("b1", "b2", "b3"), nlyr = 3)$has_nir)
+  # A 4-band multispectral subset is indistinguishable by count -- documented
+  # limitation of the fallback, and the reason names come first.
+  expect_false(orthomosaic_band_presence(c("b1", "b2", "b3", "b4"),
+                                         nlyr = 4)$has_nir)
+})
+
+test_that("orthomosaic_band_presence accepts a SpatRaster directly", {
+  r <- terra::rast(nrows = 2, ncols = 2, nlyrs = 5)
+  names(r) <- c("Red", "Green", "Blue", "NIR", "Rededge")
+  b <- orthomosaic_band_presence(r)
+  expect_true(b$has_nir && b$has_rededge)
+})
