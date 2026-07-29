@@ -29,6 +29,7 @@ reference:
       - build_odm_args
       - run_odm_project
       - refilter_odm_point_cloud
+      - rebuild_from_edited_cloud
       - convert_undistorted_tiffs_for_texturing
       - odm_product_paths
       - summarize_odm_products
@@ -160,6 +161,8 @@ reference:
       - read_full_point_cloud
       - read_las_point_cloud
       - read_ply_point_cloud
+      - parse_ply_header
+      - write_ply_subset
       - build_chm_from_dsm_dtm
       - build_chm_raster
       - despike_dem

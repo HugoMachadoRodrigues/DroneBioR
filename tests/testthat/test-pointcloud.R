@@ -63,3 +63,157 @@ test_that("export_point_selection writes CSV outputs to the chosen folder", {
   # Label is sanitized
   expect_true(grepl("plot_1", paths[["points"]]))
 })
+
+# Build a binary little-endian PLY with an arbitrary property layout, so the
+# tests exercise the parser rather than one hard-coded shape.
+.mk_ply <- function(path, n = 20L, with_normals = TRUE, colour_order = c("red", "blue", "green")) {
+  props <- c("property float x", "property float y", "property float z")
+  if (with_normals) props <- c(props, "property float nx", "property float ny",
+                               "property float nz")
+  props <- c(props, paste0("property uchar ", colour_order), "property uchar views")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex ", n, "\n",
+                paste(props, collapse = "\n"), "\nend_header\n")
+  con <- file(path, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeBin(charToRaw(hdr), con)
+  set.seed(7)
+  vals <- list(x = seq_len(n) * 1.5, y = seq_len(n) * 2.5, z = seq_len(n) * 0.5,
+               nx = rep(0, n), ny = rep(0, n), nz = rep(1, n))
+  cols <- list(red = seq_len(n) %% 250L, blue = (seq_len(n) * 3L) %% 250L,
+               green = (seq_len(n) * 7L) %% 250L, views = rep(4L, n))
+  for (i in seq_len(n)) {
+    writeBin(c(vals$x[i], vals$y[i], vals$z[i]), con, size = 4L, endian = "little")
+    if (with_normals) writeBin(c(0, 0, 1), con, size = 4L, endian = "little")
+    for (nm in c(colour_order, "views")) {
+      writeBin(as.integer(cols[[nm]][i]), con, size = 1L, endian = "little")
+    }
+  }
+  invisible(list(x = vals$x, y = vals$y, z = vals$z, cols = cols))
+}
+
+test_that("parse_ply_header computes the stride from the declared properties", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 5L)
+  h <- parse_ply_header(p)
+  expect_equal(h$n_vertices, 5L)
+  # 3 floats xyz + 3 floats normals + 4 uchars = 28, not the 16 a fixed-stride
+  # reader assumes. Getting this wrong silently misaligns every vertex.
+  expect_equal(h$stride, 28L)
+  expect_equal(h$props$name, c("x","y","z","nx","ny","nz","red","blue","green","views"))
+  expect_equal(h$props$offset[h$props$name == "red"], 24L)
+
+  p2 <- tempfile(fileext = ".ply"); .mk_ply(p2, n = 5L, with_normals = FALSE)
+  expect_equal(parse_ply_header(p2)$stride, 16L)
+})
+
+test_that("read_ply_point_cloud decodes a 28-byte record correctly", {
+  p <- tempfile(fileext = ".ply"); ref <- .mk_ply(p, n = 12L)
+  pc <- read_ply_point_cloud(p, max_points = 100L)
+  expect_equal(nrow(pc), 12L)
+  expect_equal(pc$x, ref$x)
+  expect_equal(pc$z, ref$z)
+  expect_equal(pc$point_id, 1:12)
+})
+
+test_that("colours are matched by name, not by position", {
+  # ODM declares red, blue, green in that order; reading the three uchars
+  # positionally swaps blue and green.
+  p <- tempfile(fileext = ".ply"); ref <- .mk_ply(p, n = 8L)
+  pc <- read_ply_point_cloud(p, max_points = 100L)
+  expect_equal(pc$red,   as.integer(ref$cols$red))
+  expect_equal(pc$green, as.integer(ref$cols$green))
+  expect_equal(pc$blue,  as.integer(ref$cols$blue))
+})
+
+test_that("write_ply_subset preserves layout and the kept vertices exactly", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 30L)
+  out <- tempfile(fileext = ".ply")
+  keep <- c(2L, 5L, 9L, 30L)
+  n <- write_ply_subset(p, out, keep = keep, backup = FALSE)
+  expect_equal(n, 4L)
+
+  h_in <- parse_ply_header(p); h_out <- parse_ply_header(out)
+  expect_equal(h_out$n_vertices, 4L)
+  expect_equal(h_out$stride, h_in$stride)
+  expect_equal(h_out$props, h_in$props)   # normals survive for meshing
+
+  full <- read_ply_point_cloud(p, max_points = 100L)
+  sub  <- read_ply_point_cloud(out, max_points = 100L)
+  expect_equal(sub$x, full$x[keep])
+  expect_equal(sub$red, full$red[keep])
+})
+
+test_that("write_ply_subset accepts a logical mask and rejects bad input", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 10L)
+  out <- tempfile(fileext = ".ply")
+  mask <- rep(c(TRUE, FALSE), 5)
+  expect_equal(write_ply_subset(p, out, keep = mask, backup = FALSE), 5L)
+
+  expect_error(write_ply_subset(p, out, keep = rep(TRUE, 3), backup = FALSE),
+               "length 3")
+  expect_error(write_ply_subset(p, out, keep = c(1L, 999L), backup = FALSE),
+               "outside 1")
+  expect_error(write_ply_subset(p, out, keep = integer(0), backup = FALSE),
+               "selected no vertices")
+})
+
+test_that("editing in place keeps one recoverable original", {
+  p <- tempfile(fileext = ".ply"); .mk_ply(p, n = 10L)
+  before <- file.size(p)
+  write_ply_subset(p, p, keep = 1:6)
+  expect_true(file.exists(paste0(p, ".orig")))
+  expect_equal(file.size(paste0(p, ".orig")), before)
+  expect_equal(parse_ply_header(p)$n_vertices, 6L)
+
+  # A second edit must not overwrite the pristine copy with the edited one.
+  write_ply_subset(p, p, keep = 1:3)
+  expect_equal(parse_ply_header(paste0(p, ".orig"))$n_vertices, 10L)
+  expect_equal(parse_ply_header(p)$n_vertices, 3L)
+})
+
+test_that("a uint32 property is read without a readBin warning", {
+  # readBin only allows signed = FALSE for 1- and 2-byte integers; passing it
+  # for a uint32 warns on every single call.
+  p <- tempfile(fileext = ".ply")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex 4\n",
+                "property float x\nproperty float y\nproperty float z\n",
+                "property uint views\nend_header\n")
+  con <- file(p, open = "wb"); writeBin(charToRaw(hdr), con)
+  for (i in 1:4) {
+    writeBin(c(i * 1, i * 2, i * 3), con, size = 4L, endian = "little")
+    writeBin(as.integer(i), con, size = 4L, endian = "little")
+  }
+  close(con)
+  expect_equal(parse_ply_header(p)$stride, 16L)
+  expect_silent(pc <- read_ply_point_cloud(p, max_points = 10L))
+  expect_equal(pc$x, c(1, 2, 3, 4))
+  expect_equal(pc$views, 1:4)
+})
+
+test_that("byte offsets stay exact past the 32-bit integer limit", {
+  # starts <- body_at + (point_index - 1) * stride overflows to NA once
+  # (n - 1) * stride passes 2^31, i.e. ~76.7 M vertices for a 28-byte record.
+  n <- 100e6; stride <- 28L
+  expect_true(is.na(suppressWarnings((as.integer(n) - 1L) * stride)))
+  expect_equal((as.numeric(n) - 1) * stride, 2799999972)
+})
+
+test_that("parse_ply_header names the file when the header is not found", {
+  p <- tempfile(fileext = ".ply")
+  writeBin(charToRaw(strrep("not a ply ", 100)), p)
+  expect_error(parse_ply_header(p), "is this a PLY file")
+})
+
+test_that("write_ply_subset refuses a truncated source instead of inventing points", {
+  # A file shorter than its header promises: the strided gather would pad with
+  # zero bytes and produce a cloud that reads fine and is mostly fabricated.
+  p <- tempfile(fileext = ".ply")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex 100\n",
+                "property float x\nproperty float y\nproperty float z\nend_header\n")
+  con <- file(p, open = "wb")
+  writeBin(charToRaw(hdr), con)
+  for (i in 1:10) writeBin(c(i, i, i), con, size = 4L, endian = "little")
+  close(con)
+  expect_error(write_ply_subset(p, tempfile(fileext = ".ply"), keep = 1:100,
+                                backup = FALSE),
+               "Truncated PLY")
+})

@@ -3661,6 +3661,26 @@ ui <- page_navbar(
                          class = "btn-outline-secondary w-100")
           ),
           accordion_panel(
+            "Clean the cloud (edits the PLY)",
+            div(class = "small text-muted mb-2",
+                "Select the bad points with box / lasso / polygon, then delete ",
+                "them from the file. Do this on ",
+                tags$code("odm_filterpoints/point_cloud.ply"),
+                " and rerun ODM from ", tags$code("odm_meshing"),
+                ": the mesh, texture, DEMs and orthophoto are then built from ",
+                "the cloud you cleaned, without redoing the reconstruction."),
+            textOutput("cloud_edit_status"),
+            actionButton("delete_selected_points",
+                         "Delete selected points from the PLY",
+                         class = "btn-outline-danger w-100 mt-2"),
+            actionButton("restore_cloud_backup",
+                         "Restore the original cloud",
+                         class = "btn-outline-secondary w-100 mt-2"),
+            div(class = "small text-muted mt-2",
+                "The first edit keeps an untouched copy as ",
+                tags$code("point_cloud.ply.orig"), ".")
+          ),
+          accordion_panel(
             "Tree detection",
             numericInput("tree_grid",
                          "Tree candidate grid size (m)",
@@ -9777,6 +9797,160 @@ server <- function(input, output, session) {
   observeEvent(input$clear_point_selection, {
     selected_ids_value(integer())
     showNotification("Selection cleared.", type = "message", duration = 3)
+  })
+
+  # --- Cloud editing -------------------------------------------------------
+  # The lasso already reports point_id values, which read_ply_point_cloud()
+  # defines as indices into the FULL cloud, not into the decimated preview.
+  # That is what makes deleting from the file safe: the preview can be 50k of
+  # 2.4M points and the right vertices still go.
+  cloud_edit_tick <- reactiveVal(0L)
+
+  # input$ply_path may point at the LOCAL CACHE copy: when a cached file
+  # exists the path inputs are repointed at it, and the preview is read from
+  # there. Editing that copy would leave the project's own
+  # odm_filterpoints/point_cloud.ply -- the only file ODM meshes from --
+  # untouched, so the rebuild would silently reproduce the same products. The
+  # edit therefore always targets the project file, and refuses when the
+  # preview clearly came from a different cloud.
+  cloud_edit_target <- function() {
+    shown <- input$ply_path %||% ""
+    proj <- tryCatch(project(), error = function(e) NULL)
+    canonical <- if (!is.null(proj)) {
+      unname(odm_product_paths(proj)[["point_cloud_ply"]])
+    } else shown
+    if (!nzchar(canonical) || !file.exists(canonical)) canonical <- shown
+    same <- normalizePath(shown, mustWork = FALSE) ==
+            normalizePath(canonical, mustWork = FALSE)
+    list(path = canonical, shown = shown, is_cache = !same)
+  }
+
+  output$cloud_edit_status <- renderText({
+    cloud_edit_tick()
+    tgt <- cloud_edit_target()
+    if (!nzchar(tgt$path) || !file.exists(tgt$path)) return("No PLY loaded.")
+    h <- tryCatch(parse_ply_header(tgt$path), error = function(e) NULL)
+    if (is.null(h)) return("This file is not a binary little-endian PLY.")
+    n_sel <- length(selected_ids_value() %||% integer())
+    paste0(
+      sprintf("%s vertices in the file; %s selected.",
+              format(h$n_vertices, big.mark = ","), format(n_sel, big.mark = ",")),
+      if (isTRUE(tgt$is_cache))
+        sprintf(" Editing the project file (%s), not the cached preview.",
+                basename(tgt$path)) else ""
+    )
+  })
+
+  observeEvent(input$delete_selected_points, {
+    tgt <- cloud_edit_target()
+    p <- tgt$path
+    ids <- unique(as.integer(selected_ids_value() %||% integer()))
+    # A plain validate() here would abort the observer silently, so the button
+    # would look dead. Say what is missing instead.
+    if (!nzchar(p) || !file.exists(p)) {
+      showNotification("Load a PLY point cloud first.", type = "warning",
+                       duration = 6)
+      return()
+    }
+    if (!length(ids)) {
+      showNotification("Select the points to delete first (box, lasso or polygon).",
+                       type = "warning", duration = 6)
+      return()
+    }
+    h <- tryCatch(parse_ply_header(p), error = function(e) NULL)
+    if (is.null(h)) {
+      showNotification("This file is not a binary little-endian PLY.",
+                       type = "error", duration = 8)
+      return()
+    }
+    # point_id values index the cloud the preview was read from. If that file
+    # and the project file no longer hold the same number of vertices, the
+    # indices mean different points and the wrong ones would be deleted.
+    if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) {
+      h_shown <- tryCatch(parse_ply_header(tgt$shown), error = function(e) NULL)
+      if (is.null(h_shown) || !identical(h_shown$n_vertices, h$n_vertices)) {
+        showNotification(
+          paste0("The previewed cloud and the project cloud have different ",
+                 "vertex counts, so the selection cannot be mapped safely. ",
+                 "Reload the cloud before editing."),
+          type = "error", duration = 12)
+        return()
+      }
+    }
+    if (max(ids) > h$n_vertices) {
+      showNotification(
+        sprintf("The selection references vertex %s but the cloud has %s. Reload the cloud before editing.",
+                format(max(ids), big.mark = ","),
+                format(h$n_vertices, big.mark = ",")),
+        type = "error", duration = 12)
+      return()
+    }
+    # Deleting rewrites the file ODM will mesh from, so confirm with the count.
+    showModal(modalDialog(
+      title = "Delete points from the point cloud?",
+      p(sprintf("This removes %s of %s vertices from:",
+                format(length(ids), big.mark = ","),
+                format(h$n_vertices, big.mark = ","))),
+      tags$pre(p),
+      p("The file is rewritten in place. An untouched copy is kept as ",
+        tags$code(paste0(basename(p), ".orig")), " so this is reversible."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_delete_points", "Delete", class = "btn-danger")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$confirm_delete_points, {
+    removeModal()
+    with_error_toast("Delete points from the cloud", {
+      tgt <- cloud_edit_target()
+      p <- tgt$path
+      ids <- unique(as.integer(selected_ids_value() %||% integer()))
+      h <- parse_ply_header(p)
+      keep <- setdiff(seq_len(h$n_vertices), ids)
+      n <- with_gis_task(session, "Rewriting the point cloud",
+                         detail = sprintf("keeping %s vertices",
+                                          format(length(keep), big.mark = ",")),
+                         write_ply_subset(p, p, keep = keep, backup = TRUE))
+      # The cached preview copy is now a different cloud; drop it so the next
+      # load re-caches instead of showing the points that were just deleted.
+      if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, then rerun ODM from odm_meshing.",
+                format(length(ids), big.mark = ","), format(n, big.mark = ",")),
+        type = "message", duration = 12)
+    })
+  })
+
+  observeEvent(input$restore_cloud_backup, {
+    with_error_toast("Restore the original cloud", {
+      tgt <- cloud_edit_target()
+      p <- tgt$path
+      orig <- paste0(p, ".orig")
+      # validate() would abort silently and leave the button looking dead.
+      if (!nzchar(p) || !file.exists(orig)) {
+        showNotification(
+          paste0("There is no .orig backup beside ", basename(p),
+                 "; nothing to restore."),
+          type = "warning", duration = 8)
+        return()
+      }
+      ok <- file.copy(orig, p, overwrite = TRUE)
+      if (!ok) stop("Could not copy the backup back over ", p, call. = FALSE)
+      if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Restored the original cloud (%s vertices).",
+                format(parse_ply_header(p)$n_vertices, big.mark = ",")),
+        type = "message", duration = 8)
+    })
   })
 
   # Surface the JS-detected coordinate-frame mismatch as a one-shot

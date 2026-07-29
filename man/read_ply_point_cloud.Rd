@@ -17,9 +17,17 @@ read_ply_point_cloud(path, max_points = 50000, seed = 42)
 A data frame with x, y, z, RGB values and display color.
 }
 \description{
-This reader supports the ODM/FPCFilter PLY layout used in the current project:
-float x/y/z followed by uchar red/blue/green/views. It is intentionally small
-and dependency-free for app previews; full LAZ analytics should use PDAL/lidR.
+The vertex layout is taken from the header by \code{\link[=parse_ply_header]{parse_ply_header()}}, so any
+binary little-endian PLY with scalar vertex properties is read correctly --
+ODM's filtered cloud (x/y/z + normals + colours, 28 bytes) and its
+georeferenced cloud (no normals, 16 bytes) alike. Colours are matched by
+property name, never by position. Intentionally small and dependency-free
+for app previews; full LAZ analytics should use PDAL/lidR.
+}
+\details{
+\code{point_id} is the 1-based index of each returned point in the FULL cloud,
+which is what makes a selection made on a decimated preview usable to edit
+the file itself -- see \code{\link[=write_ply_subset]{write_ply_subset()}}.
 }
 \examples{
 \dontrun{

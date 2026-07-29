@@ -243,3 +243,29 @@ test_that("refilter_odm_point_cloud reruns from odm_filterpoints only", {
   expect_equal(called$pc_filter, 1.5)
   expect_true(called$pc_rectify)
 })
+
+test_that("rebuild_from_edited_cloud reruns from odm_meshing and refuses earlier stages", {
+  # Rerunning from odm_filterpoints (or anything before it) would regenerate
+  # the cloud and silently discard the hand edit -- the whole point of this
+  # entry point is that it cannot happen by accident.
+  dir <- tempfile("edited-")
+  p <- dronebio_project(dir)
+  expect_error(rebuild_from_edited_cloud(p), "No filtered point cloud")
+
+  fp <- file.path(p$odm_project_dir, "odm_filterpoints")
+  dir.create(fp, recursive = TRUE)
+  file.create(file.path(fp, "point_cloud.ply"))
+
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) { called <<- list(...); invisible(TRUE) }
+  )
+  rebuild_from_edited_cloud(p, build_dsm = TRUE)
+  expect_equal(called$rerun_from, "odm_meshing")
+  expect_true(called$build_dsm)
+
+  expect_error(rebuild_from_edited_cloud(p, rerun_from = "odm_filterpoints"),
+               "would rebuild odm_filterpoints")
+  # Asking for the stage it already uses is harmless.
+  expect_silent(rebuild_from_edited_cloud(p, rerun_from = "odm_meshing"))
+})
