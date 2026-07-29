@@ -20,8 +20,12 @@ throttled bigger ones: on a 10-core M1 Max a run sat at ~320\% CPU and 7\% of
 the memory Docker had been given, with feature matching -- the longest part
 of \code{opensfm} -- using less than a third of the machine.
 
-Set \code{options(dronebior.max_concurrency = n)} to pin a value, for instance
-when Docker Desktop is allowed fewer cores than the host has.
+The count is the smaller of the host's cores and the CPUs Docker reports,
+because ODM runs inside the container: sizing to a 10-core host while Docker
+holds 4 would start more workers than there are cores, and each worker holds
+imagery, so the run gets slower and likelier to be OOM-killed.
+
+Set \code{options(dronebior.max_concurrency = n)} to pin a value outright.
 }
 \examples{
 default_max_concurrency()
