@@ -8713,7 +8713,22 @@ server <- function(input, output, session) {
   })
 
   output$engine_note <- renderText({
-    if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
+    # Fast orthophoto against DSM/DTM is the costliest combination to get
+    # wrong, so it outranks the 3D-deliverables note: --fast-orthophoto skips
+    # the dense reconstruction, so the DEMs come off the sparse cloud and the
+    # canopy model is built on points that were never densified. The spiky,
+    # ragged surfaces that look like filtering problems often start here.
+    if (isTRUE(input$fast_orthophoto) &&
+        (isTRUE(input$build_dsm) || isTRUE(input$build_dtm))) {
+      paste0(
+        "Fast orthophoto skips the dense reconstruction, so the DSM/DTM you ",
+        "asked for would be built from the SPARSE point cloud - jagged ",
+        "surfaces and spikes, not a defensible canopy height model. Uncheck ",
+        "fast orthophoto for canopy work, or switch to the 'Fast orthomosaic ",
+        "only' preset, which turns the DEMs off so the result is not mistaken ",
+        "for one."
+      )
+    } else if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
       "Fast orthophoto prioritizes rapid orthomosaic generation and ODM can skip full textured 3D outputs. Disable fast orthophoto for commercial-style 3D deliverables."
     } else if (isTRUE(input$build_dsm) && isTRUE(input$build_dtm)) {
       "DSM and DTM are enabled. This supports canopy height modeling and later tree segmentation."
