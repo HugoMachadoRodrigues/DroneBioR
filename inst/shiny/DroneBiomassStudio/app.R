@@ -18,6 +18,17 @@ if (.dronebior_async_available) {
 }
 
 default_project_dir <- getOption("dronebior.project_dir", getwd())
+# run_drone_biomass_studio() always sets that option, but a bare
+# shiny::runApp(<app dir>) leaves getwd() pointing at the app's own folder
+# inside the package. Scaffolding a project there writes outputs/ and imagens/
+# into the installed package -- or, from a source checkout, straight into the
+# git repo. Fall back to a directory outside the package instead.
+if (file.exists(file.path(default_project_dir, "app.R"))) {
+  default_project_dir <- file.path(path.expand("~"), "DroneBioR-projects", "default")
+  dir.create(default_project_dir, recursive = TRUE, showWarnings = FALSE)
+  message("[studio] Launched from the package folder; defaulting to ",
+          default_project_dir, " so nothing is written into the package.")
+}
 default_project <- dronebio_project(default_project_dir)
 default_products <- odm_product_paths(default_project)
 
@@ -156,6 +167,10 @@ raster_header <- function(path, progress_msg = "Reading raster header") {
     bounds_4326 <- tryCatch(raster_bounds_4326(r[[1]]), error = function(e) NULL)
     list(
       nlyr        = as.integer(terra::nlyr(r)),
+      # Band names are what actually says whether NIR / RedEdge are present.
+      # Counting layers cannot: a 7-band DJI stack and a 4-band RGB+alpha
+      # differ in kind, not just in size.
+      lyr_names   = tryCatch(names(r), error = function(e) character()),
       ext         = as.vector(terra::ext(r)),
       crs         = tryCatch(terra::crs(r, describe = TRUE), error = function(e) NULL),
       ncol        = as.integer(terra::ncol(r)),
@@ -1393,6 +1408,7 @@ project_control_center <- function() {
 # calls updateNavbarPage("main_nav", ...).
 workflow_stepper <- function() {
   steps <- list(
+    list(n = 0L, label = "Cloud",       tab = "Point Cloud"),
     list(n = 1L, label = "Process",     tab = "Processing Engine"),
     list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
     list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
@@ -1401,13 +1417,16 @@ workflow_stepper <- function() {
     list(n = 6L, label = "Export",      tab = "Exports"),
     list(n = 7L, label = "Time Series", tab = "Time Series")
   )
-  # The first tab ("Processing Engine") is .active at page load. A
-  # JS listener for shown.bs.tab updates the active class as the
-  # user navigates - see dronebior_stepper_track_active in the
-  # global script block.
+  # The FIRST tab in the navbar is .active at page load, so the chip that
+  # starts active has to be the first entry here -- hardcoding a tab name
+  # leaves the highlight pointing at the wrong step the moment the order
+  # changes, which is what happened when Point Cloud was added in front.
+  # A JS listener for shown.bs.tab updates it as the user navigates - see
+  # dronebior_stepper_track_active in the global script block.
+  first_tab <- steps[[1L]]$tab
   chips <- lapply(steps, function(st) {
     cls <- c("dronebio-step",
-             if (identical(st$tab, "Processing Engine")) "active")
+             if (identical(st$tab, first_tab)) "active")
     tags$div(
       class           = paste(cls, collapse = " "),
       `data-step-tab` = st$tab,
@@ -1721,7 +1740,7 @@ ui <- page_navbar(
       // skip any map whose DOM element is missing, hidden, or whose
       // HTMLWidgets binding has not initialised yet.
       Shiny.addCustomMessageHandler('dronebior_invalidate_maps', function(_msg) {
-        var known_maps = ['gis_map', 'point_cloud_context_map'];
+        var known_maps = ['gis_map', 'point_cloud_context_map', 'field_map'];
         var poke = function() {
           known_maps.forEach(function(id) {
             var el = document.getElementById(id);
@@ -1819,6 +1838,19 @@ ui <- page_navbar(
         if (!msg || !msg.id) return;
         var btn = document.getElementById(msg.id);
         if (btn) btn.click();
+      });
+
+      // Enable / disable a Shiny actionButton by its inputId. Shiny has
+      // no server-side disable, and re-rendering the button through a
+      // uiOutput would reset its click counter to 0 - which fires every
+      // observeEvent watching it. Toggling the DOM property instead
+      // leaves the input value untouched.
+      Shiny.addCustomMessageHandler('dronebior_set_disabled', function(msg) {
+        if (!msg || !msg.id) return;
+        var btn = document.getElementById(msg.id);
+        if (!btn) return;
+        btn.disabled = !!msg.disabled;
+        btn.classList.toggle('disabled', !!msg.disabled);
       });
 
       // Highlight the active tool button in the GIS map toolbar.
@@ -3207,6 +3239,67 @@ ui <- page_navbar(
     "))
   )),
   nav_panel(
+    "Point Cloud",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 380,
+        textInput("project_dir_pc", "Project root",
+                  value = default_project$project_dir),
+        textInput("images_dir_pc", "Source images folder",
+                  value = default_project$images_dir),
+        selectInput("pc_quality", "Detail (densification quality)",
+                    choices = c("Ultra"  = "ultra",
+                                "High"   = "high",
+                                "Medium (ODM default)" = "medium",
+                                "Low"    = "low",
+                                "Lowest" = "lowest"),
+                    selected = "medium"),
+        div(class = "small text-muted mb-2",
+            "Each step up produces a denser cloud and costs roughly 4x the ",
+            "time. Start at Medium; go higher only once the flow works."),
+        sliderInput("pc_filter_stage0", "Outlier filter (std. dev.)",
+                    min = 0, max = 6, value = 2.5, step = 0.5),
+        checkboxInput("pc_rectify_stage0",
+                      "Rectify ground points (better DTM)", value = FALSE),
+        actionButton("run_stage0", "1. Build the point cloud",
+                     class = "btn-primary w-100"),
+        div(class = "small text-muted mt-1 mb-2",
+            "Aligns the images and densifies, then stops. Nothing else is ",
+            "generated yet."),
+        actionButton("goto_cloud_editor", "2. Inspect and clean it in 3D",
+                     class = "btn-outline-secondary w-100"),
+        div(class = "small text-muted mt-1 mb-2",
+            "Opens the 3D tab, where box / lasso / polygon select and the ",
+            "delete button live."),
+        actionButton("run_stage0_rebuild", "3. Build DSM, DTM and orthomosaic",
+                     class = "btn-outline-primary w-100"),
+        div(class = "small text-muted mt-1",
+            "Resumes at odm_meshing from the cloud as it stands now, reusing ",
+            "the alignment and densification.")
+      ),
+      div(
+        class = "p-2",
+        h5("Stage 0 - reconstruct, clean, then derive"),
+        p(class = "text-muted",
+          "The orthomosaic, the DSM and the DTM are all derived from the ",
+          "point cloud. Cleaning it here fixes all three at once, instead of ",
+          "patching the DSM afterwards."),
+        tags$pre(class = "small",
+"raw images
+  -> opensfm         alignment
+  -> openmvs         densification   <- 'Detail' sets this
+  -> odm_filterpoints  STOP: inspect and clean here
+  -> odm_meshing -> mvs_texturing -> odm_orthophoto
+  -> odm_dem           DSM and DTM"),
+        hr(),
+        h6("Current point cloud"),
+        verbatimTextOutput("stage0_cloud_status"),
+        h6("What this will run"),
+        verbatimTextOutput("stage0_command")
+      )
+    )
+  ),
+  nav_panel(
     "Processing Engine",
     layout_sidebar(
       sidebar = sidebar(
@@ -3260,16 +3353,23 @@ ui <- page_navbar(
           "Processing preset",
           choices = c(
             "Scientific canopy model (recommended)",
-            "Fast orthomosaic only",
+            "Orthomosaic only",
             "Full 3D deliverables",
             "Custom"
           ),
           selected = "Scientific canopy model (recommended)"
         ),
         numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
-        checkboxInput("fast_orthophoto", "Fast orthophoto", value = FALSE),
         checkboxInput("build_dsm", "Generate DSM", value = TRUE),
         checkboxInput("build_dtm", "Generate DTM", value = TRUE),
+        # The outlier filter and ground-rectify controls used to live here as a
+        # second, independent copy of the Point Cloud tab's inputs, so the two
+        # drifted apart silently. They are point-cloud reconstruction settings,
+        # so they now live only on the Point Cloud tab (alongside the detail
+        # level), and this run reads those values. See the note below.
+        numericInput("pc_sample",
+                     "Thin to one point per N metres (0 = keep all)",
+                     value = 0, min = 0, step = 0.01),
         checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
         checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
         checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
@@ -3278,7 +3378,7 @@ ui <- page_navbar(
         checkboxInput("gltf", "Export glTF model", value = FALSE),
         actionButton("refresh_command", "Build command", class = "btn-primary"),
         actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "For full 3D textured products, turn off fast orthophoto. ODM uses fast orthophoto to prioritize rapid orthomosaic generation. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
+        div(class = "sidebar-note", "Reconstruction always runs dense: the DSM, DTM and orthomosaic are all derived from the point cloud, and a sparse one yields jagged surfaces. The Point Cloud tab owns the reconstruction settings — detail level, the outlier filter (std. dev.) and ground-point rectify — and this run uses those values; set them there, and clean the cloud there before the products are built. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
       ),
       panel_intro_card(
         "Processing Engine",
@@ -3510,6 +3610,7 @@ ui <- page_navbar(
         # The interaction-tool selectInput is hidden because the
         # selection toolbar above the viewer now drives it.
         accordion(
+          id = "modeling_sidebar",
           open = c("Scene source", "GIS Workspace ROI"),
           accordion_panel(
             "Scene source",
@@ -3615,6 +3716,30 @@ ui <- page_navbar(
             actionButton("classify_selection",
                          "Classify selected points",
                          class = "btn-outline-secondary w-100")
+          ),
+          accordion_panel(
+            "Point Cloud step 2 - clean the cloud",
+            div(class = "small text-muted mb-2",
+                "This is step 2 of the Point Cloud tab's flow. Select the bad ",
+                "points with box / lasso / polygon and delete them, then use ",
+                "the button below to go back and build the products from the ",
+                "cloud you cleaned - the reconstruction is reused, not redone."),
+            textOutput("cloud_edit_status"),
+            actionButton("delete_selected_points",
+                         "Delete selected points from the cloud",
+                         class = "btn-outline-danger w-100 mt-2"),
+            actionButton("restore_cloud_backup",
+                         "Restore the original cloud",
+                         class = "btn-outline-secondary w-100 mt-2"),
+            hr(class = "my-2"),
+            actionButton("back_to_point_cloud",
+                         "← Back to Point Cloud (build products)",
+                         class = "btn-primary w-100"),
+            div(class = "small text-muted mt-2",
+                "Edits are written to the working cloud; the untouched ",
+                "reconstruction is set aside as ",
+                tags$code("point_cloud.original.ply"),
+                " and restored by the button above.")
           ),
           accordion_panel(
             "Tree detection",
@@ -4135,32 +4260,195 @@ ui <- page_navbar(
     "Field Models",
     layout_sidebar(
       sidebar = sidebar(
-        width = 340,
-        # CSV mapping wizard: the user uploads any CSV, the server
-        # auto-detects column types, and the user maps each role
-        # (sample_id, biomass, coordinates, CRS) via dropdowns. Lots
-        # better than the previous "make sure your CSV has columns
-        # called sample_id and biomass_kgha" hard requirement.
-        fileInput("field_file", "Field biomass CSV", accept = ".csv"),
-        uiOutput("field_csv_mapping"),
-        div(class = "d-flex gap-2",
-            actionButton("extract_field", "Extract",
+        width = 380,
+        # Field Models sidebar: the two headline actions pinned above an
+        # accordion, mirroring the Spectral Analytics convention. Only
+        # the first two panels open by default so the user is not faced
+        # with every control at once. Every line of science lives in the
+        # package (R/field_ingest.R, R/field_extract.R,
+        # R/field_covariates.R, R/field_caret.R); this panel only
+        # collects inputs and renders results.
+        div(class = "d-flex gap-2 mb-2",
+            actionButton("field_extract", "Extract",
                          class = "btn-primary flex-grow-1"),
-            actionButton("fit_model", "Fit model",
-                         class = "btn-outline-secondary"))
+            actionButton("field_train", "Train",
+                         class = "btn-outline-secondary")),
+        accordion(
+          id = "field_accordion",
+          open = c("1 - Field data", "2 - Covariates"),
+          accordion_panel(
+            "1 - Field data",
+            # multiple = TRUE because an ESRI shapefile arrives as four
+            # separate files. Shiny writes uploads as 0.dbf / 1.prj /
+            # 2.shp / 3.shx, which GDAL cannot open at all;
+            # stage_uploaded_vector() restores the original basenames
+            # (or unzips a .zip) before anything tries to read them.
+            fileInput("field_file", "Field points", multiple = TRUE,
+                      accept = c(".csv", ".shp", ".shx", ".dbf", ".prj",
+                                 ".cpg", ".zip", ".geojson", ".gpkg")),
+            div(class = "small text-muted mb-2",
+                "CSV, or select all shapefile parts (.shp .shx .dbf .prj) together, or one .zip."),
+            uiOutput("field_mapping_ui")
+          ),
+          accordion_panel(
+            "2 - Covariates",
+            uiOutput("field_cov_summary"),
+            uiOutput("field_cov_picker"),
+            div(class = "d-flex gap-3 small mb-2",
+                actionLink("field_cov_recommended", "Recommended"),
+                actionLink("field_cov_all", "All"),
+                actionLink("field_cov_none", "None")),
+            actionButton("field_cov_refresh", "Refresh available layers",
+                         class = "btn-outline-secondary w-100")
+          ),
+          accordion_panel(
+            "3 - Extraction window",
+            selectInput("field_window", "Pixel window",
+                        choices = c("1 x 1 (single pixel)" = 1, "3 x 3" = 3,
+                                    "5 x 5" = 5, "7 x 7" = 7, "9 x 9" = 9,
+                                    "11 x 11" = 11, "13 x 13" = 13,
+                                    "15 x 15" = 15, "17 x 17" = 17,
+                                    "19 x 19" = 19, "21 x 21" = 21),
+                        selected = 3),
+            selectInput("field_window_fun", "Aggregate with",
+                        choices = c("mean", "median", "max", "min", "sd"),
+                        selected = "mean"),
+            div(class = "small text-muted",
+                textOutput("field_window_footprint"))
+          ),
+          accordion_panel(
+            "4 - Model",
+            checkboxInput("field_model_ready_only",
+                          "Only models I can run now", value = TRUE),
+            selectInput("field_model_family", "Family",
+                        choices = "Any", selected = "Any"),
+            selectizeInput("field_model_method", "caret method(s)",
+                           choices = NULL, multiple = TRUE,
+                           options = list(
+                             maxItems = 12,
+                             plugins = list("remove_button"),
+                             placeholder = "Search caret regression models")),
+            radioButtons("field_metric", "Optimise",
+                         choices = c("Minimise RMSE" = "RMSE",
+                                     "Maximise R2" = "Rsquared"),
+                         selected = "RMSE"),
+            sliderInput("field_holdout", "Hold-out test fraction",
+                        min = 0, max = 0.5, value = 0.25, step = 0.05),
+            numericInput("field_folds", "CV folds (k)", value = 10,
+                         min = 3, max = 20, step = 1),
+            numericInput("field_seed", "Random seed", value = 42,
+                         min = 1, step = 1),
+            checkboxInput("field_center_scale",
+                          "Centre + scale predictors", value = FALSE),
+            div(class = "small text-muted",
+                "caret defaults are used except: 10-fold CV (instead of 25x bootstrap), saved fold predictions, an added RPIQ metric, and no parallel backend.")
+          ),
+          accordion_panel(
+            "5 - Map",
+            selectInput("field_map_res", "Map detail",
+                        choices = c("Fast preview (~250k px)" = 250000,
+                                    "Standard (~1M px)" = 1000000,
+                                    "Fine (~4M px)" = 4000000),
+                        selected = 1000000),
+            radioButtons("field_map_render", "Rendering",
+                         choices = c("Continuous" = "continuous",
+                                     "Classed (quartiles)" = "classed"),
+                         selected = "continuous"),
+            numericInput("field_map_classes", "Classes", value = 4,
+                         min = 3, max = 10, step = 1),
+            selectInput("field_map_palette", "Palette",
+                        choices = c("viridis", "YlGn", "Spectral"),
+                        selected = "viridis"),
+            checkboxInput("field_map_points", "Show train / test points",
+                          value = TRUE),
+            actionButton("field_predict_map", "Predict map",
+                         class = "btn-outline-primary w-100 mb-2"),
+            actionButton("field_export_map",
+                         "Export full-resolution GeoTIFF",
+                         class = "btn-outline-secondary w-100"),
+            div(class = "small text-muted mt-2",
+                textOutput("field_map_estimate"))
+          )
+        )
       ),
       div(
         class = "main-scroll",
         panel_intro_card(
           "Field Models",
-          "Upload a field biomass CSV, map its columns (sample_id, biomass, coordinates, CRS, units) in the sidebar, then extract spectral values at each sample point and fit a baseline linear model.",
+          "Load field points (CSV or shapefile), tick the covariates built in the earlier tabs, choose a pixel window, then train caret models with 10-fold cross-validation and map the result.",
           vignette = "dronebior-overview"
         ),
-        card(card_header("CSV preview"), tableOutput("field_csv_preview")),
-        card(card_header("Detected columns"),
-             uiOutput("field_csv_diagnostics")),
-        card(card_header("Extracted samples"), tableOutput("field_preview")),
-        card(card_header("Baseline model"), verbatimTextOutput("model_summary")),
+        card(
+          card_header("Field points"),
+          uiOutput("field_points_status"),
+          tableOutput("field_points_preview")
+        ),
+        card(
+          card_header("Extracted samples"),
+          div(class = "small text-muted mb-2",
+              textOutput("field_extract_status")),
+          tableOutput("field_preview"),
+          downloadButton("field_dl_samples", "Samples CSV",
+                         class = "btn-outline-secondary btn-sm")
+        ),
+        card(
+          card_header("Model leaderboard"),
+          tableOutput("field_leaderboard"),
+          selectInput("field_best_pick", "Show model", choices = NULL)
+        ),
+        card(
+          card_header("Performance"),
+          tableOutput("field_metrics_table"),
+          div(class = "small text-muted",
+              "R2 = 1 - SSres/SStot (DroneBioR convention). RPIQ = IQR(observed)/RMSE. caret's internal Rsquared is squared Pearson and ranks hyperparameters only.")
+        ),
+        card(
+          card_header("Observed vs predicted"),
+          checkboxInput("field_plot_resub", "Include training-set fit",
+                        value = FALSE),
+          plotOutput("field_obs_pred_plot", height = "380px")
+        ),
+        card(
+          card_header("Hyperparameter search"),
+          tableOutput("field_tuning_table")
+        ),
+        card(
+          card_header("Predicted biomass map"),
+          div(class = "small text-muted mb-2",
+              textOutput("field_map_caption")),
+          # Until a prediction exists the leaflet has no data and no bounds,
+          # so it renders the whole world in a very wide frame and reads as a
+          # broken widget. Show the placeholder instead and only mount the map
+          # once there is something on it.
+          conditionalPanel(
+            condition = "!output.field_map_ready",
+            div(class = "text-muted d-flex align-items-center justify-content-center",
+                style = "height:58vh; border:1px dashed var(--bs-border-color); border-radius:.5rem;",
+                div(class = "text-center p-3",
+                    tags$div("No predicted map yet."),
+                    tags$div(class = "small mt-1",
+                             "Extract the covariates, train a model, then press Predict map.")))
+          ),
+          conditionalPanel(
+            condition = "output.field_map_ready",
+            div(class = "map-frame",
+                leafletOutput("field_map", height = "58vh"))
+          )
+        ),
+        card(
+          card_header("Model details"),
+          verbatimTextOutput("model_summary")
+        ),
+        card(
+          card_header("Download"),
+          div(class = "d-flex gap-2 flex-wrap",
+              downloadButton("field_dl_model", "Trained model (.zip)",
+                             class = "btn-primary"),
+              downloadButton("field_dl_metrics", "Metrics CSV",
+                             class = "btn-outline-secondary"),
+              downloadButton("field_dl_map", "Predicted map GeoTIFF",
+                             class = "btn-outline-secondary"))
+        ),
         div(
           class = "gis-cta-row",
           actionButton("field_cta_spectral", "<-- Spectral Analytics",
@@ -5142,25 +5430,39 @@ server <- function(input, output, session) {
   # underlying terra::rast open is cached by (path, mtime, size) and
   # surfaced in the "Now loading" banner on its first hit - keystrokes
   # in input$orthomosaic do not re-open the same multi-GB file.
-  overlay_orthomosaic_nlyr <- reactive({
+  # Which of NIR / RedEdge this orthomosaic actually carries. Names first --
+  # a MicaSense ortho labels its bands Red/Green/Blue/NIR/Rededge, and a DJI
+  # stack likewise -- falling back to the layer count only when the file was
+  # written without useful names. Counting alone was the bug: it greyed out
+  # NDVI on 4-band files that do carry NIR, and read a 3-band RGB run of a
+  # multispectral flight as proof the flight had no NIR at all.
+  overlay_orthomosaic_bands <- reactive({
     path <- input$orthomosaic
     if (!is.character(path) || !length(path) || !nzchar(path) || !file.exists(path)) {
-      return(NA_integer_)
+      return(NULL)
     }
     hdr <- raster_header(path, progress_msg = "Reading orthomosaic band count")
-    if (is.null(hdr)) NA_integer_ else hdr$nlyr
+    if (is.null(hdr)) return(NULL)
+    b <- orthomosaic_band_presence(hdr$lyr_names %||% character(), nlyr = hdr$nlyr)
+    c(list(nlyr = hdr$nlyr), b)
   })
   available_overlays <- reactive({
-    n <- overlay_orthomosaic_nlyr()
+    bands <- overlay_orthomosaic_bands()
     # First pass: spectral filtering by band requirements.
-    candidates <- if (is.na(n)) overlay_choices else {
-      if (n <= 4) {
-        keep <- vapply(overlay_choices, function(layer) {
-          req_bands <- overlay_band_requirements[[layer]] %||% character()
-          !any(c("NIR", "RedEdge") %in% req_bands)
-        }, logical(1))
-        overlay_choices[keep]
-      } else overlay_choices
+    candidates <- if (is.null(bands)) overlay_choices else {
+      # Check EVERY band a layer declares, not just NIR / RedEdge. The DJI
+      # Mavic 3M has no blue multispectral band, so EVI used to be offered on
+      # a DJI stack and then fail to compute -- available in the list, absent
+      # from the result.
+      have <- c(Blue = isTRUE(bands$has_blue), Green = isTRUE(bands$has_green),
+                Red = isTRUE(bands$has_red), NIR = isTRUE(bands$has_nir),
+                RedEdge = isTRUE(bands$has_rededge))
+      keep <- vapply(overlay_choices, function(layer) {
+        req_bands <- overlay_band_requirements[[layer]] %||% character()
+        req_bands <- intersect(req_bands, names(have))
+        !length(req_bands) || all(have[req_bands])
+      }, logical(1))
+      overlay_choices[keep]
     }
     # Second pass: hide DSM / DTM / CHM rows when the file isn't on
     # disk yet (so users don't pick a layer that will fail to load).
@@ -5754,7 +6056,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$browser_go, {
     path <- input$browser_path_text
-    validate(need(nzchar(path), "Enter a folder path."))
+    observer_need(nzchar(path), "Enter a folder path.")
     if (dir.exists(path)) {
       browser_dir(normalizePath(path, mustWork = FALSE))
       browser_selected(normalizePath(path, mustWork = FALSE))
@@ -5944,7 +6246,10 @@ server <- function(input, output, session) {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
     paths <- odm_product_paths(p)
-    updateTextInput(session, "orthomosaic",     value = unname(p$odm_orthomosaic))
+    # Use the resolved path, not project$odm_orthomosaic: on a DJI Mavic 3M
+    # flight the latter is the RGB band run, and pointing the GIS tab at it
+    # hides NIR / RedEdge and every index that needs them.
+    updateTextInput(session, "orthomosaic",     value = unname(paths[["orthomosaic"]]))
     updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
     showNotification("Reads switched back to the cloud-synced project folder.",
                      type = "message", duration = 6)
@@ -6262,8 +6567,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$processing_preset, {
     preset <- input$processing_preset
-    if (identical(preset, "Fast orthomosaic only")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = TRUE)
+    if (identical(preset, "Orthomosaic only")) {
       updateCheckboxInput(session, "build_dsm", value = FALSE)
       updateCheckboxInput(session, "build_dtm", value = FALSE)
       updateCheckboxInput(session, "pc_las", value = FALSE)
@@ -6273,7 +6577,6 @@ server <- function(input, output, session) {
       updateCheckboxInput(session, "three_d_tiles", value = FALSE)
       updateCheckboxInput(session, "gltf", value = FALSE)
     } else if (identical(preset, "Scientific canopy model (recommended)")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = FALSE)
       updateCheckboxInput(session, "build_dsm", value = TRUE)
       updateCheckboxInput(session, "build_dtm", value = TRUE)
       updateCheckboxInput(session, "pc_las", value = TRUE)
@@ -6283,7 +6586,6 @@ server <- function(input, output, session) {
       updateCheckboxInput(session, "three_d_tiles", value = FALSE)
       updateCheckboxInput(session, "gltf", value = FALSE)
     } else if (identical(preset, "Full 3D deliverables")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = FALSE)
       updateCheckboxInput(session, "build_dsm", value = TRUE)
       updateCheckboxInput(session, "build_dtm", value = TRUE)
       updateCheckboxInput(session, "pc_las", value = TRUE)
@@ -6860,7 +7162,7 @@ server <- function(input, output, session) {
   #     opacity, without resetting pan/zoom).
   render_gis_overlays <- function(all_selected, opacity, fit_to_bounds = TRUE,
                                   stretch_mode = "Fixed semantic") {
-    validate(need(length(all_selected) > 0, "Select at least one overlay product."))
+    observer_need(length(all_selected) > 0, "Select at least one overlay product.")
 
     # Hillshade + the four canonical raster products (RGB / DSM / DTM /
     # CHM) live outside gis_stack() -- they read from external files.
@@ -6875,11 +7177,11 @@ server <- function(input, output, session) {
     if (!is.null(x)) {
       spectral_selected <- intersect(spectral_selected, names(x))
     }
-    validate(need(
+    observer_need(
       hillshade_selected || length(external_products) > 0 ||
         length(spectral_selected) > 0,
       "Selected products are not available in the current raster stack."
-    ))
+    )
 
     # Helper: resolve a product key to its on-disk path, preferring the
     # local cache (~/.dronebior/cache/<slug>/) when migration ran.
@@ -7214,7 +7516,7 @@ server <- function(input, output, session) {
   observeEvent(input$save_annotations, {
     with_error_toast("Save annotations", {
       df <- annotations()
-      validate(need(nrow(df) > 0, "No annotations to save."))
+      observer_need(nrow(df) > 0, "No annotations to save.")
       out_path <- studio_assets_annotations_path(input$project_dir)
       dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
       sf_obj <- sf::st_as_sf(df, coords = c("lng", "lat"), crs = 4326)
@@ -7240,9 +7542,9 @@ server <- function(input, output, session) {
   observeEvent(input$load_annotations, {
     with_error_toast("Load annotations", {
       file <- input$load_annotations
-      validate(need(!is.null(file), "Select a GeoJSON file."))
+      observer_need(!is.null(file), "Select a GeoJSON file.")
       g <- sf::st_read(file$datapath, quiet = TRUE)
-      validate(need(nrow(g) > 0, "GeoJSON file is empty."))
+      observer_need(nrow(g) > 0, "GeoJSON file is empty.")
       coords <- sf::st_coordinates(sf::st_transform(g, 4326))
       label_col <- if ("label" %in% names(g)) as.character(g$label) else rep("", nrow(g))
       created_col <- if ("created_at" %in% names(g)) as.character(g$created_at) else rep("", nrow(g))
@@ -7825,9 +8127,12 @@ server <- function(input, output, session) {
         project_name = project()$odm_project_name,
         camera_type = input$camera_type %||% "multispectral",
         orthophoto_resolution_cm = input$resolution,
-        fast_orthophoto = input$fast_orthophoto,
+        fast_orthophoto = FALSE,
         build_dsm = input$build_dsm,
         build_dtm = input$build_dtm,
+        pc_filter = input$pc_filter_stage0 %||% 2.5,
+        pc_sample = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+        pc_rectify = isTRUE(input$pc_rectify_stage0),
         pc_las = input$pc_las,
         pc_copc = input$pc_copc,
         pc_csv = input$pc_csv,
@@ -8509,9 +8814,10 @@ server <- function(input, output, session) {
   })
 
   output$engine_note <- renderText({
-    if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
-      "Fast orthophoto prioritizes rapid orthomosaic generation and ODM can skip full textured 3D outputs. Disable fast orthophoto for commercial-style 3D deliverables."
-    } else if (isTRUE(input$build_dsm) && isTRUE(input$build_dtm)) {
+    # The fast-orthophoto warnings that used to live here are gone with the
+    # control itself: reconstruction is always dense now, so the sparse-cloud
+    # trap they guarded against cannot be reached from the UI.
+    if (isTRUE(input$build_dsm) && isTRUE(input$build_dtm)) {
       "DSM and DTM are enabled. This supports canopy height modeling and later tree segmentation."
     } else {
       "Enable DSM and DTM if you want scientifically defensible tree height, crown and volume estimates."
@@ -8526,9 +8832,13 @@ server <- function(input, output, session) {
       project()                            ,
       camera_type             = cam        ,
       orthophoto_resolution_cm = input$resolution,
-      fast_orthophoto         = input$fast_orthophoto,
+      fast_orthophoto         = FALSE,  # removed from the UI: it skips the dense
+                                        # reconstruction every DEM depends on
       build_dsm               = input$build_dsm,
       build_dtm               = input$build_dtm,
+      pc_filter               = input$pc_filter_stage0 %||% 2.5,
+      pc_sample               = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+      pc_rectify              = isTRUE(input$pc_rectify_stage0),
       pc_las                  = input$pc_las,
       pc_copc                 = input$pc_copc,
       pc_csv                  = input$pc_csv,
@@ -8539,9 +8849,9 @@ server <- function(input, output, session) {
 
     with_error_toast("Run processing engine", {
       if (identical(engine, "webodm")) {
-        validate(need(nzchar(input$webodm_url  %||% ""), "WebODM URL is required."))
-        validate(need(nzchar(input$webodm_user %||% ""), "WebODM username is required."))
-        validate(need(nzchar(input$webodm_pass %||% ""), "WebODM password is required."))
+        observer_need(nzchar(input$webodm_url  %||% ""), "WebODM URL is required.")
+        observer_need(nzchar(input$webodm_user %||% ""), "WebODM username is required.")
+        observer_need(nzchar(input$webodm_pass %||% ""), "WebODM password is required.")
         showNotification(
           paste0("Submitting to WebODM at ", input$webodm_url,
                  ". This can take many hours; status updates appear in the R console."),
@@ -8676,9 +8986,16 @@ server <- function(input, output, session) {
           project_name             = p$odm_project_name,
           camera_type              = cam,
           orthophoto_resolution_cm = input$resolution,
-          fast_orthophoto          = input$fast_orthophoto,
+          fast_orthophoto          = FALSE,
           build_dsm                = input$build_dsm,
           build_dtm                = input$build_dtm,
+          # Reconstruction cleanup, read from the Point Cloud tab (the single
+          # source of truth). This local Docker run previously omitted these,
+          # so the outlier filter / rectify sliders and the preview / WebODM
+          # command silently disagreed with what actually ran.
+          pc_filter                = input$pc_filter_stage0 %||% 2.5,
+          pc_sample                = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+          pc_rectify               = isTRUE(input$pc_rectify_stage0),
           pc_las                   = input$pc_las,
           pc_copc                  = input$pc_copc,
           pc_csv                   = input$pc_csv,
@@ -8711,7 +9028,6 @@ server <- function(input, output, session) {
         # once ODM finishes (we record orthomosaic/dsm/dtm/etc. paths
         # by reading odm_product_paths() and checking file.exists()).
         preset_bits <- c(
-          if (isTRUE(input$fast_orthophoto)) "fast_orthophoto",
           if (isTRUE(input$build_dsm))       "dsm",
           if (isTRUE(input$build_dtm))       "dtm",
           if (isTRUE(input$pc_las))          "pc_las",
@@ -9143,11 +9459,11 @@ server <- function(input, output, session) {
     # outputs to disk.
     thresholds_full <- c(input$class_water_max, input$class_bare_max,
                          input$class_stress_max, input$class_moderate_max)
-    validate(need(all(diff(sort(thresholds_full)) > 0),
-                  "Application thresholds must be distinct."))
-    validate(need(input$application_index %in% names(all_indices()),
+    observer_need(all(diff(sort(thresholds_full)) > 0),
+                  "Application thresholds must be distinct.")
+    observer_need(input$application_index %in% names(all_indices()),
                   paste("Index not available at full resolution:",
-                        input$application_index)))
+                        input$application_index))
     app_raster <- build_application_map(
       all_indices()[[input$application_index]], thresholds_full
     )
@@ -9261,9 +9577,18 @@ server <- function(input, output, session) {
     }
     # No chm.tif on disk. Build via the package helper (which writes
     # one to the cache so the next call hits the fast path above).
-    dsm_path <- products[["dsm"]]
-    dtm_path <- products[["dtm"]]
-    if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
+    # products[[...]] is NULL when that product was never discovered, and
+    # file.exists(NULL) is logical(0), so a bare `if (!file.exists(...))`
+    # raises "argument is of length zero". That error was then swallowed by the
+    # caller's tryCatch and reported as "no CHM is available", hiding the real
+    # reason. Normalise to a plain missing-file answer instead.
+    one_path <- function(p) {
+      if (length(p) != 1L || is.na(p)) "" else as.character(p)
+    }
+    dsm_path <- one_path(products[["dsm"]])
+    dtm_path <- one_path(products[["dtm"]])
+    if (!nzchar(dsm_path) || !nzchar(dtm_path) ||
+        !file.exists(dsm_path) || !file.exists(dtm_path)) {
       return(NULL)
     }
     p <- tryCatch(project(), error = function(e) NULL)
@@ -9552,9 +9877,343 @@ server <- function(input, output, session) {
     selected_ids_value(unique(as.integer(unlist(ids))))
   }, ignoreInit = TRUE)
 
+
+  # --- Stage 0: reconstruct to the point cloud, clean it, then derive ------
+  stage0_tick <- reactiveVal(0L)
+
+  # Keep the stage-0 path inputs in step with the other tabs.
+  observeEvent(input$project_dir_pc, {
+    if (!identical(input$project_dir_pc, input$project_dir)) {
+      updateTextInput(session, "project_dir", value = input$project_dir_pc)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir_pc, {
+    if (!identical(input$images_dir_pc, input$images_dir)) {
+      updateTextInput(session, "images_dir", value = input$images_dir_pc)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$project_dir, {
+    if (!identical(input$project_dir_pc, input$project_dir)) {
+      updateTextInput(session, "project_dir_pc", value = input$project_dir)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir, {
+    if (!identical(input$images_dir_pc, input$images_dir)) {
+      updateTextInput(session, "images_dir_pc", value = input$images_dir)
+    }
+  }, ignoreInit = TRUE)
+
+  stage0_ply <- reactive({
+    stage0_tick()
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return(NA_character_)
+    file.path(p$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  })
+
+  output$stage0_cloud_status <- renderText({
+    ply <- stage0_ply()
+    if (is.na(ply)) return("No project selected yet.")
+    if (!file.exists(ply)) {
+      return(paste0("Not built yet.\n", ply,
+                    "\n\nRun step 1 to produce it."))
+    }
+    h <- tryCatch(parse_ply_header(ply), error = function(e) NULL)
+    if (is.null(h)) return(paste0("Present but unreadable as a binary PLY:\n", ply))
+    orig <- cloud_original_path(ply)
+    legacy <- paste0(ply, ".orig")
+    if (!file.exists(orig) && file.exists(legacy)) orig <- legacy
+    paste0(
+      format(h$n_vertices, big.mark = ","), " vertices, ",
+      round(file.size(ply) / 1024^2, 1), " MB\n", ply,
+      if (file.exists(orig))
+        sprintf("\n\nEdited: the untouched reconstruction (%s vertices) is kept as %s",
+                format(parse_ply_header(orig)$n_vertices, big.mark = ","),
+                basename(orig)) else "",
+      "\nLast written: ", format(file.info(ply)$mtime, "%Y-%m-%d %H:%M")
+    )
+  })
+
+  output$stage0_command <- renderText({
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return("Set a project root first.")
+    args <- tryCatch(build_odm_args(
+      dataset_dir  = p$odm_dataset_dir,
+      project_name = p$odm_project_name,
+      camera_type  = input$camera_type %||% "multispectral",
+      pc_quality   = input$pc_quality %||% "medium",
+      pc_filter    = input$pc_filter_stage0 %||% 2.5,
+      pc_rectify   = isTRUE(input$pc_rectify_stage0),
+      fast_orthophoto = FALSE,
+      end_with     = "odm_filterpoints"
+    ), error = function(e) NULL)
+    if (is.null(args)) return("Could not build the command.")
+    paste("docker", paste(shQuote(args), collapse = " "))
+  })
+
+  observeEvent(input$goto_cloud_editor, {
+    ply <- stage0_ply()
+    if (is.na(ply) || !file.exists(ply)) {
+      showNotification(
+        "Build the point cloud first (step 1); there is nothing to inspect yet.",
+        type = "warning", duration = 8)
+      return()
+    }
+    updateTextInput(session, "ply_path", value = ply)
+    # The 3D viewer and its select tools are heavy, shared infrastructure that
+    # lives on the 3D Modeling tab, so cleaning happens there - but land the
+    # user directly on the cleaning panel and give them a one-click way back,
+    # so it reads as step 2 of the Point Cloud flow rather than a dead-end.
+    updateNavbarPage(session, "main_nav", selected = "3D Modeling")
+    bslib::accordion_panel_open("modeling_sidebar",
+                                "Point Cloud step 2 - clean the cloud")
+    showNotification(
+      paste0("Select the bad points (box / lasso / polygon) and delete them, ",
+             "then click “Back to Point Cloud” to build the products."),
+      type = "message", duration = 12)
+  })
+
+  observeEvent(input$back_to_point_cloud, {
+    updateNavbarPage(session, "main_nav", selected = "Point Cloud")
+    showNotification(
+      "Back on the Point Cloud tab. Run step 3 to build DSM, DTM and orthomosaic from the cleaned cloud.",
+      type = "message", duration = 10)
+  })
+
+  observeEvent(input$run_stage0, {
+    with_error_toast("Build the point cloud", {
+      p <- project()
+      showNotification(
+        paste0("Reconstructing to the point cloud at '",
+               input$pc_quality %||% "medium",
+               "' detail. This is the long part; the products come later."),
+        type = "message", duration = 10)
+      res <- build_point_cloud_only(
+        p,
+        pc_quality  = input$pc_quality %||% "medium",
+        pc_filter   = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify  = isTRUE(input$pc_rectify_stage0),
+        camera_type = input$camera_type %||% "multispectral"
+      )
+      stage0_tick(isolate(stage0_tick()) + 1L)
+      if (isTRUE(res$exists)) {
+        # A fresh reconstruction replaces the working cloud, so any snapshot
+        # from a previous build is stale (it describes a different cloud).
+        # Drop it, so the next edit snapshots THIS reconstruction.
+        stale <- cloud_original_path(res$point_cloud)
+        if (nzchar(stale) && file.exists(stale)) unlink(stale)
+        updateTextInput(session, "ply_path", value = res$point_cloud)
+        showNotification(
+          sprintf("Point cloud ready: %s vertices. Inspect it in 3D before building the products.",
+                  format(parse_ply_header(res$point_cloud)$n_vertices, big.mark = ",")),
+          type = "message", duration = 12)
+      } else {
+        showNotification(
+          "The run finished but no point cloud was written; check the ODM log.",
+          type = "warning", duration = 12)
+      }
+    })
+  })
+
+  observeEvent(input$run_stage0_rebuild, {
+    ply <- stage0_ply()
+    if (is.na(ply) || !file.exists(ply)) {
+      showNotification("There is no point cloud yet; run step 1 first.",
+                       type = "warning", duration = 8)
+      return()
+    }
+    with_error_toast("Build products from the cloud", {
+      p <- project()
+      res <- rebuild_from_edited_cloud(
+        p,
+        build_dsm   = TRUE,
+        build_dtm   = TRUE,
+        camera_type = input$camera_type %||% "multispectral"
+      )
+      stage0_tick(isolate(stage0_tick()) + 1L)
+      showNotification(
+        "Products rebuilt from the current point cloud.",
+        type = "message", duration = 10)
+      invisible(res)
+    })
+  })
+
   observeEvent(input$clear_point_selection, {
     selected_ids_value(integer())
     showNotification("Selection cleared.", type = "message", duration = 3)
+  })
+
+  # --- Cloud editing -------------------------------------------------------
+  # The lasso already reports point_id values, which read_ply_point_cloud()
+  # defines as indices into the FULL cloud, not into the decimated preview.
+  # That is what makes deleting from the file safe: the preview can be 50k of
+  # 2.4M points and the right vertices still go.
+  cloud_edit_tick <- reactiveVal(0L)
+
+  # input$ply_path may point at the LOCAL CACHE copy: when a cached file
+  # exists the path inputs are repointed at it, and the preview is read from
+  # there. Editing that copy would leave the project's own
+  # odm_filterpoints/point_cloud.ply -- the only file ODM meshes from --
+  # untouched, so the rebuild would silently reproduce the same products. The
+  # edit therefore always targets the project file, and refuses when the
+  # preview clearly came from a different cloud.
+  cloud_edit_target <- function() {
+    shown <- input$ply_path %||% ""
+    proj <- tryCatch(project(), error = function(e) NULL)
+    canonical <- if (!is.null(proj)) {
+      unname(odm_product_paths(proj)[["point_cloud_ply"]])
+    } else shown
+    if (!nzchar(canonical) || !file.exists(canonical)) canonical <- shown
+    same <- normalizePath(shown, mustWork = FALSE) ==
+            normalizePath(canonical, mustWork = FALSE)
+    list(path = canonical, shown = shown, is_cache = !same)
+  }
+
+  # The named, visible snapshot of the untouched reconstruction. Editing works
+  # on a copy: the pristine cloud ODM produced is preserved here before the
+  # first edit and is never overwritten, so it is always recoverable. ODM has
+  # no flag to name its point-cloud input -- it always meshes
+  # odm_filterpoints/point_cloud.ply -- so the edited working copy has to keep
+  # that canonical name while the original is set aside under this one.
+  cloud_original_path <- function(ply) {
+    if (!nzchar(ply)) return("")
+    paste0(sub("\\.ply$", "", ply, ignore.case = TRUE), ".original.ply")
+  }
+
+  output$cloud_edit_status <- renderText({
+    cloud_edit_tick()
+    tgt <- cloud_edit_target()
+    if (!nzchar(tgt$path) || !file.exists(tgt$path)) return("No PLY loaded.")
+    h <- tryCatch(parse_ply_header(tgt$path), error = function(e) NULL)
+    if (is.null(h)) return("This file is not a binary little-endian PLY.")
+    n_sel <- length(selected_ids_value() %||% integer())
+    paste0(
+      sprintf("%s vertices in the file; %s selected.",
+              format(h$n_vertices, big.mark = ","), format(n_sel, big.mark = ",")),
+      if (isTRUE(tgt$is_cache))
+        sprintf(" Editing the project file (%s), not the cached preview.",
+                basename(tgt$path)) else ""
+    )
+  })
+
+  observeEvent(input$delete_selected_points, {
+    tgt <- cloud_edit_target()
+    p <- tgt$path
+    ids <- unique(as.integer(selected_ids_value() %||% integer()))
+    # A plain validate() here would abort the observer silently, so the button
+    # would look dead. Say what is missing instead.
+    if (!nzchar(p) || !file.exists(p)) {
+      showNotification("Load a PLY point cloud first.", type = "warning",
+                       duration = 6)
+      return()
+    }
+    if (!length(ids)) {
+      showNotification("Select the points to delete first (box, lasso or polygon).",
+                       type = "warning", duration = 6)
+      return()
+    }
+    h <- tryCatch(parse_ply_header(p), error = function(e) NULL)
+    if (is.null(h)) {
+      showNotification("This file is not a binary little-endian PLY.",
+                       type = "error", duration = 8)
+      return()
+    }
+    # point_id values index the cloud the preview was read from. If that file
+    # and the project file no longer hold the same number of vertices, the
+    # indices mean different points and the wrong ones would be deleted.
+    if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) {
+      h_shown <- tryCatch(parse_ply_header(tgt$shown), error = function(e) NULL)
+      if (is.null(h_shown) || !identical(h_shown$n_vertices, h$n_vertices)) {
+        showNotification(
+          paste0("The previewed cloud and the project cloud have different ",
+                 "vertex counts, so the selection cannot be mapped safely. ",
+                 "Reload the cloud before editing."),
+          type = "error", duration = 12)
+        return()
+      }
+    }
+    if (max(ids) > h$n_vertices) {
+      showNotification(
+        sprintf("The selection references vertex %s but the cloud has %s. Reload the cloud before editing.",
+                format(max(ids), big.mark = ","),
+                format(h$n_vertices, big.mark = ",")),
+        type = "error", duration = 12)
+      return()
+    }
+    # Deleting rewrites the file ODM will mesh from, so confirm with the count.
+    showModal(modalDialog(
+      title = "Delete points from the point cloud?",
+      p(sprintf("This removes %s of %s vertices from:",
+                format(length(ids), big.mark = ","),
+                format(h$n_vertices, big.mark = ","))),
+      tags$pre(p),
+      p("The edit is written to the working cloud. The untouched ",
+        "reconstruction is kept beside it as ",
+        tags$code(basename(cloud_original_path(p))),
+        " and is used by \"Restore\", so this is reversible."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_delete_points", "Delete", class = "btn-danger")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$confirm_delete_points, {
+    removeModal()
+    with_error_toast("Delete points from the cloud", {
+      tgt <- cloud_edit_target()
+      p <- tgt$path
+      ids <- unique(as.integer(selected_ids_value() %||% integer()))
+      h <- parse_ply_header(p)
+      keep <- setdiff(seq_len(h$n_vertices), ids)
+      orig <- cloud_original_path(p)
+      n <- with_gis_task(session, "Rewriting the point cloud",
+                         detail = sprintf("keeping %s vertices",
+                                          format(length(keep), big.mark = ",")),
+                         write_ply_subset(p, p, keep = keep, backup = TRUE,
+                                          backup_path = orig))
+      # The cached preview copy is now a different cloud; drop it so the next
+      # load re-caches instead of showing the points that were just deleted.
+      if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Point Cloud” to build the products from the cleaned cloud.",
+                format(length(ids), big.mark = ","), format(n, big.mark = ",")),
+        type = "message", duration = 12)
+    })
+  })
+
+  observeEvent(input$restore_cloud_backup, {
+    with_error_toast("Restore the original cloud", {
+      tgt <- cloud_edit_target()
+      p <- tgt$path
+      # Prefer the named snapshot; fall back to the historical .orig dotfile so
+      # clouds edited before this change stay restorable.
+      orig <- cloud_original_path(p)
+      if (nzchar(p) && !file.exists(orig) && file.exists(paste0(p, ".orig"))) {
+        orig <- paste0(p, ".orig")
+      }
+      # validate() would abort silently and leave the button looking dead.
+      if (!nzchar(p) || !file.exists(orig)) {
+        showNotification(
+          paste0("There is no untouched copy beside ", basename(p),
+                 "; nothing to restore."),
+          type = "warning", duration = 8)
+        return()
+      }
+      ok <- file.copy(orig, p, overwrite = TRUE)
+      if (!ok) stop("Could not copy the backup back over ", p, call. = FALSE)
+      if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      showNotification(
+        sprintf("Restored the original cloud (%s vertices).",
+                format(parse_ply_header(p)$n_vertices, big.mark = ",")),
+        type = "message", duration = 8)
+    })
   })
 
   # Surface the JS-detected coordinate-frame mismatch as a one-shot
@@ -12114,129 +12773,1215 @@ server <- function(input, output, session) {
     format_tree_table(x[x$tree_id == id, , drop = FALSE])
   }, digits = 2)
 
-  # ---- Field Models CSV mapping wizard ----------------------------
-  # Reads the uploaded CSV and auto-detects column roles. The user
-  # confirms / re-maps via dropdowns in the sidebar. The chosen
-  # mapping is captured in input$field_col_id / biomass / x / y /
-  # crs / units and used by the extract step below (when the user
-  # left the defaults alone, the existing read_field_data() heuristics
-  # still apply).
-  field_csv_raw <- reactive({
-    req(input$field_file)
-    tryCatch(utils::read.csv(input$field_file$datapath,
-                             stringsAsFactors = FALSE),
-             error = function(e) NULL)
-  })
-  output$field_csv_preview <- renderTable({
-    df <- field_csv_raw()
-    validate(need(!is.null(df) && nrow(df) > 0,
-                  "Upload a CSV in the sidebar to see a preview."))
-    utils::head(df, 10)
-  }, digits = 2)
-  output$field_csv_diagnostics <- renderUI({
-    df <- field_csv_raw()
-    if (is.null(df) || nrow(df) == 0) {
-      return(div(class = "small text-muted",
-                 "No CSV loaded yet."))
-    }
-    classes <- vapply(df, function(v) class(v)[[1]], character(1))
-    n_missing <- vapply(df, function(v) sum(is.na(v)), integer(1))
-    rows <- vapply(names(df), function(col) {
-      sprintf("<tr><td><b>%s</b></td><td><code>%s</code></td><td>%d missing</td></tr>",
-              col, classes[[col]], n_missing[[col]])
-    }, character(1))
-    HTML(paste0(
-      "<table class='table table-sm small'><thead><tr>",
-      "<th>Column</th><th>Type</th><th>NA</th></tr></thead><tbody>",
-      paste(rows, collapse = ""),
-      "</tbody></table>"
-    ))
-  })
-  output$field_csv_mapping <- renderUI({
-    df <- field_csv_raw()
-    if (is.null(df) || nrow(df) == 0) {
-      return(div(class = "small text-muted",
-                 "Upload a CSV first to map columns."))
-    }
-    cols <- names(df)
-    guess <- function(patterns) {
-      hit <- cols[grepl(paste(patterns, collapse = "|"),
-                        cols, ignore.case = TRUE)]
-      if (length(hit)) hit[1L] else NULL
-    }
-    sel <- list(
-      id      = guess(c("sample_id", "^id$", "plot_id", "name")),
-      biomass = guess(c("biomass", "yield", "kgha", "kg_ha", "agb")),
-      x       = guess(c("^x$", "^lon$", "longitude", "easting")),
-      y       = guess(c("^y$", "^lat$", "latitude", "northing"))
-    )
-    tagList(
-      div(class = "small text-muted mb-1",
-          paste0("Map the columns of your CSV (", length(cols),
-                 " columns detected, ", nrow(df), " rows).")),
-      selectInput("field_col_id",      "Sample ID column",
-                  choices = c("(none)", cols), selected = sel$id %||% "(none)"),
-      selectInput("field_col_biomass", "Biomass column",
-                  choices = c("(none)", cols),
-                  selected = sel$biomass %||% "(none)"),
-      selectInput("field_col_x",       "X / Longitude",
-                  choices = c("(none)", cols), selected = sel$x %||% "(none)"),
-      selectInput("field_col_y",       "Y / Latitude",
-                  choices = c("(none)", cols), selected = sel$y %||% "(none)"),
-      selectInput("field_units", "Biomass units",
-                  choices = c("kg/ha", "Mg/ha", "g/m^2", "unknown"),
-                  selected = "kg/ha"),
-      numericInput("field_crs_epsg",
-                   "Coordinate CRS (EPSG)",
-                   value = 4326, min = 1000, max = 100000, step = 1)
-    )
-  })
+  # ---- Field Models -------------------------------------------------
+  # Thin app layer over the package: every piece of science lives in
+  # R/field_ingest.R (upload staging + ingest), R/field_extract.R
+  # (windowed extraction), R/field_covariates.R (catalogue, prediction
+  # stack, map breaks) and R/field_caret.R (catalogue, split, training,
+  # metrics, prediction, export, bundle). Nothing here computes an
+  # index, resamples a raster or talks to caret directly.
 
-  extracted_field <- eventReactive(input$extract_field, {
-    with_error_toast("Extract field samples", {
-      req(input$field_file, reflectance(), indices())
-      df <- field_csv_raw()
-      validate(need(!is.null(df) && nrow(df) > 0,
-                    "Could not read the uploaded CSV."))
-
-      # Honour the wizard mapping when the user filled it in;
-      # otherwise fall back to read_field_data() defaults.
-      use_wizard <- isTRUE(nzchar(input$field_col_id %||% "") &&
-                            input$field_col_id != "(none)")
-      if (isTRUE(use_wizard)) {
-        rename_if <- function(df, from, to) {
-          if (is.null(from) || !nzchar(from) ||
-              identical(from, "(none)") || !from %in% names(df)) {
-            return(df)
-          }
-          names(df)[names(df) == from] <- to
-          df
-        }
-        df <- rename_if(df, input$field_col_id,      "sample_id")
-        df <- rename_if(df, input$field_col_biomass, "biomass_kgha")
-        df <- rename_if(df, input$field_col_x,       "x")
-        df <- rename_if(df, input$field_col_y,       "y")
-        # Convert biomass to kg/ha when the user said something else.
-        if (identical(input$field_units, "Mg/ha")) {
-          df$biomass_kgha <- df$biomass_kgha * 1000
-        } else if (identical(input$field_units, "g/m^2")) {
-          df$biomass_kgha <- df$biomass_kgha * 10
-        }
-        tmp <- tempfile(fileext = ".csv")
-        utils::write.csv(df, tmp, row.names = FALSE)
-        field <- read_field_data(tmp)
-      } else {
-        field <- read_field_data(input$field_file$datapath)
-      }
-      predictors <- c(reflectance(), indices())
-      extract_field_spectral_data(field, predictors)
+  # -- 1. Ingest ------------------------------------------------------
+  # Shiny writes a multi-file upload as 0.dbf / 1.prj / 2.shp / 3.shx,
+  # and sf::st_read() on the mangled .shp fails outright. Staging
+  # restores the original basenames (or unzips a .zip) first.
+  field_staged_path <- eventReactive(input$field_file, {
+    with_error_toast("Load field points", {
+      stage_uploaded_vector(input$field_file$name, input$field_file$datapath)
     })
   })
 
-  output$field_preview <- renderTable({
-    req(extracted_field())
-    utils::head(extracted_field(), 20)
+  # Probe the columns without committing to a mapping. ESRI DBF
+  # truncates names to 10 characters, so the wizard offers whatever
+  # actually came back rather than hard-coded column names.
+  field_probe <- reactive({
+    req(field_staged_path())
+    with_error_toast("Inspect field points",
+                     field_source_columns(field_staged_path()))
+  })
+
+  # CRS of the loaded orthomosaic. Read from the cheap preview grid so
+  # nothing full-resolution is touched while the user is still mapping
+  # columns; only the CRS string is used.
+  field_target_crs <- reactive({
+    p <- tryCatch(reflectance_preview(), error = function(e) NULL)
+    validate(need(!is.null(p),
+                  "Load a mosaic in Spectral Analytics first - field points are reprojected onto its CRS."))
+    terra::crs(p)
+  })
+
+  field_target_epsg <- reactive({
+    p <- tryCatch(reflectance_preview(), error = function(e) NULL)
+    if (is.null(p)) return(NA_integer_)
+    code <- tryCatch(terra::crs(p, describe = TRUE)$code,
+                     error = function(e) NA_character_)
+    suppressWarnings(as.integer(code))
+  })
+
+  output$field_mapping_ui <- renderUI({
+    probe <- tryCatch(field_probe(), error = function(e) NULL)
+    if (is.null(probe)) {
+      return(div(class = "small text-muted",
+                 "Upload a CSV, shapefile or GeoPackage to map its columns."))
+    }
+    cols <- probe$columns
+    if (length(cols) == 0) {
+      return(div(class = "small text-muted",
+                 "That file has no attribute columns to map."))
+    }
+    guess <- probe$guess
+    tabular <- !isTRUE(probe$has_geometry)
+    epsg_default <- field_target_epsg()
+    if (is.na(epsg_default)) epsg_default <- 4326
+
+    coord_inputs <- NULL
+    if (tabular) {
+      coord_inputs <- tagList(
+        selectInput("field_col_x", "X / Longitude column",
+                    choices = cols, selected = guess$x %||% cols[[1]]),
+        selectInput("field_col_y", "Y / Latitude column",
+                    choices = cols, selected = guess$y %||% cols[[1]])
+      )
+    }
+    # The CRS input is only offered when the file cannot supply one -
+    # and unlike the previous wizard it is actually read: a CSV with
+    # lon/lat in columns called x/y silently extracted garbage before.
+    crs_input <- NULL
+    if (tabular || is.na(probe$epsg)) {
+      crs_input <- tagList(
+        numericInput("field_crs_epsg", "Coordinate CRS (EPSG)",
+                     value = if (tabular) 4326 else epsg_default,
+                     min = 1000, max = 1000000, step = 1),
+        div(class = "small text-muted mb-2",
+            "Required: plain x / y numbers carry no spatial meaning. 4326 for longitude / latitude in degrees.")
+      )
+    }
+    tagList(
+      div(class = "small text-muted mb-1",
+          sprintf("%s: %d columns, %d rows%s.",
+                  if (tabular) "Table" else paste0("Vector (", probe$geom_type, ")"),
+                  length(cols), probe$n_rows,
+                  if (!is.na(probe$epsg)) paste0(", EPSG:", probe$epsg) else "")),
+      selectInput("field_col_id", "Sample ID column",
+                  choices = cols, selected = guess$id %||% cols[[1]]),
+      selectInput("field_col_biomass", "Biomass column",
+                  choices = cols, selected = guess$biomass %||% cols[[1]]),
+      coord_inputs,
+      selectInput("field_units", "Biomass units",
+                  choices = c("kg/ha", "Mg/ha", "g/m^2", "unknown"),
+                  selected = "kg/ha"),
+      crs_input
+    )
+  })
+
+  # sf POINT layer, renamed to sample_id / biomass_kgha, converted to
+  # kg/ha and already reprojected onto the orthomosaic CRS.
+  field_points <- reactive({
+    path <- field_staged_path()
+    req(path)
+    probe <- field_probe()
+    req(probe)
+    id_col <- input$field_col_id
+    biomass_col <- input$field_col_biomass
+    req(id_col, biomass_col)
+    req(id_col %in% probe$columns, biomass_col %in% probe$columns)
+    with_error_toast("Read field points", {
+      tabular <- !isTRUE(probe$has_geometry)
+      crs_in <- if (tabular || is.na(probe$epsg)) input$field_crs_epsg else NULL
+      if (tabular) req(input$field_col_x, input$field_col_y, input$field_crs_epsg)
+      pts <- read_field_points(
+        path,
+        crs   = crs_in,
+        x_col = if (tabular) input$field_col_x else NULL,
+        y_col = if (tabular) input$field_col_y else NULL
+      )
+      prepare_field_table(pts, id_col, biomass_col,
+                          units = input$field_units %||% "kg/ha",
+                          target_crs = field_target_crs())
+    })
+  })
+
+  output$field_points_status <- renderUI({
+    pts <- tryCatch(field_points(), error = function(e) NULL)
+    if (is.null(pts)) {
+      return(div(class = "small text-muted",
+                 "Upload field points in the sidebar, then map the sample-id and biomass columns. Shapefiles need all four parts (.shp .shx .dbf .prj) selected together, or one .zip."))
+    }
+    biomass <- pts$biomass_kgha
+    dropped <- attr(pts, "dropped_na") %||% 0L
+    centroid_note <- attr(pts, "centroid_note")
+    crs_name <- tryCatch(terra::crs(reflectance_preview(), describe = TRUE)$name,
+                         error = function(e) NA_character_)
+    epsg <- field_target_epsg()
+    outside <- tryCatch({
+      e <- terra::ext(reflectance_preview())
+      xy <- sf::st_coordinates(pts)
+      sum(!(xy[, 1] >= e[1] & xy[, 1] <= e[2] &
+              xy[, 2] >= e[3] & xy[, 2] <= e[4]))
+    }, error = function(e) NA_integer_)
+
+    bits <- c(
+      sprintf("%d field points", nrow(pts)),
+      sprintf("CRS %s", if (!is.na(epsg)) paste0("EPSG:", epsg) else (crs_name %||% "unknown")),
+      sprintf("biomass %.0f - %.0f kg/ha (entered as %s)",
+              min(biomass, na.rm = TRUE), max(biomass, na.rm = TRUE),
+              input$field_units %||% "kg/ha")
+    )
+    if (dropped > 0) {
+      bits <- c(bits, sprintf("%d row(s) dropped for missing biomass", dropped))
+    }
+    if (!is.na(outside) && outside > 0) {
+      bits <- c(bits, sprintf("%d point(s) outside the orthomosaic footprint", outside))
+    }
+    tagList(
+      div(class = if (!is.na(outside) && outside > 0) "small text-warning" else "small text-muted",
+          paste(bits, collapse = " · ")),
+      if (!is.null(centroid_note)) {
+        div(class = "small text-muted", centroid_note)
+      }
+    )
+  })
+
+  output$field_points_preview <- renderTable({
+    pts <- tryCatch(field_points(), error = function(e) NULL)
+    validate(need(!is.null(pts), "No field points loaded yet."))
+    utils::head(as.data.frame(sf::st_drop_geometry(pts)), 10)
   }, digits = 2)
+
+  # -- 2. Covariate catalogue ----------------------------------------
+  # Pure metadata: no raster is read here, so the picker is instant.
+  # Product availability is checked through cached_products() - never
+  # odm_product_paths() directly, which hits OneDrive Files-On-Demand.
+  # input$field_cov_refresh is a dependency because chm_raster()'s
+  # bindCache key is only the three product paths, so a rebuilt
+  # chm.tif at the same path would otherwise serve a stale raster.
+  field_cov_sources <- reactive({
+    input$field_cov_refresh
+    band_names <- tryCatch(names(reflectance_preview()),
+                           error = function(e) character(0))
+    custom <- tryCatch({
+      ci <- custom_index_raster()
+      if (is.null(ci)) NULL else names(ci)[[1L]]
+    }, error = function(e) NULL)
+    index_names <- tryCatch(names(all_indices_preview()),
+                            error = function(e) character(0))
+    if (!is.null(custom)) index_names <- setdiff(index_names, custom)
+
+    products <- tryCatch(cached_products(), error = function(e) NULL)
+    path_of <- function(key) {
+      if (is.null(products)) return("")
+      p <- unname(products[[key]] %||% "")
+      if (length(p) != 1L || is.na(p)) "" else as.character(p)
+    }
+    dsm_path <- path_of("dsm")
+    dtm_path <- path_of("dtm")
+    chm_path <- path_of("chm")
+    has_dsm <- nzchar(dsm_path) && file.exists(dsm_path)
+    has_dtm <- nzchar(dtm_path) && file.exists(dtm_path)
+    chm_alt <- if (has_dsm) file.path(dirname(dsm_path), "chm.tif") else ""
+    has_chm <- (nzchar(chm_path) && file.exists(chm_path)) ||
+      (nzchar(chm_alt) && file.exists(chm_alt)) ||
+      (has_dsm && has_dtm)
+    list(band_names = band_names, index_names = index_names,
+         custom = custom, has_chm = has_chm,
+         has_dsm = has_dsm, has_dtm = has_dtm)
+  })
+
+  field_cov_catalogue <- reactive({
+    s <- field_cov_sources()
+    field_covariate_catalogue(
+      band_names        = s$band_names,
+      index_names       = s$index_names,
+      custom_index_name = s$custom,
+      has_chm           = s$has_chm,
+      has_dsm           = s$has_dsm,
+      has_dtm           = s$has_dtm
+    )
+  })
+
+  field_cov_group_id <- function(group) paste0("field_cov_", make.names(group))
+
+  output$field_cov_picker <- renderUI({
+    cat_df <- field_cov_catalogue()
+    validate(need(nrow(cat_df) > 0,
+                  "Load a mosaic in Spectral Analytics first."))
+    s <- isolate(field_cov_sources())
+    groups <- unique(cat_df$group)
+    panels <- lapply(groups, function(g) {
+      sub <- cat_df[cat_df$group == g, , drop = FALSE]
+      gid <- field_cov_group_id(g)
+      current <- isolate(input[[gid]])
+      selected <- if (is.null(current)) {
+        sub$id[sub$recommended]
+      } else {
+        intersect(sub$id, current)
+      }
+      accordion_panel(
+        sprintf("%s (%d)", g, nrow(sub)),
+        checkboxGroupInput(
+          gid, NULL,
+          choices  = stats::setNames(sub$id, sub$label),
+          selected = selected
+        )
+      )
+    })
+    missing_note <- NULL
+    if (!isTRUE(s$has_chm)) {
+      missing_note <- div(
+        class = "small text-muted mt-1",
+        "Canopy-height covariates (CHM and the *_x_CHM proxies) need a CHM - build one in 3D Modeling, then click Refresh available layers."
+      )
+    }
+    tagList(
+      do.call(accordion, c(list(open = groups[[1]], multiple = TRUE), panels)),
+      missing_note
+    )
+  })
+
+  # THE covariate contract: this character vector is the vocabulary for
+  # extraction, training and prediction alike, in catalogue order.
+  field_cov_selected <- reactive({
+    cat_df <- field_cov_catalogue()
+    if (nrow(cat_df) == 0) return(character(0))
+    picked <- unlist(lapply(unique(cat_df$group),
+                            function(g) input[[field_cov_group_id(g)]]),
+                     use.names = FALSE)
+    intersect(cat_df$id, picked)
+  })
+
+  observeEvent(input$field_cov_recommended, {
+    cat_df <- field_cov_catalogue()
+    for (g in unique(cat_df$group)) {
+      sub <- cat_df[cat_df$group == g, , drop = FALSE]
+      updateCheckboxGroupInput(session, field_cov_group_id(g),
+                               selected = sub$id[sub$recommended])
+    }
+  })
+  observeEvent(input$field_cov_all, {
+    cat_df <- field_cov_catalogue()
+    for (g in unique(cat_df$group)) {
+      sub <- cat_df[cat_df$group == g, , drop = FALSE]
+      updateCheckboxGroupInput(session, field_cov_group_id(g),
+                               selected = sub$id)
+    }
+  })
+  observeEvent(input$field_cov_none, {
+    cat_df <- field_cov_catalogue()
+    for (g in unique(cat_df$group)) {
+      updateCheckboxGroupInput(session, field_cov_group_id(g),
+                               selected = character(0))
+    }
+  })
+
+  # The single most valuable feedback line in the tab: it prevents the
+  # 40-covariates / 30-plots mistake before it costs a training run.
+  output$field_cov_summary <- renderUI({
+    n_cov <- length(field_cov_selected())
+    pts <- tryCatch(field_points(), error = function(e) NULL)
+    n_pts <- if (is.null(pts)) 0L else nrow(pts)
+    if (n_cov == 0) {
+      return(div(class = "small text-muted mb-2",
+                 "No covariates ticked yet."))
+    }
+    ratio <- if (n_cov > 0) n_pts / n_cov else NA_real_
+    cls <- if (!is.finite(ratio) || n_pts == 0) "small text-muted mb-2"
+      else if (ratio < 2) "small text-danger mb-2"
+      else if (ratio < 5) "small text-warning mb-2"
+      else "small text-muted mb-2"
+    txt <- sprintf("%d covariates · %d points · %.1f points per covariate",
+                   n_cov, n_pts, ratio)
+    if (is.finite(ratio) && n_pts > 0 && ratio < 5) {
+      txt <- paste0(txt, " - fewer than 5 points per covariate risks overfitting.")
+    }
+    div(class = cls, txt)
+  })
+
+  # -- 3. Extraction window ------------------------------------------
+  # Native grid geometry, read from the mosaic header (not from a
+  # full-resolution reactive) so this stays free to recompute.
+  field_native_grid <- reactive({
+    m <- tryCatch(mosaic(), error = function(e) NULL)
+    if (is.null(m)) return(NULL)
+    f <- if (identical(input$downsample_method %||% "None", "None")) {
+      1L
+    } else {
+      max(1L, as.integer(input$downsample_factor %||% 1))
+    }
+    list(
+      ncell = terra::ncell(m$bands) / f^2,
+      res_m = as.numeric(terra::res(m$bands)[1L]) * f
+    )
+  })
+
+  output$field_window_footprint <- renderText({
+    w <- as.integer(input$field_window %||% 3)
+    g <- field_native_grid()
+    if (is.null(g) || !is.finite(g$res_m)) {
+      return(sprintf("%d x %d pixel window (%d pixels per sample).",
+                     w, w, w^2))
+    }
+    sprintf("%d x %d px = %.2f x %.2f m at %.1f cm GSD (%d pixels per sample).",
+            w, w, w * g$res_m, w * g$res_m, g$res_m * 100, w^2)
+  })
+
+  # -- 4. Extraction --------------------------------------------------
+  # Stored in reactiveVals so changing the model picker, the palette or
+  # the map detail never re-runs the extraction.
+  extracted_field <- reactiveVal(NULL)
+  field_points_used <- reactiveVal(NULL)
+  field_extract_elapsed <- reactiveVal(NA_real_)
+
+  field_aux_rasters <- function(selected) {
+    needs_chm <- ("CHM_m" %in% selected) || any(grepl("_x_CHM$", selected))
+    list(
+      chm = if (needs_chm) tryCatch(chm_raster(), error = function(e) NULL) else NULL,
+      dsm = if ("DSM" %in% selected) tryCatch(dsm_raster(), error = function(e) NULL) else NULL,
+      dtm = if ("DTM" %in% selected) tryCatch(dtm_raster(), error = function(e) NULL) else NULL
+    )
+  }
+
+  observeEvent(input$field_extract, {
+    result <- with_error_toast("Extract field samples", {
+      pts <- field_points()
+      observer_need(!is.null(pts) && nrow(pts) > 0,
+                    "Load field points and map the sample-id / biomass columns first.")
+      selected <- field_cov_selected()
+      observer_need(length(selected) > 0,
+                    "Tick at least one covariate in the sidebar.")
+      refl <- tryCatch(reflectance(), error = function(e) NULL)
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
+      window <- as.integer(input$field_window %||% 3)
+      fun <- input$field_window_fun %||% "mean"
+      aux <- field_aux_rasters(selected)
+      if (any(grepl("_x_CHM$", selected) | selected == "CHM_m") && is.null(aux$chm)) {
+        # Name the reason: "no CHM" is ambiguous between "no DEMs discovered"
+        # and "DEMs are there but the subtraction failed", and the fix differs.
+        s <- tryCatch(field_cov_sources(), error = function(e) NULL)
+        why <- if (is.null(s)) {
+          "no products are loaded"
+        } else if (!isTRUE(s$has_dsm) || !isTRUE(s$has_dtm)) {
+          paste0("the DEMs it needs are missing (DSM: ",
+                 if (isTRUE(s$has_dsm)) "found" else "not found",
+                 ", DTM: ", if (isTRUE(s$has_dtm)) "found" else "not found", ")")
+        } else {
+          "the DSM and DTM are present but the CHM could not be built from them"
+        }
+        stop("A canopy-height covariate is ticked but ", why,
+             ". Build a CHM in 3D Modeling, or untick the covariate.",
+             call. = FALSE)
+      }
+      started <- Sys.time()
+      # with_gis_task (the top banner), NOT withProgress: the app
+      # deliberately never nests the two.
+      tab <- with_gis_task(
+        session, "Extracting field samples",
+        detail = sprintf("%d points at %d x %d px", nrow(pts), window, window),
+        {
+          extract_field_covariates(
+            pts, refl, selected,
+            window       = window,
+            fun          = fun,
+            custom_index = tryCatch(custom_index_raster(), error = function(e) NULL),
+            chm          = aux$chm,
+            dsm          = aux$dsm,
+            dtm          = aux$dtm
+          )
+        }
+      )
+      attr(tab, "covariates") <- selected
+      list(table = tab, points = pts,
+           elapsed = as.numeric(difftime(Sys.time(), started, units = "secs")))
+    })
+    if (is.null(result)) return()
+    extracted_field(result$table)
+    field_points_used(result$points)
+    field_extract_elapsed(result$elapsed)
+    # A new extraction invalidates every downstream product.
+    field_models(NULL)
+    field_map_result(NULL)
+    ensure_caret_catalogue()
+  })
+
+  output$field_extract_status <- renderText({
+    tab <- extracted_field()
+    if (is.null(tab)) {
+      return("No samples extracted yet. Load points, tick covariates, then click Extract.")
+    }
+    in_extent <- tab$.in_extent
+    n_ok <- sum(in_extent, na.rm = TRUE)
+    window_px <- tab$.window_px[[1]]
+    mean_valid <- mean(tab$.n_valid_px[in_extent], na.rm = TRUE)
+    elapsed <- field_extract_elapsed()
+    parts <- c(
+      sprintf("%d of %d points extracted%s", n_ok, nrow(tab),
+              if (is.finite(elapsed)) sprintf(" in %.1f s", elapsed) else ""),
+      sprintf("mean %.1f of %d valid pixels per point", mean_valid, window_px),
+      sprintf("%d covariate(s), aggregated with %s",
+              length(attr(tab, "covariates") %||% character(0)),
+              attr(tab, "window_fun") %||% "mean")
+    )
+    if (n_ok < nrow(tab)) {
+      parts <- c(parts, sprintf("%d point(s) fell outside the orthomosaic",
+                                nrow(tab) - n_ok))
+    }
+    paste(parts, collapse = " · ")
+  })
+
+  output$field_preview <- renderTable({
+    tab <- extracted_field()
+    validate(need(!is.null(tab), "Click Extract to sample the covariates."))
+    utils::head(tab, 20)
+  }, digits = 3)
+
+  output$field_dl_samples <- downloadHandler(
+    filename = function() {
+      sprintf("dronebio_field_samples_%s.csv", format(Sys.time(), "%Y%m%d_%H%M"))
+    },
+    content = function(file) {
+      tab <- extracted_field()
+      req(tab)
+      utils::write.csv(tab, file, row.names = FALSE)
+    },
+    contentType = "text/csv"
+  )
+
+  # -- 5. caret catalogue --------------------------------------------
+  # library(caret) costs ~3.3 s, so it is paid once per session and
+  # never at app start: only when the Model panel is first opened or
+  # an extraction finishes.
+  caret_catalogue_val <- reactiveVal(NULL)
+  field_installed_pkgs <- reactiveVal(NULL)
+
+  ensure_caret_catalogue <- function() {
+    if (!is.null(caret_catalogue_val())) return(invisible(NULL))
+    if (!requireNamespace("caret", quietly = TRUE)) {
+      caret_catalogue_val(data.frame())
+      return(invisible(NULL))
+    }
+    installed <- rownames(utils::installed.packages())
+    field_installed_pkgs(installed)
+    cat_df <- with_error_toast("Load caret model catalogue", {
+      with_gis_task(session, "Loading caret model catalogue",
+                    detail = "first use only",
+                    caret_model_catalogue("Regression", installed = installed))
+    })
+    # Storing an empty frame on failure would latch: the early return above
+    # sees a non-NULL value and never retries, so one transient error leaves
+    # both the Family and the caret-method pickers empty for the rest of the
+    # session with no way back. Leave the value NULL so reopening the panel
+    # tries again, and say what happened.
+    if (is.null(cat_df) || !nrow(cat_df)) {
+      caret_catalogue_val(NULL)
+      showNotification(
+        "Could not read caret's model list. Reopen the Model panel to retry.",
+        type = "warning", duration = 8)
+      return(invisible(NULL))
+    }
+    caret_catalogue_val(cat_df)
+    invisible(NULL)
+  }
+
+  observeEvent(input$field_accordion, {
+    if (!"4 - Model" %in% (input$field_accordion %||% character(0))) return()
+    ensure_caret_catalogue()
+  }, ignoreInit = TRUE)
+
+  # Family filter: caret tags 137 regression models across ~47 families.
+  observeEvent(caret_catalogue_val(), {
+    cat_df <- caret_catalogue_val()
+    if (is.null(cat_df) || nrow(cat_df) == 0) return()
+    tags <- sort(unique(trimws(unlist(strsplit(cat_df$tags, ",", fixed = TRUE)))))
+    tags <- tags[nzchar(tags)]
+    updateSelectInput(session, "field_model_family",
+                      choices = c("Any", tags),
+                      selected = isolate(input$field_model_family) %||% "Any")
+  })
+
+  # 137 options is a few KB of DOM, so server-side filtering is not
+  # needed; two optgroups separate what runs here from what needs an
+  # install first.
+  observe({
+    cat_df <- caret_catalogue_val()
+    if (is.null(cat_df) || nrow(cat_df) == 0) return()
+    df <- cat_df
+    fam <- input$field_model_family %||% "Any"
+    if (!identical(fam, "Any")) {
+      df <- df[grepl(fam, df$tags, fixed = TRUE), , drop = FALSE]
+    }
+    if (isTRUE(input$field_model_ready_only)) {
+      df <- df[df$ready, , drop = FALSE]
+    }
+    if (nrow(df) == 0) {
+      updateSelectizeInput(session, "field_model_method",
+                           choices = character(0), server = FALSE)
+      return()
+    }
+    labels <- ifelse(
+      nzchar(df$missing),
+      sprintf("%s - %s (needs: %s)", df$method, df$label, df$missing),
+      sprintf("%s - %s", df$method, df$label)
+    )
+    n_ready <- sum(df$ready)
+    n_need <- sum(!df$ready)
+    ready_lab <- sprintf("Ready now (%d)", n_ready)
+    need_lab  <- sprintf("Needs extra packages (%d)", n_need)
+    grp <- factor(ifelse(df$ready, ready_lab, need_lab),
+                  levels = c(ready_lab, need_lab))
+    choices <- split(stats::setNames(df$method, labels), grp)
+    choices <- choices[vapply(choices, length, integer(1)) > 0L]
+    current <- isolate(input$field_model_method)
+    selected <- if (length(current)) {
+      intersect(current, df$method)
+    } else {
+      intersect(c("lm", "pls", "ranger"), df$method[df$ready])
+    }
+    if (!length(selected)) selected <- utils::head(df$method[df$ready], 1L)
+    updateSelectizeInput(session, "field_model_method", choices = choices,
+                         selected = selected, server = FALSE)
+  })
+
+  # A 25% hold-out of 6 plots is noise, not validation.
+  field_holdout_warned <- reactiveVal(FALSE)
+  observeEvent(extracted_field(), {
+    tab <- extracted_field()
+    if (is.null(tab)) return()
+    if (nrow(tab) < 30 && (input$field_holdout %||% 0) > 0) {
+      updateSliderInput(session, "field_holdout", value = 0)
+      if (!isTRUE(field_holdout_warned())) {
+        showNotification(
+          sprintf("Only %d samples: the hold-out test fraction was set to 0. 10-fold cross-validation still runs and reports out-of-fold accuracy.",
+                  nrow(tab)),
+          type = "warning", duration = 10)
+        field_holdout_warned(TRUE)
+      }
+    }
+  })
+
+  # -- 6. Training sweep ----------------------------------------------
+  field_models <- reactiveVal(NULL)
+
+  observeEvent(input$field_train, {
+    result <- with_error_toast("Train field models", {
+      tab <- extracted_field()
+      observer_need(!is.null(tab) && nrow(tab) > 0,
+                    "Extract field samples before training.")
+      observer_need(requireNamespace("caret", quietly = TRUE),
+                    "caret is not installed. Run install.packages(\"caret\") and restart the app.")
+      methods <- input$field_model_method
+      observer_need(length(methods) > 0,
+                    "Pick at least one caret method in the sidebar.")
+      predictors <- attr(tab, "covariates")
+      observer_need(length(predictors) > 0,
+                    "The extraction table carries no covariates; extract again.")
+
+      # Pre-flight gate. caret:::checkInstall() calls menu() when
+      # interactive() is TRUE, which blocks the R process on stdin and
+      # hangs the session with no error and no traceback.
+      installed <- field_installed_pkgs()
+      if (is.null(installed)) {
+        installed <- rownames(utils::installed.packages())
+        field_installed_pkgs(installed)
+      }
+      # caret_model_available() stops on an id it does not recognise, so a
+      # stale selectize choice must not abort the whole sweep.
+      availability <- lapply(methods, function(m) {
+        tryCatch(caret_model_available(m, installed = installed),
+                 error = function(e) list(ok = FALSE, missing = character(0),
+                                          install_call = conditionMessage(e)))
+      })
+      ok <- vapply(availability, function(a) isTRUE(a$ok), logical(1))
+      if (any(!ok)) {
+        calls <- unique(stats::na.omit(vapply(availability[!ok],
+                                              function(a) a$install_call %||% NA_character_,
+                                              character(1))))
+        showNotification(
+          sprintf("Skipping %s - backend package(s) not installed. %s",
+                  paste(methods[!ok], collapse = ", "),
+                  paste(calls, collapse = "  ")),
+          type = "warning", duration = 15)
+      }
+      methods <- methods[ok]
+      observer_need(length(methods) > 0,
+                    "None of the selected models can run here; install the packages listed in the picker.")
+
+      cat_df <- caret_catalogue_val()
+      metric <- input$field_metric %||% "RMSE"
+      # Computed ONCE, outside the loop: passing the same folds into
+      # every model is what makes the leaderboard a fair comparison
+      # and the whole sweep reproducible from the visible seed.
+      split <- field_train_split(
+        tab,
+        holdout = as.numeric(input$field_holdout %||% 0.25),
+        folds   = as.integer(input$field_folds %||% 10),
+        seed    = as.integer(input$field_seed %||% 42)
+      )
+
+      fits <- list()
+      # The one place withProgress is used in this tab: genuinely
+      # staged multi-model work, so it is NOT also wrapped in
+      # with_gis_task.
+      withProgress(message = "Training caret models", value = 0, {
+        for (i in seq_along(methods)) {
+          m <- methods[[i]]
+          incProgress(1 / length(methods),
+                      detail = sprintf("%s (%d of %d)", m, i, length(methods)))
+          needs_scaling <- FALSE
+          if (!is.null(cat_df) && nrow(cat_df) > 0) {
+            row <- cat_df[cat_df$method == m, , drop = FALSE]
+            if (nrow(row) == 1) needs_scaling <- isTRUE(row$needs_scaling)
+          }
+          preprocess <- if (isTRUE(input$field_center_scale) || needs_scaling) {
+            c("center", "scale")
+          } else {
+            NULL
+          }
+          fits[[m]] <- tryCatch(
+            fit_field_caret_model(tab, predictors = predictors, method = m,
+                                  metric = metric, split = split,
+                                  preprocess = preprocess),
+            error = function(e) {
+              structure(list(method = m, message = conditionMessage(e)),
+                        class = "dronebio_field_model_failure")
+            }
+          )
+        }
+      })
+      fits
+    })
+    if (is.null(result)) return()
+    field_models(result)
+    field_map_result(NULL)
+
+    # Write the canonical summary file: this is what ticks the
+    # workflow stepper's Field step (previously never green).
+    good <- Filter(function(m) inherits(m, "dronebio_field_model"), result)
+    if (length(good) > 0) {
+      snap <- tryCatch(project_snapshot(), error = function(e) NULL)
+      if (!is.null(snap) && isTRUE(snap$ok) && nzchar(snap$project_dir %||% "")) {
+        best <- good[[1]]
+        lb <- tryCatch(field_leaderboard_tbl(), error = function(e) NULL)
+        if (!is.null(lb) && nrow(lb) > 0 && !is.na(lb$RMSE[[1]])) {
+          best <- result[[lb$Method[[1]]]]
+        }
+        written <- tryCatch(
+          write_field_model_summary(
+            best, file.path(snap$project_dir, "outputs",
+                            "biomass_model_summary.txt")),
+          error = function(e) NULL)
+        if (!is.null(written)) {
+          showNotification(paste0("Model summary written to ", written),
+                           type = "message", duration = 8)
+          outputs_refresh_token(outputs_refresh_token() + 1L)
+        }
+      }
+    }
+  })
+
+  # -- 7. Leaderboard + performance -----------------------------------
+  field_leaderboard_tbl <- reactive({
+    fits <- field_models()
+    req(fits)
+    rows <- lapply(names(fits), function(nm) {
+      m <- fits[[nm]]
+      if (!inherits(m, "dronebio_field_model")) {
+        return(data.frame(
+          Method = nm, Label = "-", n = NA_integer_, R2 = NA_real_,
+          RMSE = NA_real_, MAE = NA_real_, RPIQ = NA_real_,
+          Tuning = "", Seconds = NA_real_,
+          Note = m$message %||% "failed", stringsAsFactors = FALSE))
+      }
+      mt <- field_model_metrics(m)
+      cv <- mt[grepl("^CV", mt$split), , drop = FALSE]
+      if (nrow(cv) == 0) cv <- mt[1, , drop = FALSE]
+      bt <- m$best_tune
+      tuning <- if (is.data.frame(bt) && nrow(bt) == 1 && ncol(bt) > 0) {
+        paste(sprintf("%s=%s", names(bt),
+                      vapply(bt, function(z) format(z[[1]], digits = 4),
+                             character(1))),
+              collapse = ", ")
+      } else {
+        ""
+      }
+      data.frame(
+        Method = m$method, Label = m$label, n = as.integer(cv$n[[1]]),
+        R2 = cv$r2[[1]], RMSE = cv$rmse[[1]], MAE = cv$mae[[1]],
+        RPIQ = cv$rpiq[[1]], Tuning = tuning,
+        Seconds = as.numeric(m$elapsed_s %||% NA_real_),
+        Note = "", stringsAsFactors = FALSE)
+    })
+    df <- do.call(rbind, rows)
+    good <- df[!is.na(df$RMSE), , drop = FALSE]
+    bad <- df[is.na(df$RMSE), , drop = FALSE]
+    good <- if (identical(input$field_metric %||% "RMSE", "Rsquared")) {
+      good[order(-good$R2), , drop = FALSE]
+    } else {
+      good[order(good$RMSE), , drop = FALSE]
+    }
+    out <- rbind(good, bad)
+    rownames(out) <- NULL
+    out
+  })
+
+  output$field_leaderboard <- renderTable({
+    # caret absent: ingest, the covariate picker, windowed extraction and
+    # both preview tables keep working - only R/field_caret.R needs it.
+    validate(need(
+      requireNamespace("caret", quietly = TRUE),
+      "caret is not installed, so the training controls are disabled. Run install.packages(\"caret\") and restart the app. Loading points, picking covariates and extracting all still work, and fit_biomass_lm() remains available from the console."))
+    validate(need(!is.null(field_models()),
+                  "Pick one or more caret methods in the sidebar, then click Train."))
+    lb <- field_leaderboard_tbl()
+    validate(need(nrow(lb) > 0, "Train at least one model."))
+    lb
+  }, digits = 2, na = "")
+
+  observeEvent(field_leaderboard_tbl(), {
+    lb <- field_leaderboard_tbl()
+    ok <- lb$Method[!is.na(lb$RMSE)]
+    updateSelectInput(session, "field_best_pick", choices = ok,
+                      selected = if (length(ok)) ok[[1]] else NULL)
+  })
+
+  # m$predictors is authoritative downstream: a zero-variance covariate
+  # may have been dropped during the fit, so never re-derive the
+  # covariate list from the checkbox state.
+  field_best_model <- reactive({
+    fits <- field_models()
+    req(fits)
+    lb <- field_leaderboard_tbl()
+    ok <- lb$Method[!is.na(lb$RMSE)]
+    validate(need(length(ok) > 0,
+                  "No model trained successfully - see the leaderboard notes."))
+    pick <- input$field_best_pick
+    if (is.null(pick) || !pick %in% ok) pick <- ok[[1]]
+    fits[[pick]]
+  })
+
+  output$field_metrics_table <- renderTable({
+    format_field_metrics(field_best_model(), digits = 2)
+  })
+
+  output$field_tuning_table <- renderTable({
+    tune <- field_best_model()$tuning
+    validate(need(is.data.frame(tune) && nrow(tune) > 0,
+                  "No hyperparameter grid for this model."))
+    nms <- names(tune)
+    nms[nms == "Rsquared"] <- "Rsquared (caret, corr^2)"
+    nms[nms == "RsquaredSD"] <- "Rsquared SD (caret, corr^2)"
+    names(tune) <- nms
+    tune
+  }, digits = 3, na = "")
+
+  output$model_summary <- renderPrint({
+    m <- field_best_model()
+    print(m)
+    cat("\n")
+    print(m$fit)
+  })
+
+  # Base graphics: ggplot2 is not a dependency of this app and every
+  # other renderPlot here is base / terra.
+  output$field_obs_pred_plot <- renderPlot({
+    m <- field_best_model()
+    mt <- field_model_metrics(m)
+    ft <- format_field_metrics(mt, digits = 2)
+    keys <- c("cv", "test")
+    if (isTRUE(input$field_plot_resub)) keys <- c(keys, "train")
+    p <- m$predictions
+    p <- p[p$split %in% keys, , drop = FALSE]
+    validate(need(nrow(p) > 0, "No predictions to plot."))
+
+    label_for <- c(cv = grep("^CV", mt$split, value = TRUE)[1],
+                   train = "Train", test = "Test")
+    cols <- c(cv = "#0f766e", test = "#ef4444", train = "#94a3b8")
+    lims <- range(c(p$observed, p$predicted), na.rm = TRUE)
+    if (!all(is.finite(lims)) || diff(lims) == 0) lims <- lims + c(-1, 1)
+
+    par(mar = c(4.2, 4.4, 2.6, 1), pty = "s")
+    plot(lims, lims, type = "n", xlim = lims, ylim = lims,
+         xlab = "Observed biomass (kg/ha)",
+         ylab = "Predicted biomass (kg/ha)",
+         main = sprintf("%s - observed vs predicted", m$method))
+    grid(col = "#e2e8f0")
+    abline(0, 1, lty = 2, lwd = 2, col = "#475569")
+    legend_txt <- character(0)
+    legend_col <- character(0)
+    for (k in keys) {
+      sub <- p[p$split == k, , drop = FALSE]
+      if (nrow(sub) == 0) next
+      points(sub$observed, sub$predicted, pch = 19, cex = 1.35,
+             col = cols[[k]])
+      i <- match(label_for[[k]], ft$Split)
+      legend_txt <- c(legend_txt, if (is.na(i)) {
+        sprintf("%s (n = %d)", label_for[[k]], nrow(sub))
+      } else {
+        sprintf("%s: R2 %s, RMSE %s (n = %s)",
+                ft$Split[[i]], ft$R2[[i]], ft$RMSE[[i]], ft$n[[i]])
+      })
+      legend_col <- c(legend_col, cols[[k]])
+    }
+    legend("topleft", legend = legend_txt, col = legend_col, pch = 19,
+           bty = "n", cex = 0.95)
+  })
+
+  # -- 8. Predicted map -----------------------------------------------
+  field_map_result <- reactiveVal(NULL)
+
+  output$field_map_estimate <- renderText({
+    m <- tryCatch(field_best_model(), error = function(e) NULL)
+    g <- field_native_grid()
+    if (is.null(g)) return("Load a mosaic to estimate the map cost.")
+    max_cells <- as.numeric(input$field_map_res %||% 1e6)
+    window <- if (is.null(m)) 1L else max(1L, as.integer(m$window_px %||% 1L))
+    fact <- if (g$ncell / window^2 <= max_cells) {
+      window
+    } else {
+      max(1L, floor(sqrt(g$ncell / max_cells)))
+    }
+    cells <- g$ncell / fact^2
+    # Rate table calibrated on measured throughput (lm 0.27 s,
+    # ranger 8.07 s per 1 M cells). The point is not precision, it is
+    # that the user does not believe the app has frozen.
+    rate <- if (is.null(m)) 1.0 else switch(
+      m$method,
+      lm = 0.3, glm = 0.3, glmnet = 0.4, pls = 0.5, pcr = 0.5,
+      earth = 1.0, svmRadial = 6.0, ranger = 8.1, rf = 14.0,
+      gbm = 3.0, xgbTree = 3.0, 3.0)
+    secs <- max(1, round(rate * cells / 1e6 + 3))
+    sprintf("Grid: %.2f M cells at %.2f m · %s · roughly %d s.",
+            cells / 1e6, fact * g$res_m,
+            if (is.null(m)) "no model yet" else m$method, secs)
+  })
+
+  observeEvent(input$field_predict_map, {
+    result <- with_error_toast("Predict biomass map", {
+      m <- field_best_model()
+      refl <- tryCatch(reflectance(), error = function(e) NULL)
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
+      aux <- field_aux_rasters(m$predictors)
+      window <- max(1L, as.integer(m$window_px %||% 1L))
+      # A fresh directory with a stable basename: the file is served
+      # verbatim by the download handler and copied into the model
+      # bundle, so "biomass_prediction.tif" beats a tempfile hash.
+      out_path <- file.path(tempfile("dronebio_map_"), "biomass_prediction.tif")
+      dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+      stack <- with_gis_task(
+        session, "Building prediction grid",
+        detail = sprintf("%d covariates", length(m$predictors)),
+        build_prediction_stack(
+          refl, m$predictors,
+          max_cells    = as.numeric(input$field_map_res %||% 1e6),
+          window       = window,
+          custom_index = tryCatch(custom_index_raster(), error = function(e) NULL),
+          chm          = aux$chm,
+          dsm          = aux$dsm,
+          dtm          = aux$dtm
+        )
+      )
+      map_r <- with_gis_task(
+        session, "Predicting biomass map", detail = m$method,
+        predict_field_model_map(m, stack, out_path = out_path)
+      )
+      list(raster = map_r, path = out_path, method = m$method,
+           fact = attr(stack, "fact"),
+           cell_size_m = attr(stack, "cell_size_m"))
+    })
+    if (is.null(result)) return()
+    field_map_result(result)
+  })
+
+  field_map_path <- reactive({
+    info <- field_map_result()
+    if (is.null(info)) NULL else info$path
+  })
+
+  output$field_map_caption <- renderText({
+    info <- field_map_result()
+    if (is.null(info)) {
+      return("Train a model, then click Predict map. The preview is an aggregated grid; the Export button writes the exact full-resolution surface.")
+    }
+    sprintf("Map cells are %.2f m (%dx aggregation). Indices here are computed from block-mean reflectance, while the model was trained on block-mean indices - a small approximation kept for speed. Export the full-resolution GeoTIFF for the exact surface.",
+            info$cell_size_m %||% NA_real_, as.integer(info$fact %||% 1L))
+  })
+
+  output$field_map <- renderLeaflet({
+    leaflet(options = leafletOptions(worldCopyJump = FALSE, minZoom = 2)) |>
+      # Markers must sit above the raster overlay: leafem's addGeotiff
+      # renders into the default overlayPane (zIndex 400), and on some
+      # browsers CircleMarkers ended up behind it.
+      addMapPane("dbFieldPointPane", zIndex = 700) |>
+      add_esri_imagery_tiles(group = "Satellite") |>
+      addProviderTiles(providers$CartoDB.Positron, group = "Light basemap",
+                       options = providerTileOptions(
+                         noWrap = TRUE,
+                         bounds = list(c(-85, -180), c(85, 180)))) |>
+      addScaleBar(position = "bottomleft") |>
+      setView(lng = 0, lat = 0, zoom = 2)
+  })
+  outputOptions(output, "field_map", suspendWhenHidden = FALSE)
+
+  # Drives the placeholder / map swap in the Field Models tab.
+  output$field_map_ready <- reactive({
+    info <- tryCatch(field_map_result(), error = function(e) NULL)
+    !is.null(info)
+  })
+  outputOptions(output, "field_map_ready", suspendWhenHidden = FALSE)
+
+  # Bare observe(): an error here would tear down the whole session rather than
+  # just failing to draw, so the body is toasted like every other action.
+  observe({ with_error_toast("Draw biomass map", {
+    info <- field_map_result()
+    proxy <- leafletProxy("field_map")
+    proxy |>
+      clearGroup("Predicted biomass") |>
+      clearGroup("Field points") |>
+      removeControl("field_map_legend")
+    if (is.null(info)) return()
+
+    map_r <- info$raster
+    palette_name <- input$field_map_palette %||% "viridis"
+    n_class <- max(3L, min(10L, as.integer(input$field_map_classes %||% 4)))
+    brk <- tryCatch(biomass_map_breaks(map_r, n = n_class),
+                    error = function(e) NULL)
+    if (is.null(brk)) {
+      showNotification("The predicted map has no finite cells to classify.",
+                       type = "warning", duration = 8)
+      return()
+    }
+
+    if (identical(input$field_map_render %||% "continuous", "classed")) {
+      classed <- classify_biomass_map(map_r, brk$breaks)
+      # Render the class IDs as plain numbers: the tile cache fingerprints
+      # a raster by rounding sampled values, which errors on a factor.
+      levels(classed) <- NULL
+      names(classed) <- "biomass_class"
+      n <- length(brk$labels)
+      class_cols <- hcl.colors(n, palette_name)
+      proxy <- tile_raster_on_map(
+        proxy, classed, group = "Predicted biomass",
+        palette_name = palette_name, domain = c(0, n - 1))
+      proxy <- proxy |>
+        addLegend(position = "bottomright", colors = class_cols,
+                  labels = brk$labels, opacity = 0.85,
+                  title = "Biomass class (kg/ha)",
+                  layerId = "field_map_legend")
+    } else {
+      domain <- c(brk$p01, brk$p99)
+      proxy <- tile_raster_on_map(
+        proxy, map_r, group = "Predicted biomass",
+        palette_name = palette_name, domain = domain)
+      pal <- colorNumeric(hcl.colors(100, palette_name), domain = domain,
+                          na.color = "transparent")
+      # Label the continuous ramp at the histogram quantiles. leaflet's `bins`
+      # rejects any break vector that is not equally spaced, and quantile
+      # breaks never are, so the swatch form is the one that can carry them.
+      tick <- brk$breaks[is.finite(brk$breaks)]
+      proxy <- proxy |>
+        addLegend(position = "bottomright",
+                  colors = pal(pmin(pmax(tick, domain[1]), domain[2])),
+                  labels = formatC(tick, format = "f", digits = 0, big.mark = ","),
+                  opacity = 0.85,
+                  title = "Biomass (kg/ha)", layerId = "field_map_legend")
+    }
+
+    if (isTRUE(input$field_map_points)) {
+      pts <- field_points_used()
+      m <- tryCatch(field_best_model(), error = function(e) NULL)
+      if (!is.null(pts) && !is.null(m)) {
+        pr <- m$predictions
+        pr <- rbind(pr[pr$split == "test", , drop = FALSE],
+                    pr[pr$split == "cv", , drop = FALSE])
+        pr <- pr[!duplicated(pr$sample_id), , drop = FALSE]
+        # sf::st_transform here only to put the markers on a WGS84
+        # slippy map; all analysis stays in the orthomosaic CRS.
+        ll <- tryCatch(sf::st_transform(pts, 4326), error = function(e) NULL)
+        if (!is.null(ll) && nrow(pr) > 0) {
+          xy <- sf::st_coordinates(ll)
+          df <- data.frame(sample_id = as.character(ll$sample_id),
+                           lng = xy[, 1], lat = xy[, 2],
+                           stringsAsFactors = FALSE)
+          df <- merge(df, pr, by = "sample_id")
+          df <- df[is.finite(df$lng) & is.finite(df$lat), , drop = FALSE]
+          if (nrow(df) > 0) {
+            df$residual <- df$observed - df$predicted
+            df$col <- ifelse(df$split == "test", "#ef4444", "#0f766e")
+            df$split_label <- ifelse(df$split == "test",
+                                     "Hold-out test", "Cross-validated")
+            proxy <- proxy |>
+              addCircleMarkers(
+                data = df, lng = ~lng, lat = ~lat,
+                radius = 5, weight = 2, color = ~col, fillColor = ~col,
+                opacity = 0.95, fillOpacity = 0.65,
+                group = "Field points",
+                options = pathOptions(pane = "dbFieldPointPane"),
+                popup = ~paste0(
+                  "<b>", sample_id, "</b>",
+                  "<br>Split: ", split_label,
+                  "<br>Observed: ", formatC(observed, format = "f", digits = 2),
+                  " kg/ha",
+                  "<br>Predicted: ", formatC(predicted, format = "f", digits = 2),
+                  " kg/ha",
+                  "<br>Residual: ", formatC(residual, format = "f", digits = 2)))
+          }
+        }
+      }
+    }
+
+    bounds <- tryCatch(raster_bounds_4326(map_r), error = function(e) NULL)
+    if (!is.null(bounds)) {
+      proxy <- proxy |>
+        fitBounds(bounds[["lng1"]], bounds[["lat1"]],
+                  bounds[["lng2"]], bounds[["lat2"]])
+    }
+    proxy |>
+      addLayersControl(
+        baseGroups = c("Satellite", "Light basemap"),
+        overlayGroups = c("Predicted biomass",
+                          if (isTRUE(input$field_map_points)) "Field points"),
+        options = layersControlOptions(collapsed = FALSE))
+  }) })
+
+  # The exact surface: every covariate recomputed per native pixel by
+  # the same primitive the training extraction used, streamed to disk.
+  observeEvent(input$field_export_map, {
+    with_error_toast("Export full-resolution biomass map", {
+      m <- field_best_model()
+      refl <- tryCatch(reflectance(), error = function(e) NULL)
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
+      export_dir <- input$output_dir %||% ""
+      observer_need(nzchar(export_dir),
+                    "Set an output directory in the Exports tab first.")
+      if (!dir.exists(export_dir)) {
+        dir.create(export_dir, recursive = TRUE, showWarnings = FALSE)
+      }
+      out_path <- file.path(export_dir, "biomass_prediction.tif")
+      aux <- field_aux_rasters(m$predictors)
+      with_gis_task(
+        session, "Exporting full-resolution biomass map",
+        detail = basename(out_path),
+        export_field_biomass_map(
+          m, refl, out_path = out_path,
+          custom_index = tryCatch(custom_index_raster(), error = function(e) NULL),
+          chm = aux$chm, dsm = aux$dsm, dtm = aux$dtm)
+      )
+      showNotification(paste0("Biomass prediction written to ", out_path),
+                       type = "message", duration = 10)
+      outputs_refresh_token(outputs_refresh_token() + 1L)
+    })
+  })
+
+  # -- 9. Downloads ----------------------------------------------------
+  # validate() / req() belong to render contexts; inside a download the
+  # browser would just get a broken file, so each handler reports the
+  # missing prerequisite as a toast and then stops.
+  field_download_guard <- function(value, message) {
+    if (is.null(value)) {
+      showNotification(message, type = "warning", duration = 8)
+      stop(message, call. = FALSE)
+    }
+    value
+  }
+
+  output$field_dl_model <- downloadHandler(
+    filename = function() {
+      m <- tryCatch(field_best_model(), error = function(e) NULL)
+      sprintf("dronebio_field_model_%s_%s.zip",
+              if (is.null(m)) "model" else m$method,
+              format(Sys.time(), "%Y%m%d_%H%M"))
+    },
+    content = function(file) {
+      m <- field_download_guard(
+        tryCatch(field_best_model(), error = function(e) NULL),
+        "Train a model before downloading the bundle.")
+      tryCatch(
+        save_field_model_bundle(m, file, samples = extracted_field(),
+                                map_path = field_map_path()),
+        error = function(e) {
+          showNotification(paste0("Trained model bundle: ",
+                                  conditionMessage(e)),
+                           type = "error", duration = 10)
+          stop(e)
+        })
+    },
+    contentType = "application/zip"
+  )
+
+  output$field_dl_metrics <- downloadHandler(
+    filename = function() {
+      m <- tryCatch(field_best_model(), error = function(e) NULL)
+      sprintf("dronebio_field_metrics_%s.csv",
+              if (is.null(m)) "model" else m$method)
+    },
+    content = function(file) {
+      m <- field_download_guard(
+        tryCatch(field_best_model(), error = function(e) NULL),
+        "Train a model before downloading its metrics.")
+      utils::write.csv(field_model_metrics(m), file, row.names = FALSE)
+    },
+    contentType = "text/csv"
+  )
+
+  output$field_dl_map <- downloadHandler(
+    filename = function() "dronebio_biomass_prediction.tif",
+    content = function(file) {
+      path <- field_map_path()
+      if (!is.null(path) && !file.exists(path)) path <- NULL
+      path <- field_download_guard(
+        path, "Click Predict map before downloading the GeoTIFF.")
+      file.copy(path, file, overwrite = TRUE)
+    },
+    contentType = "image/tiff"
+  )
+
+  # -- 10. Button gating + graceful caret-absent degradation ----------
+  # Hard-disabled until the prerequisites exist, so a full-resolution
+  # job can never fire with no points or no covariates selected.
+  observe({
+    ready <- !is.null(tryCatch(field_points(), error = function(e) NULL)) &&
+      length(field_cov_selected()) > 0 &&
+      !is.null(tryCatch(reflectance_preview(), error = function(e) NULL))
+    session$sendCustomMessage("dronebior_set_disabled",
+                              list(id = "field_extract", disabled = !ready))
+  })
+
+  observe({
+    has_caret <- requireNamespace("caret", quietly = TRUE)
+    ready <- has_caret && !is.null(extracted_field()) &&
+      length(input$field_model_method %||% character(0)) > 0
+    session$sendCustomMessage("dronebior_set_disabled",
+                              list(id = "field_train", disabled = !ready))
+  })
+
+  observe({
+    ready <- !is.null(field_models()) &&
+      nrow(tryCatch(field_leaderboard_tbl(),
+                    error = function(e) data.frame())) > 0
+    # downloadButton renders an <a>, where the disabled property is inert -
+    # the handler also toggles Bootstrap's .disabled class, which kills
+    # pointer events on .btn.
+    for (id in c("field_predict_map", "field_export_map",
+                 "field_dl_model", "field_dl_metrics")) {
+      session$sendCustomMessage("dronebior_set_disabled",
+                                list(id = id, disabled = !ready))
+    }
+  })
+
+  observe({
+    session$sendCustomMessage(
+      "dronebior_set_disabled",
+      list(id = "field_dl_samples", disabled = is.null(extracted_field())))
+  })
+
+  observe({
+    path <- field_map_path()
+    session$sendCustomMessage(
+      "dronebior_set_disabled",
+      list(id = "field_dl_map",
+           disabled = is.null(path) || !file.exists(path)))
+  })
 
   # ---- Field Models cross-tab CTAs ---------------------------------
   observeEvent(input$field_cta_spectral, {
@@ -12394,18 +14139,6 @@ server <- function(input, output, session) {
     updateNavbarPage(session, "main_nav", selected = "Exports")
   })
 
-  model <- eventReactive(input$fit_model, {
-    with_error_toast("Fit biomass model", {
-      req(extracted_field())
-      fit_biomass_lm(extracted_field())
-    })
-  })
-
-  output$model_summary <- renderPrint({
-    req(model())
-    summary(model())
-  })
-
   workflow <- eventReactive(input$run_workflow, {
     # Snapshot inputs as plain values: the future runs in a worker R session
     # that has no Shiny reactive context.
@@ -12540,10 +14273,10 @@ server <- function(input, output, session) {
 
   observeEvent(input$ts_register, {
     with_error_toast("Register flight", {
-      validate(need(nzchar(input$ts_flight_project_dir),
-                    "Enter the project directory for the flight."))
-      validate(need(dir.exists(input$ts_flight_project_dir),
-                    paste("Project directory not found:", input$ts_flight_project_dir)))
+      observer_need(nzchar(input$ts_flight_project_dir),
+                    "Enter the project directory for the flight.")
+      observer_need(dir.exists(input$ts_flight_project_dir),
+                    paste("Project directory not found:", input$ts_flight_project_dir))
       register_flight(
         date          = input$ts_flight_date,
         project_dir   = input$ts_flight_project_dir,

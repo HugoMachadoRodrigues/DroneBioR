@@ -183,3 +183,265 @@ test_that("keep_only_final_odm_products honours keep_extra allowlist", {
   # The standard intermediates are still stripped.
   expect_false(dir.exists(file.path(proj, "openmvs")))
 })
+
+test_that("build_odm_args emits point-cloud cleanup flags", {
+  a <- build_odm_args(tempdir(), "demo")
+  # Tighter than ODM's own default of 5: that leaves the floating specks and
+  # needles this stage exists to remove.
+  expect_true("--pc-filter" %in% a)
+  expect_equal(a[which(a == "--pc-filter") + 1L], "2.5")
+  expect_false("--pc-sample" %in% a)
+  expect_false("--pc-rectify" %in% a)
+
+  b <- build_odm_args(tempdir(), "demo", pc_filter = 1.5,
+                      pc_sample = 0.04, pc_rectify = TRUE)
+  expect_equal(b[which(b == "--pc-filter") + 1L], "1.5")
+  expect_equal(b[which(b == "--pc-sample") + 1L], "0.04")
+  expect_true("--pc-rectify" %in% b)
+})
+
+test_that("pc_filter = 0 is passed through as ODM's disable value", {
+  a <- build_odm_args(tempdir(), "demo", pc_filter = 0)
+  expect_equal(a[which(a == "--pc-filter") + 1L], "0")
+})
+
+test_that("build_odm_args omits --pc-filter when pc_filter is NULL", {
+  a <- build_odm_args(tempdir(), "demo", pc_filter = NULL)
+  expect_false("--pc-filter" %in% a)
+})
+
+test_that("build_odm_args rejects nonsensical point-cloud settings", {
+  expect_error(build_odm_args(tempdir(), "demo", pc_filter = -1),
+               "non-negative")
+  expect_error(build_odm_args(tempdir(), "demo", pc_sample = 0),
+               "positive radius")
+})
+
+test_that("the numbers are written plainly, never in scientific notation", {
+  # ODM parses these as floats; "1e-04" would be passed through verbatim.
+  a <- build_odm_args(tempdir(), "demo", pc_sample = 0.0001)
+  expect_equal(a[which(a == "--pc-sample") + 1L], "0.0001")
+})
+
+test_that("refilter_odm_point_cloud reruns from odm_filterpoints only", {
+  # The point of the helper: opensfm/openmvs are reused, so the retune costs
+  # only the stages after the filter.
+  dir <- tempfile("refilter-")
+  p <- dronebio_project(dir)
+  expect_error(refilter_odm_point_cloud(p), "No reconstruction to reuse")
+
+  dir.create(file.path(p$odm_project_dir, "opensfm"), recursive = TRUE)
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) {
+      called <<- list(...)
+      invisible(TRUE)
+    }
+  )
+  refilter_odm_point_cloud(p, pc_filter = 1.5, pc_rectify = TRUE)
+  expect_equal(called$rerun_from, "odm_filterpoints")
+  expect_equal(called$pc_filter, 1.5)
+  expect_true(called$pc_rectify)
+})
+
+test_that("rebuild_from_edited_cloud reruns from odm_meshing and refuses earlier stages", {
+  # Rerunning from odm_filterpoints (or anything before it) would regenerate
+  # the cloud and silently discard the hand edit -- the whole point of this
+  # entry point is that it cannot happen by accident.
+  dir <- tempfile("edited-")
+  p <- dronebio_project(dir)
+  expect_error(rebuild_from_edited_cloud(p), "No filtered point cloud")
+
+  fp <- file.path(p$odm_project_dir, "odm_filterpoints")
+  dir.create(fp, recursive = TRUE)
+  file.create(file.path(fp, "point_cloud.ply"))
+
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) { called <<- list(...); invisible(TRUE) }
+  )
+  rebuild_from_edited_cloud(p, build_dsm = TRUE)
+  expect_equal(called$rerun_from, "odm_meshing")
+  expect_true(called$build_dsm)
+
+  expect_error(rebuild_from_edited_cloud(p, rerun_from = "odm_filterpoints"),
+               "would rebuild odm_filterpoints")
+  # Asking for the stage it already uses is harmless.
+  expect_silent(rebuild_from_edited_cloud(p, rerun_from = "odm_meshing"))
+})
+
+test_that("build_odm_args emits and validates --pc-quality", {
+  a <- build_odm_args(tempdir(), "demo", pc_quality = "high")
+  expect_equal(a[which(a == "--pc-quality") + 1L], "high")
+  # NULL leaves ODM's own default alone rather than pinning it.
+  expect_false("--pc-quality" %in% build_odm_args(tempdir(), "demo"))
+  expect_error(build_odm_args(tempdir(), "demo", pc_quality = "turbo"))
+})
+
+test_that("build_point_cloud_only stops at odm_filterpoints and forbids fast orthophoto", {
+  # fast_orthophoto skips densification, so there would be no dense cloud to
+  # inspect -- the whole point of this stage.
+  dir <- tempfile("stage0-")
+  p <- dronebio_project(dir)
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) { called <<- list(...); invisible(TRUE) }
+  )
+  build_point_cloud_only(p, pc_quality = "low", pc_filter = 1.5)
+  expect_equal(called$end_with, "odm_filterpoints")
+  expect_equal(called$pc_quality, "low")
+  expect_equal(called$pc_filter, 1.5)
+  expect_false(called$fast_orthophoto)
+
+  expect_error(build_point_cloud_only(p, fast_orthophoto = TRUE),
+               "skips the dense reconstruction")
+})
+
+test_that("the DJI runner threads the point-cloud settings to the RGB run", {
+  # The MS runs contribute radiance only; the RGB run is the one whose
+  # geometry every DEM and the stacked ortho inherit.
+  a <- names(formals(run_odm_dji_mavic_3m))
+  expect_true(all(c("pc_filter", "pc_sample", "pc_rectify") %in% a))
+  b <- names(formals(DroneBioR:::run_one_dji_band))
+  expect_true(all(c("pc_filter", "pc_sample", "pc_rectify") %in% b))
+})
+
+test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run", {
+  # run_odm_project() would read the folder with list_micasense_images(), which
+  # rejects DJI_..._MS_NIR.TIF for not matching capture_band.tif. The geometry
+  # of a Mavic 3M flight comes from its RGB sub-run, so that is what stage 0
+  # takes to odm_filterpoints.
+  dir <- tempfile("djistage0-")
+  p <- dronebio_project(dir, images_subdir = "imgs")
+  dir.create(p$images_dir, recursive = TRUE)
+  for (f in c("DJI_20260501132033_0001_D.JPG",
+              "DJI_20260501132034_0002_MS_G.TIF",
+              "DJI_20260501132034_0002_MS_R.TIF",
+              "DJI_20260501132034_0002_MS_RE.TIF",
+              "DJI_20260501132034_0002_MS_NIR.TIF")) {
+    file.create(file.path(p$images_dir, f))
+  }
+  expect_true(has_djim3m_images(p$images_dir))
+
+  seen <- NULL
+  testthat::local_mocked_bindings(
+    run_one_dji_band = function(...) { seen <<- list(...); invisible(TRUE) },
+    run_odm_project = function(...) stop("must not take the MicaSense path")
+  )
+  res <- build_point_cloud_only(p, pc_quality = "low", pc_filter = 1.5)
+  expect_equal(seen$band, "RGB")
+  expect_equal(seen$end_with, "odm_filterpoints")
+  expect_false(seen$fast_orthophoto)
+  expect_equal(seen$pc_filter, 1.5)
+  expect_equal(res$camera, "dji_mavic_3m")
+})
+
+test_that("default_max_concurrency leaves one core free and can be pinned", {
+  # Unmocked smoke check: whatever this machine is, the answer is usable.
+  n <- default_max_concurrency()
+  expect_true(is.finite(n) && n >= 1L)
+
+  # Then pin BOTH inputs the function reads - the host core count and the
+  # Docker CPU budget - and assert the n-1 rule against those. Deriving the
+  # expectation from the live machine failed on the Windows runner, which hands
+  # Docker fewer CPUs than detectCores() reports, so min(host, budget) - 1 was
+  # 1 where the test demanded 3.
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
+  expect_equal(default_max_concurrency(), 7L)
+
+  withr::with_options(list(dronebior.max_concurrency = 3L), {
+    expect_equal(default_max_concurrency(), 3L)
+  })
+  # A nonsense pin falls back rather than producing --max-concurrency 0.
+  withr::with_options(list(dronebior.max_concurrency = 0L), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+  withr::with_options(list(dronebior.max_concurrency = "abc"), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+})
+
+test_that("the ODM command uses the machine default instead of a fixed 4", {
+  # The old fixed 4 throttled a 10-core machine to about a third of it.
+  withr::with_options(list(dronebior.max_concurrency = 9L), {
+    a <- build_odm_args(tempdir(), "demo")
+    expect_equal(a[which(a == "--max-concurrency") + 1L], "9")
+  })
+  # An explicit argument still wins.
+  a <- build_odm_args(tempdir(), "demo", max_concurrency = 2)
+  expect_equal(a[which(a == "--max-concurrency") + 1L], "2")
+})
+
+test_that("concurrency respects the Docker CPU budget, not just the host", {
+  # detectCores() reports the host. ODM runs in the container, and Docker
+  # Desktop is routinely given fewer CPUs; sizing to the host would start more
+  # workers than there are cores, each holding imagery.
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  # Pin the host so these assertions describe the guard, not the CI runner.
+  # The implementation prefers physical cores; detectCores() with no argument
+  # counts logical ones. On the Windows runner those differ (2 vs 4), so a
+  # host-derived expectation asked for 3 and the guard correctly answered 1.
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
+
+  cache$value <- 2L
+  expect_equal(default_max_concurrency(), 1L)
+
+  cache$value <- NA_integer_          # docker absent or silent
+  expect_equal(default_max_concurrency(), 7L)
+
+  cache$value <- 1L                   # never emit --max-concurrency 0
+  expect_equal(default_max_concurrency(), 1L)
+
+  # A pin still wins over both.
+  withr::with_options(list(dronebior.max_concurrency = 7L), {
+    cache$value <- 2L
+    expect_equal(default_max_concurrency(), 7L)
+  })
+})
+
+test_that("the OOM retries still pin concurrency to 1", {
+  # Those retries exist because the container was killed; inheriting the new
+  # machine-sized default would repeat the failure.
+  src <- paste(deparse(DroneBioR:::run_one_dji_band), collapse = " ")
+  expect_true(grepl("max_concurrency\\s*=\\s*1L", src))
+  src2 <- paste(deparse(run_odm_project), collapse = " ")
+  expect_true(grepl("max_concurrency\\s*=\\s*1L", src2))
+})
+
+test_that("the unified default keeps both sets of guards", {
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+
+  # The cap the DJI helper contributed: unbounded workers on a very large
+  # machine trade speed for memory pressure. The cap is an upper bound, not a
+  # target -- on a small runner the n-1 rule binds first, so asserting equality
+  # against the real core count would only test the CI hardware.
+  expect_lte(default_max_concurrency(), 16L)
+  expect_lte(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(cap = 1L), 1L)
+
+  # Pinning the host high makes the cap the binding constraint on any machine.
+  local_mocked_bindings(detectCores = function(...) 64L, .package = "parallel")
+  expect_equal(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(), 16L)
+
+  # The Docker budget the other helper contributed. Still binding with a
+  # 64-core host: min(64, 2) - 1.
+  cache$value <- 2L
+  expect_equal(default_max_concurrency(), 1L)
+})
+
+test_that("run_odm_dji_mavic_3m resolves NULL through the unified default", {
+  expect_null(eval(formals(run_odm_dji_mavic_3m)$max_concurrency))
+  src <- paste(deparse(run_odm_dji_mavic_3m), collapse = " ")
+  expect_true(grepl("default_max_concurrency\\(\\)", src))
+  expect_false(grepl("default_odm_concurrency", src))
+})

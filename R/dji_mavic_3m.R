@@ -63,27 +63,6 @@ keep_only_final_odm_products <- function(project_dir, keep_extra = character()) 
   invisible(removed)
 }
 
-#' Default ODM worker concurrency for this machine
-#'
-#' ODM's per-stage parallelism scales with `--max-concurrency`. The old
-#' hardcoded default of 4 left most of a modern multi-core machine
-#' idle (an Apple M1 Max has 10 cores; 4 workers used ~2 of them in
-#' practice). This returns the physical core count, capped at 16 to
-#' avoid pathological memory pressure on very large core counts. Each
-#' OpenSfM / OpenMVS worker uses on the order of 1-2 GB, so on a 16 GB
-#' machine you may want to pass a smaller explicit `max_concurrency`.
-#'
-#' @noRd
-default_odm_concurrency <- function() {
-  n <- tryCatch(parallel::detectCores(logical = FALSE),
-                error = function(e) NA_integer_)
-  if (is.na(n) || n < 1L) {
-    n <- tryCatch(parallel::detectCores(), error = function(e) 4L)
-  }
-  if (is.na(n) || n < 1L) n <- 4L
-  as.integer(max(1L, min(n, 16L)))
-}
-
 dji_band_project_name <- function(project, band_label) {
   # The RGB run lands at the project's canonical ODM project dir so
   # everything downstream (`odm_product_paths()`, `build_chm_raster()`,
@@ -221,14 +200,18 @@ run_one_dji_band <- function(project,
                              rgb_extra_args = character(),
                              ms_extra_args  = character(),
                              orthophoto_resolution_cm = 5,
-                             max_concurrency = 4,
+                             max_concurrency = default_max_concurrency(),
                              build_dsm    = TRUE,
                              build_dtm    = TRUE,
+                             pc_filter    = 2.5,
+                             pc_sample    = NULL,
+                             pc_rectify   = FALSE,
                              fast_orthophoto = FALSE,
                              auto_boundary = TRUE,
                              pc_las       = FALSE,
                              skip_3dmodel = TRUE,
                              skip_report  = TRUE,
+                             end_with     = NULL,
                              use_ppk_mrk  = TRUE,
                              ppk_min_fix_quality = 4L,
                              ppk_cli      = "auto") {
@@ -361,6 +344,12 @@ run_one_dji_band <- function(project,
     fast_orthophoto = if (is_rgb) isTRUE(fast_orthophoto) else TRUE,
     build_dsm       = if (is_rgb) isTRUE(build_dsm) else FALSE,
     build_dtm       = if (is_rgb) isTRUE(build_dtm) else FALSE,
+    # The point-cloud cleanup matters on the RGB run, which is the one that
+    # reconstructs the geometry every DEM and the stacked ortho inherit. The
+    # MS runs contribute radiance only and already use --fast-orthophoto.
+    pc_filter       = if (is_rgb) pc_filter else NULL,
+    pc_sample       = if (is_rgb) pc_sample else NULL,
+    pc_rectify      = if (is_rgb) isTRUE(pc_rectify) else FALSE,
     # By default skip everything that DroneBioR's downstream pipeline
     # does not need (textured 3D model, PDF report, LAS point cloud).
     # Users who want the LAS for `improve_dtm_csf()` or the 3D model
@@ -370,6 +359,7 @@ run_one_dji_band <- function(project,
     pc_las          = is_rgb && isTRUE(pc_las),
     skip_3dmodel    = isTRUE(skip_3dmodel),
     skip_report     = isTRUE(skip_report),
+    end_with        = end_with,
     extra_args      = c(if (is_rgb) rgb_extra_args else ms_extra_args,
                         ppk_geo_args, boundary_args)
   )
@@ -383,7 +373,8 @@ run_one_dji_band <- function(project,
     args        = args,
     project_dir = band_proj,
     image_count = nrow(images_manifest),
-    band_label  = band
+    band_label  = band,
+    camera      = "dji_mavic_3m"
   )
 
   # exifread / DJI MakerNote crash: ODM dies in the `dataset` stage
@@ -406,7 +397,8 @@ run_one_dji_band <- function(project,
         args        = args,
         project_dir = band_proj,
         image_count = nrow(images_manifest),
-        band_label  = paste0(band, "/exif-retry")
+        band_label  = paste0(band, "/exif-retry"),
+        camera      = "dji_mavic_3m"
       )
     } else {
       stop(sprintf(
@@ -454,7 +446,8 @@ run_one_dji_band <- function(project,
       args        = oom_retry_args,
       project_dir = band_proj,
       image_count = nrow(images_manifest),
-      band_label  = paste0(band, "/oom-retry")
+      band_label  = paste0(band, "/oom-retry"),
+      camera      = "dji_mavic_3m"
     )
   }
 
@@ -485,7 +478,8 @@ run_one_dji_band <- function(project,
         args        = retry_args,
         project_dir = band_proj,
         image_count = nrow(images_manifest),
-        band_label  = paste0(band, "/retry")
+        band_label  = paste0(band, "/retry"),
+        camera      = "dji_mavic_3m"
       )
     }
   }
@@ -497,10 +491,12 @@ run_one_dji_band <- function(project,
   # as success so the orchestrator can move on to the next band.
   if (!identical(status, 0L) && file.exists(ortho_path)) {
     warning(sprintf(
-      "ODM exited with status %s on band %s but the orthomosaic is on disk. ",
-      "This usually means a post-processing stage (PDF report, hillshade ",
-      "preview) failed; the orthomosaic, DSM/DTM and point cloud should ",
-      "still be valid. Treating as success.",
+      paste0(
+        "ODM exited with status %s on band %s but the orthomosaic is on disk. ",
+        "This usually means a post-processing stage (PDF report, hillshade ",
+        "preview) failed; the orthomosaic, DSM/DTM and point cloud should ",
+        "still be valid. Treating as success."
+      ),
       status, band
     ), call. = FALSE)
     status <- 0L
@@ -592,7 +588,7 @@ run_dji_ms_multispectral <- function(project,
                                      odm_image,
                                      force,
                                      orthophoto_resolution_cm = 5,
-                                     max_concurrency = 4,
+                                     max_concurrency = default_max_concurrency(),
                                      auto_boundary = TRUE,
                                      skip_report = TRUE,
                                      use_ppk_mrk = TRUE,
@@ -688,7 +684,8 @@ run_dji_ms_multispectral <- function(project,
   message("[MS] running ODM multispectral (all 4 bands, one reconstruction)...")
   status <- run_docker_with_progress(args = args, project_dir = band_proj,
                                      image_count = nrow(ms_manifest),
-                                     band_label = "MS")
+                                     band_label = "MS",
+                                     camera = "dji_mavic_3m")
 
   if (identical(as.integer(status), 137L) && !file.exists(ortho_path)) {
     message("[MS] exit 137 - retrying once with --max-concurrency 1 --feature-quality medium...")
@@ -877,6 +874,9 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
                                                orthophoto_resolution_cm,
                                                max_concurrency, primary_band,
                                                build_dsm, build_dtm,
+                                               pc_filter = 2.5,
+                                               pc_sample = NULL,
+                                               pc_rectify = FALSE,
                                                fast_orthophoto, auto_boundary,
                                                pc_las, skip_3dmodel, skip_report,
                                                cleanup_intermediates,
@@ -895,7 +895,8 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
     rgb_extra_args = rgb_extra_args, ms_extra_args = ms_extra_args,
     orthophoto_resolution_cm = orthophoto_resolution_cm,
     max_concurrency = max_concurrency, build_dsm = build_dsm,
-    build_dtm = build_dtm, fast_orthophoto = fast_orthophoto,
+    build_dtm = build_dtm, pc_filter = pc_filter, pc_sample = pc_sample,
+    pc_rectify = pc_rectify, fast_orthophoto = fast_orthophoto,
     auto_boundary = auto_boundary, pc_las = pc_las, skip_3dmodel = skip_3dmodel,
     skip_report = skip_report, use_ppk_mrk = use_ppk_mrk,
     ppk_min_fix_quality = ppk_min_fix_quality, ppk_cli = ppk_cli
@@ -1004,6 +1005,11 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
 #'   DTM on the RGB run. Set both to `FALSE` when you only need the
 #'   orthomosaic + spectral indices — combined with
 #'   `fast_orthophoto = TRUE` this is the fastest path.
+#' @param pc_filter,pc_sample,pc_rectify Point-cloud cleanup, as in
+#'   [build_odm_args()]. They are applied to the RGB run, which is the one
+#'   whose geometry the DEMs and the stacked orthomosaic inherit; the four MS
+#'   runs contribute calibrated radiance only and already use
+#'   `--fast-orthophoto`.
 #' @param fast_orthophoto Logical, default `FALSE`. When `TRUE`, the
 #'   RGB run adds ODM's `--fast-orthophoto`, which skips the dense
 #'   MVS reconstruction (often the single longest stage). The
@@ -1134,6 +1140,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  primary_band = "auto",
                                  build_dsm    = TRUE,
                                  build_dtm    = TRUE,
+                                 pc_filter    = 2.5,
+                                 pc_sample    = NULL,
+                                 pc_rectify   = FALSE,
                                  fast_orthophoto = FALSE,
                                  auto_boundary = TRUE,
                                  pc_las       = FALSE,
@@ -1149,9 +1158,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  ms_extra_args  = character()) {
   ms_mode <- match.arg(ms_mode)
   if (is.null(max_concurrency)) {
-    max_concurrency <- default_odm_concurrency()
+    max_concurrency <- default_max_concurrency()
     message(sprintf(
-      "Using --max-concurrency %d (auto-detected physical cores). Pass max_concurrency = N to override.",
+      "Using --max-concurrency %d (physical cores minus one, within Docker's CPU budget). Pass max_concurrency = N to override.",
       max_concurrency
     ))
   }
@@ -1175,6 +1184,7 @@ run_odm_dji_mavic_3m <- function(project,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency = max_concurrency, primary_band = primary_band,
       build_dsm = build_dsm, build_dtm = build_dtm,
+      pc_filter = pc_filter, pc_sample = pc_sample, pc_rectify = pc_rectify,
       fast_orthophoto = fast_orthophoto, auto_boundary = auto_boundary,
       pc_las = pc_las, skip_3dmodel = skip_3dmodel, skip_report = skip_report,
       cleanup_intermediates = cleanup_intermediates,
@@ -1272,6 +1282,9 @@ run_odm_dji_mavic_3m <- function(project,
       max_concurrency  = max_concurrency,
       build_dsm        = build_dsm,
       build_dtm        = build_dtm,
+      pc_filter        = pc_filter,
+      pc_sample        = pc_sample,
+      pc_rectify       = pc_rectify,
       fast_orthophoto  = fast_orthophoto,
       auto_boundary    = auto_boundary,
       pc_las           = pc_las,

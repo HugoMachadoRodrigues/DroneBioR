@@ -21,11 +21,18 @@ jobs:
           - {os: windows-latest, r: 'release'}
           - {os: ubuntu-latest,  r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,  r: 'release'}
-          - {os: ubuntu-latest,  r: 'oldrel-1'}
+          # oldrel builds lidR from source: the maintainer's r-universe ships
+          # Linux binaries for R 4.6/4.7 only, so this job alone spent ~40 min
+          # compiling it. lidR is optional here (every use is guarded by
+          # requireNamespace), and the other four jobs cover it, so this one
+          # runs without it.
+          - {os: ubuntu-latest,  r: 'oldrel-1', skiplidr: true}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # The oldrel job deliberately runs without the optional packages.
+      _R_CHECK_FORCE_SUGGESTS_: ${{ matrix.config.skiplidr && 'false' || 'true' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +45,25 @@ jobs:
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
           # lidR was archived from CRAN; pull it from the maintainer's
-          # r-universe so the Suggests dependency still resolves.
-          extra-repositories: https://r-lidar.r-universe.dev
+          # r-universe so the Suggests dependency still resolves. Omitted on
+          # the job that would have to compile it.
+          extra-repositories: ${{ matrix.config.skiplidr && ' ' || 'https://r-lidar.r-universe.dev' }}
 
+      # Without the r-universe, lidR cannot be resolved at all, so that job
+      # installs the hard dependencies plus the toolchain the check itself
+      # needs, and _R_CHECK_FORCE_SUGGESTS_ lets the check run without the
+      # optional ones.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          extra-packages: >-
+            any::rcmdcheck
+            ${{ matrix.config.skiplidr && ', any::testthat, any::knitr, any::rmarkdown, any::withr' || '' }}
+          # The action splices this into `dependencies = c(needs, (<value>))`,
+          # so it has to be a valid dependency type: NA mixed with a needs
+          # string is rejected by pkgdepends. "all" is what needs:check gives
+          # by default; "hard" is the narrowing that drops the optional
+          # packages on the job that would compile lidR.
+          dependencies: ${{ matrix.config.skiplidr && '"hard"' || '"all"' }}
           needs: check
 
       - uses: r-lib/actions/check-r-package@v2

@@ -9,6 +9,12 @@
 #' `shiny.silent.error` condition, which `with_error_toast()` re-throws so
 #' those inline validations keep working unchanged.
 #'
+#' That re-throw only preserves a *visible* failure inside `render*()` and
+#' `reactive()`, where Shiny displays the message in the dependent output. In
+#' an `observeEvent()` there is no such output and the condition is discarded,
+#' so a failed `validate()` produces nothing at all. Use [observer_need()]
+#' there instead.
+#'
 #' Outside a Shiny session the error is re-emitted via `warning()` so the
 #' helper is safe to call from package-level code too.
 #'
@@ -58,4 +64,53 @@ with_error_toast <- function(label, expr,
       NULL
     }
   )
+}
+
+#' Guard an observer, showing the reason when it stops
+#'
+#' `validate(need(...))` is the right guard inside `render*()` and `reactive()`:
+#' Shiny catches the `shiny.silent.error` it raises and displays the message in
+#' the dependent output. Inside `observeEvent()` there is no output to display
+#' it in, so Shiny swallows the condition and the click produces nothing at
+#' all: no toast, no console message, just a button that looks broken.
+#'
+#' This raises the same abort, but shows the reason first. Use it in place of
+#' `validate(need())` in any observer.
+#'
+#' @param cond Condition that must hold. Evaluated with [shiny::isTruthy()], so
+#'   the semantics match [shiny::need()].
+#' @param message Message shown when `cond` does not hold.
+#' @param type Notification type, as in [shiny::showNotification()].
+#' @param duration Seconds the notification stays up.
+#' @param session Shiny session. Defaults to the current reactive domain.
+#' @return `invisible(TRUE)` when `cond` holds; otherwise aborts the observer.
+#' @examples
+#' \dontrun{
+#' observeEvent(input$train, {
+#'   observer_need(nrow(samples()) > 0, "Extract field samples before training.")
+#'   train_models(samples())
+#' })
+#' }
+#' @export
+observer_need <- function(cond, message, type = "warning", duration = 10,
+                          session = NULL) {
+  has_shiny <- requireNamespace("shiny", quietly = TRUE)
+  ok <- tryCatch(
+    if (has_shiny) shiny::isTruthy(cond) else isTRUE(cond),
+    error = function(e) FALSE
+  )
+  if (isTRUE(ok)) return(invisible(TRUE))
+
+  if (is.null(session) && has_shiny) {
+    session <- shiny::getDefaultReactiveDomain()
+  }
+  if (is.null(session)) {
+    # Outside a Shiny session, mirror with_error_toast(): warn and return
+    # rather than abort, so package-level callers are not derailed.
+    warning(message, call. = FALSE)
+    return(invisible(FALSE))
+  }
+  shiny::showNotification(message, type = type, duration = duration,
+                          session = session)
+  shiny::req(FALSE)
 }

@@ -28,6 +28,7 @@ Depends:
     R (>= 4.1)
 Imports:
     grDevices,
+    parallel,
     sf,
     stats,
     terra,
@@ -35,6 +36,7 @@ Imports:
 Suggests:
     bslib,
     callr,
+    caret,
     future,
     htmltools,
     httr,

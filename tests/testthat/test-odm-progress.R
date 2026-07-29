@@ -140,8 +140,11 @@ test_that("run_docker_with_progress records per-stage durations on clean exit", 
   })
 })
 
-test_that("default_odm_concurrency returns a sane positive integer", {
-  n <- DroneBioR:::default_odm_concurrency()
+test_that("the concurrency default is a sane positive integer", {
+  # default_odm_concurrency() was folded into default_max_concurrency(): two
+  # helpers had drifted apart, one leaving a core free and respecting Docker's
+  # CPU budget, the other neither.
+  n <- default_max_concurrency()
   expect_true(is.integer(n))
   expect_gte(n, 1L)
   expect_lte(n, 16L)

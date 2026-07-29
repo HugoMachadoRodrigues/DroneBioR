@@ -68,6 +68,22 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' @param orthophoto_resolution_cm Orthophoto resolution in centimeters.
 #' @param max_concurrency Maximum concurrent ODM workers.
 #' @param fast_orthophoto Logical. Add `--fast-orthophoto`.
+#' @param pc_quality Densification detail (`--pc-quality`): one of `"ultra"`,
+#'   `"high"`, `"medium"`, `"low"`, `"lowest"`. Each step up produces a denser
+#'   cloud and costs roughly four times the time. `NULL` (default) leaves ODM's
+#'   own default of `"medium"`.
+#' @param pc_filter Statistical outlier removal, in standard deviations from
+#'   the local mean (`--pc-filter`). Applied in ODM's `odm_filterpoints`
+#'   stage, which runs *before* meshing, texturing, the DEMs and the
+#'   orthophoto, so it is the one knob that cleans reconstruction noise out of
+#'   every downstream product at once. ODM's own default is 5, which is loose
+#'   enough to leave floating specks and needles in the point cloud; the
+#'   default here is 2.5. Use `0` to disable filtering.
+#' @param pc_sample Optional thinning radius in metres (`--pc-sample`): keeps a
+#'   single point per sphere of this radius. `NULL` (default) keeps every
+#'   point.
+#' @param pc_rectify Logical. Re-classify wrongly classified ground points and
+#'   fill gaps (`--pc-rectify`). Worth enabling when the DTM matters.
 #' @param build_dsm Logical. Add DSM generation.
 #' @param build_dtm Logical. Add DTM generation options.
 #' @param pc_las Logical. Export LAS point cloud.
@@ -113,10 +129,14 @@ build_odm_args <- function(dataset_dir,
                            camera_type = c("multispectral", "rgb"),
                            radiometric_calibration = NULL,
                            orthophoto_resolution_cm = 5,
-                           max_concurrency = 4,
+                           max_concurrency = default_max_concurrency(),
                            fast_orthophoto = TRUE,
                            build_dsm = FALSE,
                            build_dtm = FALSE,
+                           pc_quality = NULL,
+                           pc_filter = 2.5,
+                           pc_sample = NULL,
+                           pc_rectify = FALSE,
                            pc_las = FALSE,
                            pc_csv = FALSE,
                            pc_copc = FALSE,
@@ -155,6 +175,40 @@ build_odm_args <- function(dataset_dir,
   }
   if (isTRUE(build_dtm)) {
     odm_args <- c(odm_args, "--dtm", "--smrf-threshold", "0.5")
+  }
+  # Densification detail. ODM's own default is "medium"; each step up costs
+  # roughly 4x the time, so this is the main speed/quality dial for the
+  # reconstruction that every later product inherits.
+  if (!is.null(pc_quality)) {
+    pc_quality <- match.arg(tolower(as.character(pc_quality)[1L]),
+                            c("ultra", "high", "medium", "low", "lowest"))
+    odm_args <- c(odm_args, "--pc-quality", pc_quality)
+  }
+  # Point-cloud cleanup. ODM applies these in `odm_filterpoints`, stage 6 of
+  # 13 -- before meshing, texturing, the DEMs and the orthophoto -- so this is
+  # the one place where removing reconstruction noise fixes every downstream
+  # product at once, rather than patching the DSM after the fact. ODM's own
+  # default is 5 standard deviations, which is permissive enough to leave the
+  # floating specks and needles that show up in the 3D view; 2.5 is the
+  # tighter default used here. Set 0 to disable filtering entirely.
+  if (!is.null(pc_filter)) {
+    pc_filter <- suppressWarnings(as.numeric(pc_filter)[1L])
+    if (!is.finite(pc_filter) || pc_filter < 0) {
+      stop("`pc_filter` must be a non-negative number of standard deviations ",
+           "(0 disables filtering).", call. = FALSE)
+    }
+    odm_args <- c(odm_args, "--pc-filter", format(pc_filter, scientific = FALSE))
+  }
+  if (!is.null(pc_sample)) {
+    pc_sample <- suppressWarnings(as.numeric(pc_sample)[1L])
+    if (!is.finite(pc_sample) || pc_sample <= 0) {
+      stop("`pc_sample` must be a positive radius in metres, or NULL to keep ",
+           "every point.", call. = FALSE)
+    }
+    odm_args <- c(odm_args, "--pc-sample", format(pc_sample, scientific = FALSE))
+  }
+  if (isTRUE(pc_rectify)) {
+    odm_args <- c(odm_args, "--pc-rectify")
   }
   if (isTRUE(pc_las)) {
     odm_args <- c(odm_args, "--pc-las")
@@ -288,6 +342,16 @@ run_odm_project <- function(project,
                             auto_geoscan = TRUE,
                             ...) {
   camera_type <- match.arg(camera_type)
+  # Record the sensor model, not just the class: a MicaSense set and a DJI
+  # Mavic 3M flight are both "multispectral" and cost wildly different amounts
+  # per image, so sharing an ETA history between them is worthless.
+  sensor <- if (has_djim3m_images(project$images_dir)) {
+    "dji_mavic_3m"
+  } else if (identical(camera_type, "multispectral")) {
+    "micasense"
+  } else {
+    "rgb"
+  }
   dir.create(project$odm_images_dir, recursive = TRUE, showWarnings = FALSE)
   manifest <- switch(camera_type,
                      multispectral = list_micasense_images(project$images_dir),
@@ -350,7 +414,7 @@ run_odm_project <- function(project,
     project_dir  = project$odm_project_dir,
     image_count  = nrow(manifest),
     band_label   = NULL,
-    camera       = camera_type
+    camera       = sensor
   )
 
   # Exit 137 = OOM kill inside the Docker container. Retry once with
@@ -376,7 +440,7 @@ run_odm_project <- function(project,
       project_dir = project$odm_project_dir,
       image_count = nrow(manifest),
       band_label  = "oom-retry",
-      camera      = camera_type
+      camera      = sensor
     )
   }
 
@@ -395,7 +459,7 @@ run_odm_project <- function(project,
         project_dir = project$odm_project_dir,
         image_count = nrow(manifest),
         band_label  = "retry",
-        camera      = camera_type
+        camera      = sensor
       )
     }
   }
@@ -410,10 +474,12 @@ run_odm_project <- function(project,
   # continue to the next band / next flight.
   if (!identical(status, 0L) && file.exists(project$odm_orthomosaic)) {
     warning(sprintf(
-      "ODM exited with status %s but %s is present. This usually means a ",
-      "post-processing stage (PDF report, hillshade preview) failed; the ",
-      "orthomosaic, DSM/DTM and point cloud should still be valid. ",
-      "Treating as success.",
+      paste0(
+        "ODM exited with status %s but %s is present. This usually means a ",
+        "post-processing stage (PDF report, hillshade preview) failed; the ",
+        "orthomosaic, DSM/DTM and point cloud should still be valid. ",
+        "Treating as success."
+      ),
       status, basename(project$odm_orthomosaic)
     ), call. = FALSE)
     status <- 0L
@@ -430,4 +496,278 @@ run_odm_project <- function(project,
   }
 
   list(command = command, status = status, orthomosaic = project$odm_orthomosaic)
+}
+
+#' Re-clean an ODM point cloud without redoing the reconstruction
+#'
+#' Reruns an existing ODM project from the `odm_filterpoints` stage with new
+#' point-cloud filter settings. Everything before that stage -- `opensfm` and
+#' `openmvs`, which together are the bulk of the runtime and disk of a run --
+#' is reused from the project directory, while meshing, texturing, the DEMs and
+#' the orthophoto are rebuilt from the newly filtered cloud.
+#'
+#' This is the loop to use when tuning `pc_filter` against the 3D view: the
+#' reconstruction is paid for once, and each retune costs only the downstream
+#' stages.
+#'
+#' @param project A `dronebio_project` whose ODM project directory already
+#'   holds a finished (or at least past-`openmvs`) run.
+#' @param pc_filter,pc_sample,pc_rectify Point-cloud cleanup settings, as in
+#'   [build_odm_args()].
+#' @param ... Further arguments passed to [run_odm_project()], e.g.
+#'   `build_dsm`, `build_dtm`, `camera_type`.
+#' @return Invisibly, the list returned by [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' project <- dronebio_project("~/flights/2026-05-01")
+#' # First pass at ODM's default-ish setting, then tighten twice; only the
+#' # stages after odm_filterpoints are recomputed each time.
+#' refilter_odm_point_cloud(project, pc_filter = 2.5, build_dsm = TRUE)
+#' refilter_odm_point_cloud(project, pc_filter = 1.5, pc_rectify = TRUE,
+#'                          build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+refilter_odm_point_cloud <- function(project,
+                                     pc_filter = 2.5,
+                                     pc_sample = NULL,
+                                     pc_rectify = FALSE,
+                                     ...) {
+  opensfm <- file.path(project$odm_project_dir, "opensfm")
+  if (!dir.exists(project$odm_project_dir) || !dir.exists(opensfm)) {
+    stop("No reconstruction to reuse at ", project$odm_project_dir,
+         ": run run_odm_project() first, or the SfM stage has been cleaned ",
+         "away (opensfm/ is the folder this reuses).", call. = FALSE)
+  }
+  run_odm_project(
+    project,
+    pc_filter  = pc_filter,
+    pc_sample  = pc_sample,
+    pc_rectify = pc_rectify,
+    rerun_from = "odm_filterpoints",
+    ...
+  )
+}
+
+#' Build the ODM products from an edited point cloud
+#'
+#' Reruns an existing ODM project from `odm_meshing`, so the mesh, texture,
+#' DEMs and orthophoto are rebuilt from whatever
+#' `odm_filterpoints/point_cloud.ply` currently holds -- including a cloud you
+#' cleaned by hand with [write_ply_subset()] or the app's 3D editor.
+#'
+#' This works because ODM hands that single file from `odm_filterpoints` to
+#' `odm_meshing`, and `odm_filterpoints` skips itself when the file already
+#' exists and it is not the stage being rerun. Starting at `odm_meshing`
+#' therefore leaves the edited cloud untouched, while `opensfm` and `openmvs`
+#' -- the bulk of the runtime -- are reused.
+#'
+#' @param project A `dronebio_project` with a finished (or at least
+#'   past-`odm_filterpoints`) run.
+#' @param ... Passed to [run_odm_project()], e.g. `build_dsm`, `build_dtm`,
+#'   `camera_type`.
+#' @return Invisibly, the list returned by [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' p <- dronebio_project("~/flights/2026-05-01")
+#' ply <- file.path(p$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+#' pc <- read_ply_point_cloud(ply, max_points = 5e5)
+#' keep <- setdiff(seq_len(parse_ply_header(ply)$n_vertices),
+#'                 pc$point_id[pc$z > quantile(pc$z, 0.999)])
+#' write_ply_subset(ply, ply, keep = keep)
+#' rebuild_from_edited_cloud(p, build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+rebuild_from_edited_cloud <- function(project, ...) {
+  ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  if (!file.exists(ply)) {
+    stop("No filtered point cloud at ", ply,
+         ": run the pipeline at least as far as odm_filterpoints first ",
+         "(run_odm_project(..., end_with = \"odm_filterpoints\")).",
+         call. = FALSE)
+  }
+  # Guard the whole point of this function: a rerun that includes
+  # odm_filterpoints would regenerate the cloud and silently discard the edit.
+  dots <- list(...)
+  if (!is.null(dots$rerun_from) && !identical(dots$rerun_from, "odm_meshing")) {
+    stop("`rerun_from` is fixed to \"odm_meshing\" here; rerunning from ",
+         dots$rerun_from, " would rebuild odm_filterpoints and throw the ",
+         "edited cloud away.", call. = FALSE)
+  }
+  dots$rerun_from <- NULL
+  do.call(run_odm_project,
+          c(list(project, rerun_from = "odm_meshing"), dots))
+}
+
+#' Reconstruct up to the point cloud and stop
+#'
+#' Runs ODM from the raw images through alignment (`opensfm`) and densification
+#' (`openmvs`) and stops at `odm_filterpoints`, leaving
+#' `odm_filterpoints/point_cloud.ply` ready to inspect and edit before any
+#' product is derived from it. Pair it with [rebuild_from_edited_cloud()],
+#' which resumes at `odm_meshing` once the cloud is clean.
+#'
+#' `fast_orthophoto` is forced off and cannot be enabled: it skips the dense
+#' reconstruction entirely, so there would be no dense cloud to inspect -- only
+#' the sparse SfM points, which is what produces the jagged DSMs this workflow
+#' exists to avoid.
+#'
+#' @param project A `dronebio_project`.
+#' @param pc_quality Densification detail: `"ultra"`, `"high"`, `"medium"`
+#'   (ODM's default), `"low"` or `"lowest"`. Each step up costs roughly four
+#'   times the time.
+#' @param pc_filter,pc_sample,pc_rectify Cleanup applied in `odm_filterpoints`,
+#'   as in [build_odm_args()]. The cloud you inspect is the filtered one, so
+#'   these settings decide how much is left to remove by hand.
+#' @param ... Passed to [run_odm_project()], e.g. `camera_type`,
+#'   `max_concurrency`.
+#' @return Invisibly, a list with the `point_cloud` path and the result of
+#'   [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' p <- dronebio_project("~/flights/2026-05-01")
+#' stage <- build_point_cloud_only(p, pc_quality = "medium", pc_filter = 2.5)
+#' pc <- read_ply_point_cloud(stage$point_cloud, max_points = 2e5)
+#' # ... inspect, then delete blunders with write_ply_subset(), then:
+#' rebuild_from_edited_cloud(p, build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+build_point_cloud_only <- function(project,
+                                   pc_quality = "medium",
+                                   pc_filter = 2.5,
+                                   pc_sample = NULL,
+                                   pc_rectify = FALSE,
+                                   ...) {
+  dots <- list(...)
+  if (isTRUE(dots$fast_orthophoto)) {
+    stop("`fast_orthophoto` skips the dense reconstruction, so there would be ",
+         "no dense cloud to inspect. Leave it off for this stage.",
+         call. = FALSE)
+  }
+  dots$fast_orthophoto <- NULL
+  dots$end_with <- NULL
+
+  # A DJI Mavic 3M folder cannot go through run_odm_project(): that reads the
+  # images with list_micasense_images(), which rejects DJI_..._MS_NIR.TIF for
+  # not matching the MicaSense capture_band.tif pattern. The geometry of a
+  # Mavic 3M flight comes from its RGB sub-run -- the four MS runs use
+  # --fast-orthophoto and produce no dense cloud -- so that is the run to take
+  # to odm_filterpoints, and the cloud it leaves is the one every product
+  # inherits.
+  if (has_djim3m_images(project$images_dir)) {
+    manifests <- list_dji_mavic_3m_images(project$images_dir)
+    rgb_manifest <- manifests[["D"]]
+    if (is.null(rgb_manifest) || !NROW(rgb_manifest)) {
+      stop("This looks like a DJI Mavic 3M folder but it holds no RGB (_D) ",
+           "images, and the reconstruction geometry comes from those.",
+           call. = FALSE)
+    }
+    res <- run_one_dji_band(
+      project         = project,
+      band            = "RGB",
+      band_label      = "rgb",
+      images_manifest = rgb_manifest,
+      odm_image       = dots$odm_image %||% "opendronemap/odm",
+      force           = isTRUE(dots$force),
+      orthophoto_resolution_cm = dots$orthophoto_resolution_cm %||% 5,
+      max_concurrency = dots$max_concurrency %||% default_max_concurrency(),
+      build_dsm       = FALSE,
+      build_dtm       = FALSE,
+      pc_filter       = pc_filter,
+      pc_sample       = pc_sample,
+      pc_rectify      = pc_rectify,
+      fast_orthophoto = FALSE,
+      end_with        = "odm_filterpoints"
+    )
+    # The RGB sub-run deliberately lands at the project's canonical ODM
+    # project dir, so the cloud is where every other consumer already looks.
+    ply <- file.path(project$odm_project_dir, "odm_filterpoints",
+                     "point_cloud.ply")
+    return(invisible(list(point_cloud = ply, exists = file.exists(ply),
+                          camera = "dji_mavic_3m", run = res)))
+  }
+
+  res <- do.call(run_odm_project, c(
+    list(project,
+         pc_quality      = pc_quality,
+         pc_filter       = pc_filter,
+         pc_sample       = pc_sample,
+         pc_rectify      = pc_rectify,
+         fast_orthophoto = FALSE,
+         end_with        = "odm_filterpoints"),
+    dots))
+  ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  invisible(list(point_cloud = ply, exists = file.exists(ply),
+                 camera = "generic", run = res))
+}
+
+#' Default number of ODM workers for this machine
+#'
+#' One less than the usable physical cores, floored at 1 and capped at `cap`.
+#' Leaving a core free keeps the machine usable while a reconstruction runs,
+#' which matters because these runs last tens of minutes. Physical cores rather
+#' than logical ones: OpenSfM and OpenMVS workers are compute- and memory-bound,
+#' so hyperthreads buy little while doubling the memory demand.
+#'
+#' The previous fixed default of 4 was written for a modest laptop and quietly
+#' throttled bigger ones: on a 10-core M1 Max a run sat at ~320% CPU and 7% of
+#' the memory Docker had been given, with feature matching -- the longest part
+#' of `opensfm` -- using less than a third of the machine.
+#'
+#' The count is the smaller of the host's cores and the CPUs Docker reports,
+#' because ODM runs inside the container: sizing to a 10-core host while Docker
+#' holds 4 would start more workers than there are cores, and each worker holds
+#' imagery, so the run gets slower and likelier to be OOM-killed.
+#'
+#' Set `options(dronebior.max_concurrency = n)` to pin a value outright.
+#'
+#' @param cap Upper bound on the result. Each worker costs on the order of
+#'   1-2 GB, so an unbounded count on a very large machine trades speed for
+#'   memory pressure; on a 16 GB machine a smaller explicit `max_concurrency`
+#'   is worth passing.
+#' @return A positive integer.
+#' @examples
+#' default_max_concurrency()
+#' @export
+default_max_concurrency <- function(cap = 16L) {
+  pinned <- getOption("dronebior.max_concurrency", NULL)
+  if (!is.null(pinned)) {
+    n <- suppressWarnings(as.integer(pinned)[1L])
+    if (is.finite(n) && n >= 1L) return(n)
+  }
+  # Physical cores, not logical: OpenSfM and OpenMVS workers are compute- and
+  # memory-bound, so hyperthreads buy little while doubling the memory demand.
+  host <- suppressWarnings(tryCatch(parallel::detectCores(logical = FALSE),
+                                    error = function(e) NA_integer_))
+  if (!is.finite(host) || host < 1L) {
+    host <- suppressWarnings(tryCatch(parallel::detectCores(),
+                                      error = function(e) NA_integer_))
+  }
+  if (!is.finite(host) || host < 2L) return(1L)
+  # detectCores() reports the HOST. ODM runs inside Docker, and Docker Desktop
+  # is routinely given fewer CPUs than the machine has; sizing to the host
+  # there would start more workers than the container has cores, and each
+  # worker holds imagery, so the run gets slower and likelier to be
+  # OOM-killed. Take whichever is smaller.
+  budget <- .docker_ncpu()
+  n <- if (is.finite(budget) && budget >= 1L) min(host, budget) else host
+  # Cap: each worker costs on the order of 1-2 GB, so an unbounded count on a
+  # very large machine trades speed for memory pressure.
+  as.integer(max(1L, min(n - 1L, cap)))
+}
+
+# Cached because it shells out; NA when docker is absent or does not answer.
+.docker_ncpu_cache <- new.env(parent = emptyenv())
+.docker_ncpu <- function() {
+  if (!is.null(.docker_ncpu_cache$value)) return(.docker_ncpu_cache$value)
+  val <- NA_integer_
+  if (nzchar(Sys.which("docker"))) {
+    out <- suppressWarnings(tryCatch(
+      system2("docker", c("info", "--format", "{{.NCPU}}"),
+              stdout = TRUE, stderr = FALSE),
+      error = function(e) character()))
+    n <- suppressWarnings(as.integer(trimws(out[nzchar(trimws(out))])[1L]))
+    if (length(n) == 1L && is.finite(n) && n >= 1L) val <- n
+  }
+  .docker_ncpu_cache$value <- val
+  val
 }

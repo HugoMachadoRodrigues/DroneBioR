@@ -665,3 +665,20 @@ test_that("finalize_dronebio_products warns only about expected-but-missing prod
   )
   expect_false(any(grepl("expected product", msgs)))
 })
+
+test_that("odm_product_paths prefers the DJI multispectral stack over the RGB ortho", {
+  # A DJI Mavic 3M run leaves odm_orthophoto_dji.tif (7 bands) beside the
+  # RGB-only odm_orthophoto.tif. Returning the latter hides NIR/RedEdge, so
+  # NDVI, NDRE and EVI disappear from a multispectral flight.
+  dir <- tempfile("djiproj-")
+  p <- dronebio_project(dir)
+  od <- dirname(p$odm_orthomosaic)
+  dir.create(od, recursive = TRUE, showWarnings = FALSE)
+
+  file.create(p$odm_orthomosaic)
+  expect_equal(unname(odm_product_paths(p)[["orthomosaic"]]), p$odm_orthomosaic)
+
+  stack <- file.path(od, "odm_orthophoto_dji.tif")
+  file.create(stack)
+  expect_equal(unname(odm_product_paths(p)[["orthomosaic"]]), stack)
+})

@@ -145,3 +145,157 @@ test_that("write_dronebio_rasters also writes valid_mask when supplied", {
   expect_true("valid_data_mask" %in% names(paths))
   expect_true(file.exists(paths[["valid_data_mask"]]))
 })
+
+test_that("orthomosaic_band_presence trusts band names over layer count", {
+  # The real MicaSense / DJI layout: NIR and RedEdge are named, so a 6-band
+  # file with an alpha channel must not be read as RGB.
+  b <- orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "NIR", "Rededge", "odm_orthophoto_6"))
+  expect_true(b$has_nir)
+  expect_true(b$has_rededge)
+  expect_equal(b$by, "name")
+
+  # Case and spelling of "RedEdge" vary between writers. Checked on the naming
+  # layer, because presence is additionally gated by the band map the reader
+  # would pick for that layer count -- a 3-layer file is mapped as RGB no
+  # matter what its layers are called.
+  expect_equal(canonical_band_names(c("red", "RedEdge", "nir")),
+               c("Red", "RedEdge", "NIR"))
+  expect_equal(canonical_band_names(c("Red_Edge", "NIR")), c("RedEdge", "NIR"))
+  expect_true(orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "NIR", "Red_Edge"), nlyr = 5)$has_rededge)
+})
+
+test_that("orthomosaic_band_presence says no for a genuinely RGB file", {
+  b <- orthomosaic_band_presence(c("red", "green", "blue", "orthomosaic_4"),
+                                 nlyr = 4)
+  expect_false(b$has_nir)
+  expect_false(b$has_rededge)
+  # red/green/blue are recognised by name, so the answer is positive knowledge
+  # that NIR is absent rather than a guess from the layer count.
+  expect_equal(b$by, "name")
+  expect_true(b$has_blue)
+})
+
+test_that("orthomosaic_band_presence falls back to the count when unnamed", {
+  # No usable names: >4 layers is the only signal left.
+  expect_true(orthomosaic_band_presence(c("b1", "b2", "b3", "b4", "b5"),
+                                        nlyr = 5)$has_nir)
+  expect_false(orthomosaic_band_presence(c("b1", "b2", "b3"), nlyr = 3)$has_nir)
+  # A 4-band multispectral subset is indistinguishable by count -- documented
+  # limitation of the fallback, and the reason names come first.
+  expect_false(orthomosaic_band_presence(c("b1", "b2", "b3", "b4"),
+                                         nlyr = 4)$has_nir)
+})
+
+test_that("orthomosaic_band_presence accepts a SpatRaster directly", {
+  r <- terra::rast(nrows = 2, ncols = 2, nlyrs = 5)
+  names(r) <- c("Red", "Green", "Blue", "NIR", "Rededge")
+  b <- orthomosaic_band_presence(r)
+  expect_true(b$has_nir && b$has_rededge)
+})
+
+test_that("canonical_band_names handles the spellings different drones use", {
+  expect_equal(canonical_band_names(c("Red", "Green", "Blue", "NIR", "Rededge")),
+               c("Red", "Green", "Blue", "NIR", "RedEdge"))
+  # DJI Mavic 3M stack: RGB camera then the MS set, so Red/Green appear twice.
+  expect_equal(canonical_band_names(c("MS_G", "MS_R", "MS_RE", "MS_NIR")),
+               c("Green", "Red", "RedEdge", "NIR"))
+  expect_equal(canonical_band_names(c("green", "red", "red_edge", "nir")),
+               c("Green", "Red", "RedEdge", "NIR"))
+  expect_equal(canonical_band_names(c("R", "G", "B", "RE", "NIR")),
+               c("Red", "Green", "Blue", "RedEdge", "NIR"))
+  expect_equal(canonical_band_names(c("band_red", "band_nir")), c("Red", "NIR"))
+  # Unrecognised means absent, never a guess.
+  expect_true(all(is.na(canonical_band_names(c("b1", "b2", "alpha")))))
+})
+
+test_that("red edge is never mistaken for red", {
+  # "RE" matching /red/ first would file a red-edge layer as red and quietly
+  # corrupt every index built on either.
+  expect_equal(canonical_band_names("RE"), "RedEdge")
+  expect_equal(canonical_band_names("MS_RE"), "RedEdge")
+  expect_equal(canonical_band_names("rededge"), "RedEdge")
+  expect_equal(canonical_band_names("red"), "Red")
+  expect_equal(canonical_band_names("NIR"), "NIR")
+})
+
+test_that("orthomosaic_band_presence reports the whole band set by name", {
+  b <- orthomosaic_band_presence(c("Red", "Green", "Blue", "MS_G", "MS_R",
+                                   "MS_RE", "MS_NIR"))
+  expect_equal(b$by, "name")
+  expect_true(b$has_nir && b$has_rededge)
+  # Blue exists as a layer but only in the uncalibrated RGB triplet, so it is
+  # NOT available to the indices -- matching default_dji_mavic_3m_band_map().
+  expect_false(b$has_blue)
+  expect_setequal(b$bands, c("Red", "Green", "RedEdge", "NIR"))
+
+  rgb <- orthomosaic_band_presence(c("red", "green", "blue", "alpha"), nlyr = 4)
+  expect_true(rgb$has_blue)
+  expect_false(rgb$has_nir)
+  expect_false(rgb$has_rededge)
+})
+
+test_that("the DJI band map takes Green and Red from the calibrated MS set", {
+  m <- default_dji_mavic_3m_band_map()
+  # Never layers 1-2: those are the uncalibrated RGB camera.
+  expect_equal(unname(m[["Green"]]), 4)
+  expect_equal(unname(m[["Red"]]), 5)
+  expect_equal(unname(m[["RedEdge"]]), 6)
+  expect_equal(unname(m[["NIR"]]), 7)
+})
+
+test_that("a DJI stack yields the calibrated index set, without the Blue ones", {
+  skip_if_not_installed("terra")
+  set.seed(1)
+  r <- terra::rast(nrows = 12, ncols = 12, nlyrs = 7, crs = "EPSG:32634")
+  terra::values(r) <- runif(terra::ncell(r) * 7, 1000, 30000)
+  names(r) <- c("Red", "Green", "Blue", "MS_G", "MS_R", "MS_RE", "MS_NIR")
+  f <- tempfile(fileext = ".tif")
+  terra::writeRaster(r, f)
+  o <- read_multispectral_orthomosaic(f, band_map = default_dji_mavic_3m_band_map())
+  ix <- compute_spectral_indices(scale_to_reflectance(o$bands))
+  # The calibrated set supports these; the six Blue-dependent indices stay
+  # out, and the UI must agree rather than offering them.
+  expect_true(all(c("NDVI", "NDRE", "NDRE", "GNDVI", "CIrededge") %in% names(ix)))
+  expect_false(any(c("EVI", "VARI", "RGBVI") %in% names(ix)))
+})
+
+test_that("default_band_map_for_layers is the single rule the reader follows", {
+  # One function, so availability in the UI cannot drift from what
+  # read_multispectral_orthomosaic() will actually map.
+  expect_setequal(names(default_band_map_for_layers(7)),
+                  c("Green", "Red", "RedEdge", "NIR"))
+  expect_setequal(names(default_band_map_for_layers(5)),
+                  c("Red", "Green", "Blue", "NIR", "RedEdge"))
+  expect_setequal(names(default_band_map_for_layers(3)), c("Red", "Green", "Blue"))
+  expect_setequal(names(default_band_map_for_layers(NA)), c("Red", "Green", "Blue"))
+})
+
+test_that("band availability matches the map the reader would use", {
+  # 7 layers: a blue layer is physically present but the calibrated-only map
+  # does not expose it, so reporting Blue would offer EVI and then not deliver.
+  b7 <- orthomosaic_band_presence(
+    c("Red", "Green", "Blue", "MS_G", "MS_R", "MS_RE", "MS_NIR"), nlyr = 7)
+  expect_false(b7$has_blue)
+  expect_setequal(b7$bands, c("Red", "Green", "RedEdge", "NIR"))
+
+  b5 <- orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"),
+                                  nlyr = 5)
+  expect_true(b5$has_blue)
+
+  # One duplicated name is not evidence of a stacked RGB+MS file; a 5-layer
+  # ortho still gets the MicaSense map, Blue included.
+  b5b <- orthomosaic_band_presence(c("Red", "Green", "Blue", "MS_R", "NIR"),
+                                   nlyr = 5)
+  expect_true(b5b$has_blue)
+})
+
+test_that("canonical_band_names survives degenerate input", {
+  expect_length(canonical_band_names(NULL), 0)
+  expect_length(canonical_band_names(character(0)), 0)
+  expect_true(is.na(canonical_band_names(NA_character_)))
+  expect_true(is.na(canonical_band_names("")))
+  expect_equal(canonical_band_names(c("Red", NA)), c("Red", NA))
+  expect_equal(canonical_band_names("REDEDGE"), "RedEdge")
+})

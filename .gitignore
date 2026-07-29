@@ -49,3 +49,6 @@ inst/extdata/large/
 # --- Coverage / lint ---
 .covr/
 lint_cache/
+
+# --- Studio local state (never belongs in the package) ---
+.dronebior_studio.json

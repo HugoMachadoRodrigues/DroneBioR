@@ -24,3 +24,4 @@
 ^data-raw$
 ^inst/shiny/DroneBiomassStudio/rsconnect$
 ^.*backup.*\.tar\.gz$
+^\.dronebior_studio\.json$

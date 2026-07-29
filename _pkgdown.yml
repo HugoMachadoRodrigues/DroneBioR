@@ -27,7 +27,11 @@ reference:
       - list_aerial_images
       - copy_images_for_odm
       - build_odm_args
+      - build_point_cloud_only
+      - default_max_concurrency
       - run_odm_project
+      - refilter_odm_point_cloud
+      - rebuild_from_edited_cloud
       - convert_undistorted_tiffs_for_texturing
       - odm_product_paths
       - summarize_odm_products
@@ -76,6 +80,9 @@ reference:
       - read_multispectral_orthomosaic
       - default_rgb_band_map
       - default_dji_mavic_3m_band_map
+      - orthomosaic_band_presence
+      - canonical_band_names
+      - default_band_map_for_layers
       - scale_to_reflectance
       - summarize_spatraster
       - write_dronebio_rasters
@@ -98,6 +105,45 @@ reference:
       - extract_field_spectral_data
       - fit_biomass_lm
 
+  - title: "Field sample ingest and windowed extraction"
+    desc: >
+      Load field points from a CSV or shapefile, pick the covariates
+      built in the earlier tabs, and aggregate them over an n x n pixel
+      window around each sample.
+    contents:
+      - stage_uploaded_vector
+      - field_source_columns
+      - read_field_points
+      - prepare_field_table
+      - field_covariate_catalogue
+      - normalize_covariate_names
+      - window_cells
+      - extract_window_values
+      - synthesize_pixel_raster
+      - covariate_frame_from_pixels
+      - extract_field_covariates
+
+  - title: "caret field models"
+    desc: >
+      Train caret regression models with a shared 10-fold split, compare
+      them, map the winner and save it as a runnable bundle.
+    contents:
+      - caret_model_catalogue
+      - caret_model_available
+      - field_train_split
+      - fit_field_caret_model
+      - field_model_metrics
+      - format_field_metrics
+      - predict.dronebio_field_model
+      - build_prediction_stack
+      - predict_field_model_map
+      - export_field_biomass_map
+      - biomass_map_breaks
+      - classify_biomass_map
+      - save_field_model_bundle
+      - load_field_model_bundle
+      - write_field_model_summary
+
   - title: "Field-calibrated biomass mapping"
     desc: >
       Calibrate against field samples or a rising-plate meter, then
@@ -119,6 +165,8 @@ reference:
       - read_full_point_cloud
       - read_las_point_cloud
       - read_ply_point_cloud
+      - parse_ply_header
+      - write_ply_subset
       - build_chm_from_dsm_dtm
       - build_chm_raster
       - despike_dem
@@ -166,6 +214,7 @@ reference:
     contents:
       - run_drone_biomass_studio
       - with_error_toast
+      - observer_need
 
 articles:
   - title: "Getting started"

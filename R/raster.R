@@ -35,6 +35,15 @@ default_rgb_band_map <- function() {
 #' @return Named integer vector with `Green`, `Red`, `RedEdge`, `NIR`.
 #' @export
 default_dji_mavic_3m_band_map <- function() {
+  # Layers 1-3 are the RGB camera; 4-7 the calibrated multispectral set.
+  # Green and Red come from the MS bands, never the RGB camera, because only
+  # those carry the sun-sensor radiometric calibration the indices assume.
+  #
+  # Blue is deliberately absent: the Mavic 3M has no blue MS band, and the RGB
+  # camera's blue is not comparable to the calibrated bands. Including it would
+  # make EVI / VARI / ExG / GLI / TGI / RGBVI compute a number that looks like
+  # the index but is not, so those six stay unavailable and the honest 16
+  # remain. Callers who accept the caveat can pass an explicit band_map.
   c(Green = 4, Red = 5, RedEdge = 6, NIR = 7)
 }
 
@@ -80,13 +89,7 @@ read_multispectral_orthomosaic <- function(orthomosaic,
   n_layers <- terra::nlyr(raw)
 
   if (is.null(band_map)) {
-    band_map <- if (n_layers >= 7L) {
-      default_dji_mavic_3m_band_map()
-    } else if (n_layers >= 5L) {
-      default_micasense_band_map()
-    } else {
-      default_rgb_band_map()
-    }
+    band_map <- default_band_map_for_layers(n_layers)
   }
 
   required <- names(band_map)
@@ -253,4 +256,134 @@ write_dronebio_rasters <- function(output_dir,
   }
 
   paths
+}
+
+#' Which spectral bands an orthomosaic actually carries
+#'
+#' Decides whether NIR and RedEdge are present from the layer *names* a
+#' raster declares, falling back to the layer count only when the file was
+#' written without informative names.
+#'
+#' Counting layers alone is not enough, and getting this wrong is expensive:
+#' it silently hides NDVI, NDRE, EVI and every other multispectral index from
+#' a flight that has the bands. A MicaSense orthomosaic labels its bands
+#' `Red, Green, Blue, NIR, Rededge` (plus alpha), and a DJI Mavic 3M stack
+#' likewise, so the names are the reliable signal; a 4-band RGB + alpha file
+#' and a 4-band multispectral subset are indistinguishable by count.
+#'
+#' @param x A `SpatRaster`, or a character vector of layer names.
+#' @param nlyr Layer count, used only as a fallback when `x` carries no
+#'   recognisable band names. Taken from `x` when it is a `SpatRaster`.
+#' @return A list with `has_nir`, `has_rededge` and `by`, the last being
+#'   `"name"` or `"count"` depending on which signal was used.
+#' @examples
+#' orthomosaic_band_presence(c("Red", "Green", "Blue", "NIR", "Rededge"))
+#' orthomosaic_band_presence(c("red", "green", "blue"), nlyr = 3)
+#' @export
+orthomosaic_band_presence <- function(x, nlyr = NULL) {
+  if (inherits(x, "SpatRaster")) {
+    if (is.null(nlyr)) nlyr <- terra::nlyr(x)
+    x <- names(x)
+  }
+  canon <- canonical_band_names(x)
+  named <- canon[!is.na(canon)]
+  if (length(named)) {
+    present <- unique(named)
+    # Availability must mirror what read_multispectral_orthomosaic() will
+    # actually map, or the UI offers an index that is then missing from the
+    # result. That function picks its band map from the layer count, so a
+    # 7-layer DJI stack gets the calibrated-only map with no Blue even though
+    # a blue layer is physically there. Intersecting with that map keeps the
+    # two in step by construction instead of by a heuristic.
+    n <- as.integer(nlyr %||% length(canon))
+    if (is.finite(n)) {
+      mapped <- names(default_band_map_for_layers(n))
+      present <- intersect(present, mapped)
+    }
+    return(list(
+      bands       = present,
+      has_blue    = "Blue"    %in% present,
+      has_green   = "Green"   %in% present,
+      has_red     = "Red"     %in% present,
+      has_nir     = "NIR"     %in% present,
+      has_rededge = "RedEdge" %in% present,
+      by          = "name"
+    ))
+  }
+  # Nothing recognisable to go on: >4 layers is the weak legacy proxy for a
+  # multispectral file, and it cannot say which bands those layers are.
+  proxy <- isTRUE(as.integer(nlyr %||% NA_integer_) > 4L)
+  list(
+    bands       = character(),
+    has_blue    = proxy, has_green = proxy, has_red = proxy,
+    has_nir     = proxy, has_rededge = proxy,
+    by          = "count"
+  )
+}
+
+#' The band map [read_multispectral_orthomosaic()] picks for a layer count
+#'
+#' Kept as one function so the reader and anything that has to predict what the
+#' reader will do -- band availability in the app, for one -- cannot drift
+#' apart. A 7-layer DJI stack maps only the calibrated bands, which is why Blue
+#' is absent there even though the stack carries an RGB triplet.
+#'
+#' @param n_layers Number of layers in the orthomosaic.
+#' @return A named integer vector of layer positions.
+#' @examples
+#' names(default_band_map_for_layers(7))
+#' names(default_band_map_for_layers(5))
+#' @export
+default_band_map_for_layers <- function(n_layers) {
+  n_layers <- as.integer(n_layers)
+  if (!is.finite(n_layers)) return(default_rgb_band_map())
+  if (n_layers >= 7L) return(default_dji_mavic_3m_band_map())
+  if (n_layers >= 5L) return(default_micasense_band_map())
+  default_rgb_band_map()
+}
+
+#' Canonical band names from whatever a raster calls its layers
+#'
+#' Maps layer names to the canonical `Blue` / `Green` / `Red` / `RedEdge` /
+#' `NIR` used throughout the package, so band detection does not depend on one
+#' vendor's spelling. Recognises the common forms seen in the wild:
+#' MicaSense (`Red`, `Rededge`, `NIR`), the DJI Mavic 3M stack (`MS_R`,
+#' `MS_RE`, `MS_NIR`), Parrot Sequoia (`red`, `red_edge`, `nir`), plain
+#' one-letter names, and `band_*` / `b*` prefixes.
+#'
+#' Order matters and the rules are deliberately specific-first: `RE` and
+#' `rededge` must win over `red`, and `NIR` over `N`, or a red-edge layer gets
+#' silently filed as red and every index built on it is quietly wrong.
+#'
+#' Anything unrecognised returns `NA`, which callers should treat as "this band
+#' is absent" rather than guessing.
+#'
+#' @param x Character vector of layer names, or a `SpatRaster`.
+#' @return A character vector the same length as `x`, holding canonical names
+#'   or `NA`.
+#' @examples
+#' canonical_band_names(c("Red", "Green", "Blue", "MS_RE", "MS_NIR"))
+#' canonical_band_names(c("b1", "b2", "b3"))
+#' @export
+canonical_band_names <- function(x) {
+  if (inherits(x, "SpatRaster")) x <- names(x)
+  raw <- as.character(x %||% character())
+  # Normalise separators and case, then drop a leading vendor prefix so
+  # "MS_NIR", "band_nir" and "nir" collapse to the same token.
+  key <- tolower(gsub("[^A-Za-z0-9]", "", raw))
+  key <- sub("^(ms|band|bnd)", "", key)
+
+  rules <- list(
+    RedEdge = "^(rededge|redege|re|edge|rededge1|reg)$",
+    NIR     = "^(nir|nearinfrared|nearir|infrared|n)$",
+    Blue    = "^(blue|blu|b)$",
+    Green   = "^(green|grn|g)$",
+    Red     = "^(red|r)$"
+  )
+  out <- rep(NA_character_, length(key))
+  for (nm in names(rules)) {
+    hit <- is.na(out) & grepl(rules[[nm]], key)
+    out[hit] <- nm
+  }
+  out
 }
