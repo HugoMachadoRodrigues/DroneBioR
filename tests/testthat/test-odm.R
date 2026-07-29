@@ -335,3 +335,67 @@ test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run
   expect_equal(seen$pc_filter, 1.5)
   expect_equal(res$camera, "dji_mavic_3m")
 })
+
+test_that("default_max_concurrency leaves one core free and can be pinned", {
+  n <- default_max_concurrency()
+  expect_true(is.finite(n) && n >= 1L)
+  cores <- suppressWarnings(parallel::detectCores())
+  if (is.finite(cores) && cores >= 2L) expect_equal(n, as.integer(cores - 1L))
+
+  withr::with_options(list(dronebior.max_concurrency = 3L), {
+    expect_equal(default_max_concurrency(), 3L)
+  })
+  # A nonsense pin falls back rather than producing --max-concurrency 0.
+  withr::with_options(list(dronebior.max_concurrency = 0L), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+  withr::with_options(list(dronebior.max_concurrency = "abc"), {
+    expect_true(default_max_concurrency() >= 1L)
+  })
+})
+
+test_that("the ODM command uses the machine default instead of a fixed 4", {
+  # The old fixed 4 throttled a 10-core machine to about a third of it.
+  withr::with_options(list(dronebior.max_concurrency = 9L), {
+    a <- build_odm_args(tempdir(), "demo")
+    expect_equal(a[which(a == "--max-concurrency") + 1L], "9")
+  })
+  # An explicit argument still wins.
+  a <- build_odm_args(tempdir(), "demo", max_concurrency = 2)
+  expect_equal(a[which(a == "--max-concurrency") + 1L], "2")
+})
+
+test_that("concurrency respects the Docker CPU budget, not just the host", {
+  # detectCores() reports the host. ODM runs in the container, and Docker
+  # Desktop is routinely given fewer CPUs; sizing to the host would start more
+  # workers than there are cores, each holding imagery.
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  host <- suppressWarnings(parallel::detectCores())
+  skip_if(!is.finite(host) || host < 3L, "needs a multi-core host")
+
+  cache$value <- 2L
+  expect_equal(default_max_concurrency(), 1L)
+
+  cache$value <- NA_integer_          # docker absent or silent
+  expect_equal(default_max_concurrency(), as.integer(host - 1L))
+
+  cache$value <- 1L                   # never emit --max-concurrency 0
+  expect_equal(default_max_concurrency(), 1L)
+
+  # A pin still wins over both.
+  withr::with_options(list(dronebior.max_concurrency = 7L), {
+    cache$value <- 2L
+    expect_equal(default_max_concurrency(), 7L)
+  })
+})
+
+test_that("the OOM retries still pin concurrency to 1", {
+  # Those retries exist because the container was killed; inheriting the new
+  # machine-sized default would repeat the failure.
+  src <- paste(deparse(DroneBioR:::run_one_dji_band), collapse = " ")
+  expect_true(grepl("max_concurrency\\s*=\\s*1L", src))
+  src2 <- paste(deparse(run_odm_project), collapse = " ")
+  expect_true(grepl("max_concurrency\\s*=\\s*1L", src2))
+})

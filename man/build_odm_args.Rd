@@ -11,7 +11,7 @@ build_odm_args(
   camera_type = c("multispectral", "rgb"),
   radiometric_calibration = NULL,
   orthophoto_resolution_cm = 5,
-  max_concurrency = 4,
+  max_concurrency = default_max_concurrency(),
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,

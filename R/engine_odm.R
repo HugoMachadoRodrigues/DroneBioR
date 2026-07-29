@@ -129,7 +129,7 @@ build_odm_args <- function(dataset_dir,
                            camera_type = c("multispectral", "rgb"),
                            radiometric_calibration = NULL,
                            orthophoto_resolution_cm = 5,
-                           max_concurrency = 4,
+                           max_concurrency = default_max_concurrency(),
                            fast_orthophoto = TRUE,
                            build_dsm = FALSE,
                            build_dtm = FALSE,
@@ -657,7 +657,7 @@ build_point_cloud_only <- function(project,
       odm_image       = dots$odm_image %||% "opendronemap/odm",
       force           = isTRUE(dots$force),
       orthophoto_resolution_cm = dots$orthophoto_resolution_cm %||% 5,
-      max_concurrency = dots$max_concurrency %||% 4,
+      max_concurrency = dots$max_concurrency %||% default_max_concurrency(),
       build_dsm       = FALSE,
       build_dtm       = FALSE,
       pc_filter       = pc_filter,
@@ -686,4 +686,61 @@ build_point_cloud_only <- function(project,
   ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
   invisible(list(point_cloud = ply, exists = file.exists(ply),
                  camera = "generic", run = res))
+}
+
+#' Default number of ODM workers for this machine
+#'
+#' One less than the number of cores R can see, floored at 1. Leaving a core
+#' free keeps the machine usable while a reconstruction runs, which matters
+#' because these runs last tens of minutes.
+#'
+#' The previous fixed default of 4 was written for a modest laptop and quietly
+#' throttled bigger ones: on a 10-core M1 Max a run sat at ~320% CPU and 7% of
+#' the memory Docker had been given, with feature matching -- the longest part
+#' of `opensfm` -- using less than a third of the machine.
+#'
+#' The count is the smaller of the host's cores and the CPUs Docker reports,
+#' because ODM runs inside the container: sizing to a 10-core host while Docker
+#' holds 4 would start more workers than there are cores, and each worker holds
+#' imagery, so the run gets slower and likelier to be OOM-killed.
+#'
+#' Set `options(dronebior.max_concurrency = n)` to pin a value outright.
+#'
+#' @return A positive integer.
+#' @examples
+#' default_max_concurrency()
+#' @export
+default_max_concurrency <- function() {
+  pinned <- getOption("dronebior.max_concurrency", NULL)
+  if (!is.null(pinned)) {
+    n <- suppressWarnings(as.integer(pinned)[1L])
+    if (is.finite(n) && n >= 1L) return(n)
+  }
+  host <- suppressWarnings(parallel::detectCores())
+  if (!is.finite(host) || host < 2L) return(1L)
+  # detectCores() reports the HOST. ODM runs inside Docker, and Docker Desktop
+  # is routinely given fewer CPUs than the machine has; sizing to the host
+  # there would start more workers than the container has cores, and each
+  # worker holds imagery, so the run gets slower and likelier to be OOM-killed.
+  # Take whichever is smaller.
+  budget <- .docker_ncpu()
+  n <- if (is.finite(budget) && budget >= 1L) min(host, budget) else host
+  as.integer(max(1L, n - 1L))
+}
+
+# Cached because it shells out; NA when docker is absent or does not answer.
+.docker_ncpu_cache <- new.env(parent = emptyenv())
+.docker_ncpu <- function() {
+  if (!is.null(.docker_ncpu_cache$value)) return(.docker_ncpu_cache$value)
+  val <- NA_integer_
+  if (nzchar(Sys.which("docker"))) {
+    out <- suppressWarnings(tryCatch(
+      system2("docker", c("info", "--format", "{{.NCPU}}"),
+              stdout = TRUE, stderr = FALSE),
+      error = function(e) character()))
+    n <- suppressWarnings(as.integer(trimws(out[nzchar(trimws(out))])[1L]))
+    if (length(n) == 1L && is.finite(n) && n >= 1L) val <- n
+  }
+  .docker_ncpu_cache$value <- val
+  val
 }
