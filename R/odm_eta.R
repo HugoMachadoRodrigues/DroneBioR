@@ -43,36 +43,61 @@ odm_history_path <- function() {
   file.path(dir, "odm_stage_history.csv")
 }
 
-#' Read the history. Returns an empty data frame when the file is missing.
+#' Collapse a camera or band label to the buckets the history distinguishes.
+#'
+#' Accepts what the various callers already carry: `camera_type` values
+#' (`"multispectral"` / `"rgb"`) and per-band labels from the DJI Mavic 3M
+#' runner (`"RGB"`, `"MS"`, `"MS_NIR"`, and suffixed forms like
+#' `"MS/oom-retry"`). Anything unrecognised becomes `NA`, which means
+#' "do not filter on it".
 #' @noRd
-read_odm_stage_history <- function() {
-  path <- odm_history_path()
-  if (!file.exists(path)) {
-    return(data.frame(
-      run_started_at   = character(),
-      image_count      = integer(),
-      stage            = character(),
-      duration_seconds = numeric(),
-      stringsAsFactors = FALSE
-    ))
+normalize_camera_type <- function(camera) {
+  if (is.null(camera) || !length(camera)) return(NA_character_)
+  cam <- tolower(trimws(as.character(camera)[1L]))
+  if (is.na(cam) || !nzchar(cam)) return(NA_character_)
+  if (grepl("^(multispectral|multi|ms)\\b|^(multispectral|multi|ms)[_/-]", cam)) {
+    return("multispectral")
   }
-  tryCatch(
-    utils::read.csv(path, stringsAsFactors = FALSE),
-    error = function(e) {
-      data.frame(
-        run_started_at   = character(),
-        image_count      = integer(),
-        stage            = character(),
-        duration_seconds = numeric(),
-        stringsAsFactors = FALSE
-      )
-    }
+  if (grepl("^rgb\\b|^rgb[_/-]|^rgb$", cam)) return("rgb")
+  NA_character_
+}
+
+#' Empty history frame, used for a missing or unreadable file.
+#' @noRd
+empty_odm_stage_history <- function() {
+  data.frame(
+    run_started_at   = character(),
+    image_count      = integer(),
+    stage            = character(),
+    duration_seconds = numeric(),
+    camera           = character(),
+    stringsAsFactors = FALSE
   )
 }
 
-#' Append one stage-completion row, replacing any duplicate (run, stage).
+#' Read the history. Returns an empty data frame when the file is missing.
+#'
+#' Histories written before per-camera tracking have no `camera` column; it is
+#' added as `NA` so those rows stay usable as an unlabelled pool.
 #' @noRd
-record_odm_stage_completion <- function(run_started_at, image_count, stage, duration_seconds) {
+read_odm_stage_history <- function() {
+  path <- odm_history_path()
+  if (!file.exists(path)) return(empty_odm_stage_history())
+  hist <- tryCatch(
+    utils::read.csv(path, stringsAsFactors = FALSE),
+    error = function(e) empty_odm_stage_history()
+  )
+  if (is.null(hist$camera)) hist$camera <- NA_character_
+  hist
+}
+
+#' Append one stage-completion row, replacing any duplicate (run, stage).
+#'
+#' `camera` records which kind of sensor produced the run so later estimates
+#' can avoid mixing them; see [estimate_odm_stage_seconds()].
+#' @noRd
+record_odm_stage_completion <- function(run_started_at, image_count, stage,
+                                        duration_seconds, camera = NA_character_) {
   if (!is.finite(duration_seconds) || duration_seconds < 0) {
     return(invisible(FALSE))
   }
@@ -82,6 +107,7 @@ record_odm_stage_completion <- function(run_started_at, image_count, stage, dura
     image_count      = as.integer(image_count),
     stage            = as.character(stage),
     duration_seconds = as.numeric(duration_seconds),
+    camera           = normalize_camera_type(camera),
     stringsAsFactors = FALSE
   )
   dup <- hist$run_started_at == new_row$run_started_at[1L] &
@@ -97,10 +123,37 @@ record_odm_stage_completion <- function(run_started_at, image_count, stage, dura
 #' Strategy: take the median of historical durations for that stage,
 #' linearly scaled by the ratio of `image_count` to the median historical
 #' count. Falls back to the hardcoded baseline when no history exists.
+#'
+#' A multispectral run costs far more per image than an RGB one -- 12-bit
+#' per-band TIFFs, and feature matching across NIR / red-edge bands over
+#' low-texture canopy -- so pooling the two produced estimates wrong by an
+#' order of magnitude in whichever direction the history leaned. When `camera`
+#' is given the rows are narrowed in three tiers:
+#'
+#' 1. rows recorded for that same sensor;
+#' 2. failing that, rows whose sensor is unknown (`camera = NA`) -- every run
+#'    recorded before per-camera tracking, which are kept usable rather than
+#'    discarded;
+#' 3. failing that, the hardcoded baseline.
+#'
+#' Rows from a sensor known to be *different* are never used: they are the
+#' thing this split exists to keep out, in either direction.
 #' @noRd
-estimate_odm_stage_seconds <- function(stage, image_count = NA_integer_) {
+estimate_odm_stage_seconds <- function(stage, image_count = NA_integer_,
+                                       camera = NA_character_) {
   hist <- read_odm_stage_history()
   rows <- hist[hist$stage == stage & is.finite(hist$duration_seconds), , drop = FALSE]
+
+  cam <- normalize_camera_type(camera)
+  if (!is.na(cam) && nrow(rows)) {
+    same_camera <- rows[!is.na(rows$camera) & rows$camera == cam, , drop = FALSE]
+    rows <- if (nrow(same_camera)) {
+      same_camera
+    } else {
+      rows[is.na(rows$camera), , drop = FALSE]
+    }
+  }
+
   if (!nrow(rows)) {
     baseline <- odm_stage_baseline_seconds()
     return(unname(baseline[stage] %||% 60))
@@ -147,11 +200,12 @@ estimate_remaining_seconds <- function(active_stage,
                                        pending_stages,
                                        active_elapsed_seconds = 0,
                                        image_count = NA_integer_,
+                                       camera = NA_character_,
                                        overrun_progress = 0.5,
                                        min_calibration_seconds = 30,
                                        max_slowdown = 20) {
   active_base <- if (!is.null(active_stage) && !is.na(active_stage)) {
-    estimate_odm_stage_seconds(active_stage, image_count)
+    estimate_odm_stage_seconds(active_stage, image_count, camera = camera)
   } else NA_real_
 
   overrun <- is.finite(active_base) &&
@@ -172,7 +226,7 @@ estimate_remaining_seconds <- function(active_stage,
 
   pending_est <- if (length(pending_stages)) {
     sum(vapply(pending_stages, estimate_odm_stage_seconds, numeric(1),
-               image_count = image_count)) * slowdown
+               image_count = image_count, camera = camera)) * slowdown
   } else 0
 
   active_est + pending_est

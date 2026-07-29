@@ -349,7 +349,8 @@ run_odm_project <- function(project,
     args         = args,
     project_dir  = project$odm_project_dir,
     image_count  = nrow(manifest),
-    band_label   = NULL
+    band_label   = NULL,
+    camera       = camera_type
   )
 
   # Exit 137 = OOM kill inside the Docker container. Retry once with
@@ -374,7 +375,8 @@ run_odm_project <- function(project,
       args        = oom_args,
       project_dir = project$odm_project_dir,
       image_count = nrow(manifest),
-      band_label  = "oom-retry"
+      band_label  = "oom-retry",
+      camera      = camera_type
     )
   }
 
@@ -392,7 +394,8 @@ run_odm_project <- function(project,
         args        = retry_args,
         project_dir = project$odm_project_dir,
         image_count = nrow(manifest),
-        band_label  = "retry"
+        band_label  = "retry",
+        camera      = camera_type
       )
     }
   }

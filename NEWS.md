@@ -2,6 +2,23 @@
 
 ## Bug fixes
 
+* **The ODM stage history no longer mixes RGB and multispectral runs.** Stage
+  durations were pooled across every past run and scaled linearly by image
+  count, so a 39-image multispectral run estimated against a history of
+  300-image RGB runs put `opensfm` at 48s for a stage that went past 10
+  minutes. Multispectral costs far more per image — 12-bit per-band TIFFs, and
+  feature matching across NIR / red-edge bands over low-texture canopy — so the
+  two are now recorded and read separately. `odm_stage_history.csv` gains a
+  `camera` column, and estimates narrow in three tiers: rows from the same
+  sensor, else rows whose sensor is unknown, else the hardcoded baseline. Rows
+  from a sensor known to be *different* are never borrowed, in either
+  direction. Histories written before this change have no `camera` column; the
+  column is added as `NA` on read, so those runs stay usable as the unlabelled
+  tier and estimates are unchanged until the first labelled run is recorded.
+  The camera is taken from `camera_type` in `run_odm_project()`, from the
+  per-band label in the DJI Mavic 3M runner (`"RGB"`, `"MS_NIR"`, …), and from
+  the camera selector in the Shiny app, pinned at run discovery.
+
 * **The ODM progress ETA now corrects itself when a stage overruns.** The
   remaining time was the active stage's `max(0, estimate - elapsed)` plus the
   untouched estimates of the pending stages. Once the active stage passed its

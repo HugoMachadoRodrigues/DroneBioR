@@ -8088,8 +8088,12 @@ server <- function(input, output, session) {
     cur <- stage_timing()
     run_id <- state$run_id
     if (!identical(cur$run_id, run_id)) {
+      # Pin the sensor at run discovery rather than reading the dropdown on
+      # every refresh: the history is split by camera, and a run must be
+      # filed under the camera it actually used.
       cur <- list(run_id       = run_id,
                   image_count  = image_count,
+                  camera       = input$camera_type %||% NA_character_,
                   pre_observed = union(running_names, finished_names),
                   stages       = list())
     } else if (is.na(cur$image_count) && !is.na(image_count)) {
@@ -8116,7 +8120,8 @@ server <- function(input, output, session) {
               run_started_at  = cur$run_id %||% "unknown",
               image_count     = cur$image_count %||% NA_integer_,
               stage           = stg,
-              duration_seconds = dur
+              duration_seconds = dur,
+              camera          = cur$camera %||% NA_character_
             )
           }
           cur$stages[[stg]]$history_written <- TRUE
@@ -8137,7 +8142,8 @@ server <- function(input, output, session) {
         active_stage           = if (is.na(active_stage)) NULL else active_stage,
         pending_stages         = pending_stages,
         active_elapsed_seconds = active_elapsed,
-        image_count            = cur$image_count
+        image_count            = cur$image_count,
+        camera                 = cur$camera %||% NA_character_
       )
     }
 
@@ -8154,10 +8160,12 @@ server <- function(input, output, session) {
         dur <- cur$stages[[stg]]$finished_at - cur$stages[[stg]]$running_at
         if (is.finite(dur) && dur > 0) format_duration(dur) else "—"
       } else if (identical(stg, active_stage)) {
-        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count)
+        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count,
+                                                     camera = cur$camera %||% NA_character_)
         paste0(format_duration(active_elapsed), " / est ", format_duration(est))
       } else if (stg %in% pending_stages) {
-        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count)
+        est <- DroneBioR:::estimate_odm_stage_seconds(stg, cur$image_count,
+                                                     camera = cur$camera %||% NA_character_)
         paste0("est ", format_duration(est))
       } else "—"
 
