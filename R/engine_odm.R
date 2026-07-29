@@ -633,6 +633,47 @@ build_point_cloud_only <- function(project,
   }
   dots$fast_orthophoto <- NULL
   dots$end_with <- NULL
+
+  # A DJI Mavic 3M folder cannot go through run_odm_project(): that reads the
+  # images with list_micasense_images(), which rejects DJI_..._MS_NIR.TIF for
+  # not matching the MicaSense capture_band.tif pattern. The geometry of a
+  # Mavic 3M flight comes from its RGB sub-run -- the four MS runs use
+  # --fast-orthophoto and produce no dense cloud -- so that is the run to take
+  # to odm_filterpoints, and the cloud it leaves is the one every product
+  # inherits.
+  if (has_djim3m_images(project$images_dir)) {
+    manifests <- list_dji_mavic_3m_images(project$images_dir)
+    rgb_manifest <- manifests[["D"]]
+    if (is.null(rgb_manifest) || !NROW(rgb_manifest)) {
+      stop("This looks like a DJI Mavic 3M folder but it holds no RGB (_D) ",
+           "images, and the reconstruction geometry comes from those.",
+           call. = FALSE)
+    }
+    res <- run_one_dji_band(
+      project         = project,
+      band            = "RGB",
+      band_label      = "rgb",
+      images_manifest = rgb_manifest,
+      odm_image       = dots$odm_image %||% "opendronemap/odm",
+      force           = isTRUE(dots$force),
+      orthophoto_resolution_cm = dots$orthophoto_resolution_cm %||% 5,
+      max_concurrency = dots$max_concurrency %||% 4,
+      build_dsm       = FALSE,
+      build_dtm       = FALSE,
+      pc_filter       = pc_filter,
+      pc_sample       = pc_sample,
+      pc_rectify      = pc_rectify,
+      fast_orthophoto = FALSE,
+      end_with        = "odm_filterpoints"
+    )
+    # The RGB sub-run deliberately lands at the project's canonical ODM
+    # project dir, so the cloud is where every other consumer already looks.
+    ply <- file.path(project$odm_project_dir, "odm_filterpoints",
+                     "point_cloud.ply")
+    return(invisible(list(point_cloud = ply, exists = file.exists(ply),
+                          camera = "dji_mavic_3m", run = res)))
+  }
+
   res <- do.call(run_odm_project, c(
     list(project,
          pc_quality      = pc_quality,
@@ -643,5 +684,6 @@ build_point_cloud_only <- function(project,
          end_with        = "odm_filterpoints"),
     dots))
   ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
-  invisible(list(point_cloud = ply, exists = file.exists(ply), run = res))
+  invisible(list(point_cloud = ply, exists = file.exists(ply),
+                 camera = "generic", run = res))
 }

@@ -1417,13 +1417,16 @@ workflow_stepper <- function() {
     list(n = 6L, label = "Export",      tab = "Exports"),
     list(n = 7L, label = "Time Series", tab = "Time Series")
   )
-  # The first tab ("Processing Engine") is .active at page load. A
-  # JS listener for shown.bs.tab updates the active class as the
-  # user navigates - see dronebior_stepper_track_active in the
-  # global script block.
+  # The FIRST tab in the navbar is .active at page load, so the chip that
+  # starts active has to be the first entry here -- hardcoding a tab name
+  # leaves the highlight pointing at the wrong step the moment the order
+  # changes, which is what happened when Point Cloud was added in front.
+  # A JS listener for shown.bs.tab updates it as the user navigates - see
+  # dronebior_stepper_track_active in the global script block.
+  first_tab <- steps[[1L]]$tab
   chips <- lapply(steps, function(st) {
     cls <- c("dronebio-step",
-             if (identical(st$tab, "Processing Engine")) "active")
+             if (identical(st$tab, first_tab)) "active")
     tags$div(
       class           = paste(cls, collapse = " "),
       `data-step-tab` = st$tab,
