@@ -8,7 +8,14 @@ dropping them would leave a file ODM still reads but meshes badly.
 ## Usage
 
 ``` r
-write_ply_subset(path, out_path, keep, backup = TRUE, chunk_size = 500000L)
+write_ply_subset(
+  path,
+  out_path,
+  keep,
+  backup = TRUE,
+  backup_path = NULL,
+  chunk_size = 500000L
+)
 ```
 
 ## Arguments
@@ -31,9 +38,16 @@ write_ply_subset(path, out_path, keep, backup = TRUE, chunk_size = 500000L)
 - backup:
 
   When `TRUE` (the default) and `out_path` is the same file as `path`,
-  the original is copied to `<path>.orig` first, unless that copy
-  already exists – so the very first edit is always recoverable and
-  later edits never overwrite that safety net.
+  the original is snapshotted first, unless that snapshot already exists
+  – so the very first edit is always recoverable and later edits never
+  overwrite that safety net.
+
+- backup_path:
+
+  Where to write that snapshot. `NULL` (the default) keeps the
+  historical `<path>.orig`; pass an explicit path (for example
+  `point_cloud.original.ply` beside the cloud) to keep a visible, named
+  copy of the untouched reconstruction instead of a hidden dotfile.
 
 - chunk_size:
 

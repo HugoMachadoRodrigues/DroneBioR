@@ -386,3 +386,5 @@ and check what actually landed on disk.
   : Start Drone Biomass Studio
 - [`with_error_toast()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/with_error_toast.md)
   : Run an expression and report errors as Shiny toasts
+- [`observer_need()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/observer_need.md)
+  : Guard an observer, showing the reason when it stops

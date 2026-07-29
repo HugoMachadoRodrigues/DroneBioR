@@ -55,7 +55,14 @@ them would leave a file ODM still reads but meshes badly.</p>
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">write_ply_subset</span><span class="op">(</span><span class="va">path</span>, <span class="va">out_path</span>, <span class="va">keep</span>, backup <span class="op">=</span> <span class="cn">TRUE</span>, chunk_size <span class="op">=</span> <span class="fl">500000L</span><span class="op">)</span></span></code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">write_ply_subset</span><span class="op">(</span></span>
+<span>  <span class="va">path</span>,</span>
+<span>  <span class="va">out_path</span>,</span>
+<span>  <span class="va">keep</span>,</span>
+<span>  backup <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  backup_path <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  chunk_size <span class="op">=</span> <span class="fl">500000L</span></span>
+<span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -79,9 +86,16 @@ indices of the vertices to keep (1-based, as <code>point_id</code> reports them)
 
 <dt id="arg-backup">backup<a class="anchor" aria-label="anchor" href="#arg-backup"></a></dt>
 <dd><p>When <code>TRUE</code> (the default) and <code>out_path</code> is the same file as
-<code>path</code>, the original is copied to <code>&lt;path&gt;.orig</code> first, unless that copy
-already exists – so the very first edit is always recoverable and later
-edits never overwrite that safety net.</p></dd>
+<code>path</code>, the original is snapshotted first, unless that snapshot already
+exists – so the very first edit is always recoverable and later edits
+never overwrite that safety net.</p></dd>
+
+
+<dt id="arg-backup-path">backup_path<a class="anchor" aria-label="anchor" href="#arg-backup-path"></a></dt>
+<dd><p>Where to write that snapshot. <code>NULL</code> (the default) keeps
+the historical <code>&lt;path&gt;.orig</code>; pass an explicit path (for example
+<code>point_cloud.original.ply</code> beside the cloud) to keep a visible, named copy
+of the untouched reconstruction instead of a hidden dotfile.</p></dd>
 
 
 <dt id="arg-chunk-size">chunk_size<a class="anchor" aria-label="anchor" href="#arg-chunk-size"></a></dt>
