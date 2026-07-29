@@ -1014,6 +1014,125 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
   invisible(TRUE)
 }
 
+# Destination name inside products/ for every product finalize collects,
+# keyed by odm_product_paths() key (plus the two computed rasters
+# run_dronebio_workflow() writes). Rasters flatten to <key>.tif; the 3D
+# deliverables keep their real extension -- note point_cloud.copc.laz,
+# whose two-part extension tools::file_ext() cannot round-trip. The last
+# four are multi-file assets and become folders; see collect_product().
+#' @noRd
+finalize_product_dests <- function() {
+  c(
+    orthomosaic      = "orthomosaic.tif",
+    dsm              = "dsm.tif",
+    dtm              = "dtm.tif",
+    chm              = "chm.tif",
+    dtm_csf          = "dtm_csf.tif",
+    chm_csf          = "chm_csf.tif",
+    spectral_indices = "spectral_indices.tif",
+    biomass_proxy    = "biomass_proxy.tif",
+    point_cloud_copc = "point_cloud.copc.laz",
+    point_cloud_laz  = "point_cloud.laz",
+    point_cloud_las  = "point_cloud.las",
+    point_cloud_ply  = "point_cloud.ply",
+    mesh_ply         = "mesh.ply",
+    textured_glb     = "textured_model.glb",
+    textured_glb_25d = "textured_model_25d.glb",
+    report           = "report.pdf",
+    textured_obj     = "textured_model",
+    textured_obj_25d = "textured_model_25d",
+    tiles_3d         = "3d_tiles",
+    map_tiles_dir    = "orthomosaic_tiles"
+  )
+}
+
+# TRUE when `child` is `parent` itself or lives underneath it.
+#' @noRd
+path_within <- function(child, parent) {
+  sep <- .Platform$file.sep
+  startsWith(paste0(normalizePath(child,  mustWork = FALSE), sep),
+             paste0(normalizePath(parent, mustWork = FALSE), sep))
+}
+
+# Copy one file and confirm the bytes actually landed. file.copy()'s
+# return value is not proof enough when the source is about to be
+# deleted: on a full disk or a stalled cloud-sync folder it can leave a
+# short file behind, and finalize would then unlink() the only good copy.
+#' @noRd
+copy_verified <- function(src, dest) {
+  dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
+  ok <- tryCatch(file.copy(src, dest, overwrite = TRUE),
+                 error = function(e) FALSE)
+  if (!isTRUE(ok)) return(FALSE)
+  s <- file.info(src)$size
+  d <- file.info(dest)$size
+  isTRUE(is.finite(s) && is.finite(d) && s == d)
+}
+
+# Recursively copy a whole product directory. The 3D tile set and the XYZ
+# map tiles are indexes plus payload -- tileset.json on its own points at
+# .b3dm files that would no longer exist -- so they travel as directories.
+#' @noRd
+copy_tree_verified <- function(src_dir, dest_dir) {
+  rel <- list.files(src_dir, recursive = TRUE, all.files = TRUE, no.. = TRUE)
+  if (!length(rel)) return(FALSE)
+  ok <- TRUE
+  for (f in rel) {
+    if (!copy_verified(file.path(src_dir, f), file.path(dest_dir, f))) ok <- FALSE
+  }
+  ok
+}
+
+# Files that make up a textured OBJ. The .obj names its material library
+# with a bare `mtllib odm_textured_model_geo.mtl` line and the .mtl names
+# each texture PNG the same way, so the group has to travel together under
+# its original filenames or the mesh loads untextured. The Shiny 3D tab
+# relies on exactly that layout too: it serves the OBJ's folder and probes
+# for <stem>.mtl beside it.
+#' @noRd
+obj_asset_files <- function(obj_path) {
+  d    <- dirname(obj_path)
+  stem <- tools::file_path_sans_ext(basename(obj_path))
+  files <- obj_path
+  mtl <- file.path(d, paste0(stem, ".mtl"))
+  if (file.exists(mtl)) {
+    files <- c(files, mtl)
+    lines <- tryCatch(readLines(mtl, warn = FALSE), error = function(e) character())
+    # `map_Kd [options] texture.png` -- the filename is the last field.
+    maps <- vapply(strsplit(trimws(grep("^\\s*map_", lines, value = TRUE)),
+                            "[[:space:]]+"),
+                   function(x) x[[length(x)]], character(1))
+    files <- c(files, file.path(d, basename(maps)))
+  }
+  # Fallback for runs whose .mtl is missing or does not name its textures:
+  # ODM writes them as <stem>_material0000_map_Kd.png next to the mesh.
+  siblings <- list.files(d, pattern = "\\.(png|jpg|jpeg)$",
+                         ignore.case = TRUE, full.names = TRUE)
+  files <- c(files, siblings[startsWith(basename(siblings), stem)])
+  unique(files[file.exists(files)])
+}
+
+# Copy one product to its destination in products/, returning the path it
+# landed at or NA_character_ when any part of it failed to copy.
+#' @noRd
+collect_product <- function(key, src, dest) {
+  if (key %in% c("textured_obj", "textured_obj_25d")) {
+    group <- obj_asset_files(src)
+    ok <- all(vapply(group,
+                     function(f) copy_verified(f, file.path(dest, basename(f))),
+                     logical(1)))
+    return(if (ok) file.path(dest, basename(src)) else NA_character_)
+  }
+  if (key %in% c("tiles_3d", "map_tiles_dir")) {
+    # tiles_3d resolves to the tileset.json index, map_tiles_dir to the
+    # folder itself; either way the whole folder is the deliverable.
+    src_dir <- if (dir.exists(src)) src else dirname(src)
+    if (!copy_tree_verified(src_dir, dest)) return(NA_character_)
+    return(if (dir.exists(src)) dest else file.path(dest, basename(src)))
+  }
+  if (copy_verified(src, dest)) dest else NA_character_
+}
+
 #' Collect the final products into one flat folder with metadata
 #'
 #' A DroneBioR run leaves a deep, ODM-shaped tree
@@ -1023,14 +1142,32 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
 #' usually want just the handful of products you will actually reuse,
 #' in one place, with a machine-readable description.
 #'
-#' This copies the final products into `out_dir` under simple names —
-#' `orthomosaic.tif`, `dsm.tif`, `dtm.tif`, `chm.tif`,
-#' `spectral_indices.tif`, `biomass_proxy.tif` — writes a single
-#' `metadata.json` (run parameters plus, per raster, the CRS,
-#' resolution, extent, band names and per-band min/mean/max), and —
+#' This copies every product [odm_product_paths()] resolves into
+#' `out_dir` under simple names — the rasters as `orthomosaic.tif`,
+#' `dsm.tif`, `dtm.tif`, `chm.tif`, `dtm_csf.tif`, `chm_csf.tif`,
+#' `spectral_indices.tif` and `biomass_proxy.tif`; the 3D deliverables as
+#' `point_cloud.copc.laz` / `.laz` / `.las` / `.ply`, `mesh.ply`,
+#' `textured_model.glb` (plus the `_25d` variants) and `report.pdf` —
+#' writes a single `metadata.json` (run parameters plus, per raster, the
+#' CRS, resolution, extent, band names and per-band min/mean/max), and —
 #' unless `remove_scaffolding = FALSE` — deletes the ODM scaffolding,
 #' the raw DEM backups, the RGB-only ortho, the reflectance stack and
 #' the logs, leaving only `out_dir`.
+#'
+#' Multi-file products are copied as folders rather than flattened,
+#' because their internal references are by bare filename and would break
+#' otherwise: the textured OBJ lands in `textured_model/` alongside its
+#' `.mtl` and texture images under their original names, and the tile sets
+#' land whole in `3d_tiles/` and `orthomosaic_tiles/`.
+#'
+#' @section Disk space and the no-loss guarantee:
+#' The point clouds and textured meshes are by far the largest files a run
+#' produces — several GB is routine — and they are copied, not moved, so
+#' `out_dir` needs as much free space as the products themselves before
+#' the scaffolding goes away. Every copy is size-checked afterwards, and
+#' if any of them fails, or if `products` excludes something that is on
+#' disk, the scaffolding is **kept** and a warning is raised. Nothing is
+#' deleted on the strength of a copy that did not land.
 #'
 #' @param project A `dronebio_project`.
 #' @param orthomosaic Path to the orthomosaic to keep (default: the
@@ -1050,6 +1187,14 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
 #'   source file is missing trigger a warning, so an incomplete
 #'   `products/` folder (e.g. indices that crashed before being written)
 #'   is never shipped silently. Default `character()` warns about nothing.
+#'   Products that exist on disk but are not collected warn regardless of
+#'   `expect` — see the disk-space section.
+#' @param products Character vector of product keys to collect, from
+#'   [odm_product_paths()] plus `"spectral_indices"` and
+#'   `"biomass_proxy"`. Defaults to all of them. Narrow it when disk
+#'   space is tight and you do not need, say, the redundant point-cloud
+#'   formats; anything you drop that exists on disk is reported and stops
+#'   the scaffolding from being removed.
 #' @return Invisibly, a named character vector of the final product
 #'   paths in `out_dir`.
 #' @examples
@@ -1057,6 +1202,10 @@ harmonize_project_dems_inplace <- function(project, canopy_ceiling = 18,
 #'   res <- run_odm_dji_mavic_3m(project)
 #'   wf  <- run_dronebio_workflow(project, res$stacked_orthomosaic)
 #'   finalize_dronebio_products(project, extra_metadata = list(flight = "f1"))
+#'   # Rasters and the COPC cloud only, skipping the redundant LAS/LAZ/PLY:
+#'   finalize_dronebio_products(project,
+#'                              products = c("orthomosaic", "dsm", "dtm", "chm",
+#'                                           "point_cloud_copc", "textured_glb"))
 #' }
 #' @export
 finalize_dronebio_products <- function(project,
@@ -1066,7 +1215,8 @@ finalize_dronebio_products <- function(project,
                                        out_dir = NULL,
                                        extra_metadata = list(),
                                        remove_scaffolding = TRUE,
-                                       expect = character()) {
+                                       expect = character(),
+                                       products = names(finalize_product_dests())) {
   paths <- odm_product_paths(project)
   if (is.null(orthomosaic)) {
     dji_stack <- file.path(dirname(unname(paths[["orthomosaic"]])),
@@ -1081,23 +1231,29 @@ finalize_dronebio_products <- function(project,
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-  # Map source -> clean destination name. Only existing sources are kept.
-  wanted <- c(
-    orthomosaic      = orthomosaic,
-    dsm              = unname(paths[["dsm"]]),
-    dtm              = unname(paths[["dtm"]]),
-    chm              = unname(paths[["chm"]]),
-    spectral_indices = indices,
-    biomass_proxy    = biomass_proxy
-  )
+  dests    <- finalize_product_dests()
+  products <- intersect(products, names(dests))
+
+  # Source for every collectable product. Three are chosen or computed
+  # outside ODM (the orthomosaic variant, and the two workflow rasters);
+  # the rest come straight from odm_product_paths().
+  src <- vapply(names(dests), function(k) {
+    switch(k,
+      orthomosaic      = orthomosaic,
+      spectral_indices = indices,
+      biomass_proxy    = biomass_proxy,
+      unname(paths[[k]]))
+  }, character(1))
+
   out_paths <- character()
-  for (nm in names(wanted)) {
-    src <- wanted[[nm]]
-    if (is.null(src) || !file.exists(src)) next
-    dst <- file.path(out_dir, paste0(nm, ".tif"))
-    file.copy(src, dst, overwrite = TRUE)
-    out_paths[nm] <- dst
+  failed    <- character()
+  for (nm in products) {
+    s <- src[[nm]]
+    if (is.null(s) || !nzchar(s) || !file.exists(s)) next
+    landed <- collect_product(nm, s, file.path(out_dir, dests[[nm]]))
+    if (is.na(landed)) failed <- c(failed, nm) else out_paths[nm] <- landed
   }
+
   # Surface expected-but-missing products loudly. The computed products
   # (spectral_indices, biomass_proxy) are silently absent when the indices
   # step did not run or crashed; without this, finalize would quietly ship an
@@ -1105,22 +1261,52 @@ finalize_dronebio_products <- function(project,
   # evidence) when remove_scaffolding = TRUE.
   missing_expected <- setdiff(expect, names(out_paths))
   if (length(missing_expected) > 0) {
+    # Name each one by the file it would have been, falling back to the
+    # key itself so a typo in `expect` reads as the typo, not as NA.
+    labels <- ifelse(missing_expected %in% names(dests),
+                     dests[missing_expected], missing_expected)
     warning(sprintf(
       paste0("[finalize] expected product(s) not found, so products/ is ",
              "incomplete: %s. The source file(s) were missing - re-run the ",
              "step that makes them (run_dronebio_workflow() for the indices) ",
              "and finalize again."),
-      paste(paste0(missing_expected, ".tif"), collapse = ", ")
+      paste(labels, collapse = ", ")
     ), call. = FALSE)
   }
+
+  # Two ways a product that IS on disk can end up outside products/: the
+  # copy failed, or `products` excluded it. Either way, removing the
+  # scaffolding would destroy the only copy -- exactly how the point
+  # clouds and textured meshes used to disappear -- so say so and keep it.
+  if (length(failed) > 0) {
+    warning(sprintf(
+      paste0("[finalize] %d product(s) could not be copied into %s: %s. ",
+             "The intermediates were KEPT so nothing is lost - free disk ",
+             "space (the point clouds and meshes are several GB), check ",
+             "permissions, and finalize again."),
+      length(failed), out_dir, paste(dests[failed], collapse = ", ")
+    ), call. = FALSE)
+  }
+  dropped <- setdiff(names(dests), products)
+  dropped <- dropped[vapply(dropped, function(k) file.exists(src[[k]]), logical(1))]
+  if (isTRUE(remove_scaffolding) && length(dropped) > 0) {
+    warning(sprintf(
+      paste0("[finalize] %d product(s) exist but were excluded by ",
+             "`products`, and removing the scaffolding would delete the ",
+             "only copy: %s. The intermediates were KEPT. Widen `products`, ",
+             "or pass remove_scaffolding = FALSE and prune by hand."),
+      length(dropped), paste(dropped, collapse = ", ")
+    ), call. = FALSE)
+  }
+
   # Carry over the small CSV summaries if present.
   for (csv in c("spectral_index_summary.csv", "reflectance_summary.csv")) {
-    src <- file.path(out_base, csv)
-    if (file.exists(src)) file.copy(src, file.path(out_dir, csv), overwrite = TRUE)
+    s <- file.path(out_base, csv)
+    if (file.exists(s)) file.copy(s, file.path(out_dir, csv), overwrite = TRUE)
   }
 
   # Build and write metadata describing each product.
-  meta <- build_products_metadata(out_paths, extra_metadata)
+  meta <- build_products_metadata(out_paths, extra_metadata, out_dir = out_dir)
   meta_path <- file.path(out_dir, "metadata.json")
   if (requireNamespace("jsonlite", quietly = TRUE)) {
     writeLines(jsonlite::toJSON(meta, auto_unbox = TRUE, pretty = TRUE,
@@ -1131,37 +1317,74 @@ finalize_dronebio_products <- function(project,
     utils::capture.output(dput(meta), file = meta_path)
   }
 
-  if (isTRUE(remove_scaffolding)) {
-    # Remove the deep ODM tree and the intermediate analysis folder.
+  keep_all <- length(failed) == 0 && length(dropped) == 0
+  if (isTRUE(remove_scaffolding) && keep_all) {
+    # Remove the deep ODM tree and the intermediate analysis folder --
+    # never one that contains out_dir, or the products would go with it.
     for (d in c(project$odm_dataset_dir, out_base)) {
-      if (dir.exists(d) && !normalizePath(d, mustWork = FALSE) ==
-          normalizePath(out_dir, mustWork = FALSE)) {
+      if (dir.exists(d) && !path_within(out_dir, d)) {
         unlink(d, recursive = TRUE, force = TRUE)
       }
     }
     message(sprintf("[finalize] %d products + metadata.json in %s; intermediates removed.",
                     length(out_paths), out_dir))
   } else {
-    message(sprintf("[finalize] %d products + metadata.json in %s.",
-                    length(out_paths), out_dir))
+    message(sprintf("[finalize] %d products + metadata.json in %s%s.",
+                    length(out_paths), out_dir,
+                    if (isTRUE(remove_scaffolding)) "; intermediates kept" else ""))
   }
   invisible(out_paths)
 }
 
-# Assemble a metadata list describing each output raster: CRS,
-# resolution, extent, band names and per-band min/mean/max.
+# Assemble a metadata list describing each output. Rasters get CRS,
+# resolution, extent, band names and per-band min/mean/max; the point
+# clouds, meshes, tile sets and report get a path + byte count, so
+# metadata.json is a complete inventory of what products/ holds rather
+# than only of the parts terra can open.
 #' @noRd
-build_products_metadata <- function(out_paths, extra_metadata = list()) {
-  raster_meta <- list()
+build_products_metadata <- function(out_paths, extra_metadata = list(),
+                                    out_dir = NULL) {
+  # Products inside their own folder (the OBJ group, the tile sets) are
+  # named relative to out_dir so the folder is visible in the manifest.
+  rel_to_out <- function(p) {
+    if (!is.null(out_dir) && path_within(p, out_dir)) {
+      sub("^[/\\\\]", "",
+          substring(normalizePath(p, mustWork = FALSE),
+                    nchar(normalizePath(out_dir, mustWork = FALSE)) + 1L))
+    } else basename(p)
+  }
+  product_meta <- list()
   for (nm in names(out_paths)) {
-    r <- tryCatch(terra::rast(out_paths[[nm]]), error = function(e) NULL)
-    if (is.null(r)) next
+    p <- out_paths[[nm]]
+    r <- if (grepl("\\.tif$", p, ignore.case = TRUE)) {
+      tryCatch(terra::rast(p), error = function(e) NULL)
+    } else NULL
+    if (is.null(r)) {
+      # A multi-file asset is reported by its folder, not its index file:
+      # the deliverable is textured_model/ or 3d_tiles/ as a whole. Those
+      # are the entries that sit one level below out_dir.
+      in_own_folder <- !is.null(out_dir) &&
+        !identical(normalizePath(dirname(p), mustWork = FALSE),
+                   normalizePath(out_dir,    mustWork = FALSE))
+      root <- if (dir.exists(p)) p else if (in_own_folder) dirname(p) else p
+      files <- if (dir.exists(root)) {
+        list.files(root, recursive = TRUE, all.files = TRUE, no.. = TRUE,
+                   full.names = TRUE)
+      } else root
+      product_meta[[nm]] <- list(
+        file  = rel_to_out(root),
+        files = length(files),
+        bytes = tryCatch(sum(as.numeric(file.info(files)$size), na.rm = TRUE),
+                         error = function(e) NA_real_)
+      )
+      next
+    }
     stats <- tryCatch(
       terra::global(r, c("min", "mean", "max"), na.rm = TRUE),
       error = function(e) NULL)
     e <- as.vector(terra::ext(r))
-    raster_meta[[nm]] <- list(
-      file        = basename(out_paths[[nm]]),
+    product_meta[[nm]] <- list(
+      file        = rel_to_out(p),
       bands       = as.integer(terra::nlyr(r)),
       band_names  = names(r),
       crs         = tryCatch(terra::crs(r, describe = TRUE)$name,
@@ -1179,7 +1402,7 @@ build_products_metadata <- function(out_paths, extra_metadata = list()) {
     list(
       generator   = sprintf("DroneBioR %s",
                             as.character(utils::packageVersion("DroneBioR"))),
-      products    = raster_meta
+      products    = product_meta
     ),
     extra_metadata
   )

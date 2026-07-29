@@ -482,6 +482,153 @@ test_that("finalize_dronebio_products flattens products and removes scaffolding"
   expect_false(dir.exists(p$output_dir))
 })
 
+# Build a project whose ODM tree carries the full set of 3D deliverables
+# alongside the rasters: point clouds in every format ODM writes, the
+# filtered/meshed PLYs, a textured OBJ with its .mtl + texture PNG, the
+# GLB the Shiny 3D tab consumes, a 3D tile set and the report PDF.
+make_3d_project <- function(prefix = "final_3d_") {
+  tmp <- tempfile(prefix); dir.create(tmp)
+  p <- dronebio_project(project_dir = tmp, odm_dataset_subdir = "odm_dataset",
+                        odm_project_name = "flight",
+                        output_subdir = "dronebior_analysis")
+  d <- p$odm_project_dir
+  for (sub in c("odm_dem", "odm_orthophoto", "odm_georeferencing",
+                "odm_filterpoints", "odm_meshing", "odm_texturing",
+                "odm_report", file.path("3d_tiles", "tiles"))) {
+    dir.create(file.path(d, sub), recursive = TRUE, showWarnings = FALSE)
+  }
+  mk_rast <- function(path, n = 1) {
+    r <- terra::rast(nrows = 8, ncols = 8, nlyrs = n)
+    terra::values(r) <- runif(64 * n)
+    terra::writeRaster(r, path)
+  }
+  mk_bin <- function(path, n = 512) writeBin(as.raw(seq_len(n) %% 256L), path)
+
+  mk_rast(file.path(d, "odm_dem", "dsm.tif"))
+  mk_rast(file.path(d, "odm_dem", "dtm.tif"))
+  mk_rast(file.path(d, "odm_dem", "chm.tif"))
+  mk_rast(file.path(d, "odm_orthophoto", "odm_orthophoto_dji.tif"), 7)
+
+  geo <- file.path(d, "odm_georeferencing")
+  mk_bin(file.path(geo, "odm_georeferenced_model.las"), 700)
+  mk_bin(file.path(geo, "odm_georeferenced_model.laz"), 300)
+  mk_bin(file.path(geo, "odm_georeferenced_model.copc.laz"), 400)
+  mk_bin(file.path(d, "odm_filterpoints", "point_cloud.ply"), 600)
+  mk_bin(file.path(d, "odm_meshing", "odm_25dmesh.ply"), 200)
+
+  tex <- file.path(d, "odm_texturing")
+  writeLines(c("mtllib odm_textured_model_geo.mtl", "v 0 0 0", "v 1 0 0",
+               "v 0 1 0", "f 1 2 3"),
+             file.path(tex, "odm_textured_model_geo.obj"))
+  writeLines(c("newmtl material0000",
+               "map_Kd odm_textured_model_geo_material0000_map_Kd.png"),
+             file.path(tex, "odm_textured_model_geo.mtl"))
+  mk_bin(file.path(tex, "odm_textured_model_geo_material0000_map_Kd.png"), 128)
+  mk_bin(file.path(tex, "odm_textured_model_geo.glb"), 900)
+
+  writeLines('{"asset":{"version":"1.0"}}',
+             file.path(d, "3d_tiles", "tileset.json"))
+  mk_bin(file.path(d, "3d_tiles", "tiles", "0.b3dm"), 64)
+  mk_bin(file.path(d, "odm_report", "report.pdf"), 256)
+  p
+}
+
+test_that("finalize_dronebio_products keeps point clouds and 3D models", {
+  p <- make_3d_project()
+  prod_dir <- file.path(p$project_dir, "products")
+
+  out <- finalize_dronebio_products(p, extra_metadata = list(flight = "t"))
+
+  # The scaffolding is gone, so products/ is now the only copy.
+  expect_false(dir.exists(p$odm_dataset_dir))
+
+  # Every point-cloud format survived, under its real extension. The
+  # two-part .copc.laz in particular must not be truncated to .laz.
+  for (f in c("point_cloud.las", "point_cloud.laz", "point_cloud.copc.laz",
+              "point_cloud.ply", "mesh.ply", "textured_model.glb",
+              "report.pdf")) {
+    expect_true(file.exists(file.path(prod_dir, f)), info = f)
+  }
+  expect_equal(file.info(file.path(prod_dir, "point_cloud.las"))$size, 700)
+  expect_equal(file.info(file.path(prod_dir, "textured_model.glb"))$size, 900)
+
+  # The textured OBJ travelled as a group under its original filenames,
+  # so `mtllib` and the .mtl's map_Kd still resolve, and the Shiny 3D
+  # tab's dirname()/<stem>.mtl layout still holds.
+  obj <- file.path(prod_dir, "textured_model", "odm_textured_model_geo.obj")
+  expect_true(file.exists(obj))
+  expect_true(file.exists(file.path(dirname(obj), "odm_textured_model_geo.mtl")))
+  expect_true(file.exists(file.path(
+    dirname(obj), "odm_textured_model_geo_material0000_map_Kd.png")))
+  expect_true(any(grepl("^mtllib odm_textured_model_geo\\.mtl$",
+                        readLines(obj, warn = FALSE))))
+
+  # Tile sets travelled whole -- the index alone would point at nothing.
+  expect_true(file.exists(file.path(prod_dir, "3d_tiles", "tileset.json")))
+  expect_true(file.exists(file.path(prod_dir, "3d_tiles", "tiles", "0.b3dm")))
+
+  # Returned paths are keyed by odm_product_paths() key and all exist.
+  expect_true(all(c("point_cloud_las", "point_cloud_copc", "textured_obj",
+                    "textured_glb", "mesh_ply", "tiles_3d", "report")
+                  %in% names(out)))
+  expect_true(all(file.exists(out)))
+
+  # metadata.json inventories the non-raster deliverables too, sizing the
+  # OBJ group by its folder rather than by the .obj alone.
+  skip_if_not_installed("jsonlite")
+  meta <- jsonlite::fromJSON(file.path(prod_dir, "metadata.json"),
+                             simplifyVector = FALSE)
+  expect_equal(meta$products$textured_obj$file, "textured_model")
+  expect_equal(meta$products$textured_obj$files, 3L)
+  expect_equal(meta$products$point_cloud_las$bytes, 700)
+  expect_equal(meta$products$orthomosaic$bands, 7L)
+})
+
+test_that("finalize_dronebio_products keeps scaffolding when a copy fails", {
+  p <- make_3d_project("final_fail_")
+  prod_dir <- file.path(p$project_dir, "products")
+  # Block one destination with a directory of the same name: file.copy()
+  # will happily copy *into* it and report success, and only the size
+  # check catches that the product did not land where it belongs.
+  dir.create(file.path(prod_dir, "point_cloud.las"), recursive = TRUE)
+
+  expect_warning(out <- finalize_dronebio_products(p),
+                 "could not be copied")
+  # Nothing deleted, so the 1 GB-class originals are still recoverable.
+  expect_true(dir.exists(p$odm_dataset_dir))
+  expect_true(file.exists(file.path(p$odm_project_dir, "odm_georeferencing",
+                                    "odm_georeferenced_model.las")))
+  expect_false("point_cloud_las" %in% names(out))
+  # The products that did copy are still there.
+  expect_true(file.exists(file.path(prod_dir, "textured_model.glb")))
+})
+
+test_that("finalize_dronebio_products will not delete products it was told to skip", {
+  p <- make_3d_project("final_skip_")
+
+  expect_warning(
+    out <- finalize_dronebio_products(
+      p, products = c("orthomosaic", "dsm", "dtm", "chm")),
+    "excluded by"
+  )
+  expect_true(dir.exists(p$odm_dataset_dir))
+  expect_false("point_cloud_las" %in% names(out))
+
+  # Excluding products that do not exist on disk is not a loss, so a
+  # narrowed run over an ortho-only project still cleans up.
+  tmp <- tempfile("final_skip_ok_"); dir.create(tmp)
+  q <- dronebio_project(project_dir = tmp, odm_dataset_subdir = "odm_dataset",
+                        odm_project_name = "flight",
+                        output_subdir = "dronebior_analysis")
+  dir.create(file.path(q$odm_project_dir, "odm_orthophoto"), recursive = TRUE)
+  r <- terra::rast(nrows = 8, ncols = 8); terra::values(r) <- runif(64)
+  terra::writeRaster(r, file.path(q$odm_project_dir, "odm_orthophoto",
+                                  "odm_orthophoto.tif"))
+  expect_silent(suppressMessages(
+    finalize_dronebio_products(q, products = "orthomosaic")))
+  expect_false(dir.exists(q$odm_dataset_dir))
+})
+
 test_that("finalize_dronebio_products warns only about expected-but-missing products", {
   mkproj <- function() {
     tmp <- tempfile("final_miss_"); dir.create(tmp)
