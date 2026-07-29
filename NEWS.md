@@ -2,6 +2,38 @@
 
 ## Bug fixes
 
+* **Buttons that refused a guard no longer do nothing at all.** Twenty-four
+  guards across the app were written as `validate(need(...))` inside an
+  `observeEvent()`. `validate()` raises `shiny.silent.error`, which Shiny
+  displays only in a `render*()` output; in an observer there is nothing to
+  display it in, so the condition was discarded and the click produced no
+  toast, no console message and no visible change. The most costly case was
+  Field Models: **Train** looked completely dead whenever a prerequisite was
+  missing. New `observer_need()` shows the reason first and then aborts the
+  observer the same way, and every observer guard now uses it — including the
+  three WebODM credential checks in `launch_odm_run()` and the two overlay
+  checks in `render_gis_overlays()`, both of which are only ever reached from
+  observers. A test parses `app.R` and fails if a `validate()` reappears in an
+  observer.
+
+* **Two warnings printed their own format string as data.** A long message was
+  split across four string literals without `paste0()`, so `sprintf()` took the
+  first fragment as the format and the other three as arguments: the user saw
+  `ODM exited with status post-processing stage (PDF report, hillshade
+  preview) failed; the  but orthomosaic ... is present` plus `3 arguments not
+  used by format`. Fixed in `run_odm_project()` and `run_one_dji_band()`, with
+  a test that walks every `sprintf()` in the package and the app — folding
+  literal `paste0()` formats so the fixed shape stays covered — and checks the
+  conversion count against the argument count.
+
+* **"No CHM is available" now says which part is missing.** The message could
+  not distinguish "no DEMs were discovered" from "the DSM and DTM are there but
+  the subtraction failed", which need different fixes. Relatedly, `chm_raster()`
+  called `file.exists()` on a product path that is `NULL` when the product was
+  never discovered; `file.exists(NULL)` is `logical(0)`, so `if (!...)` raised
+  "argument is of length zero", which the caller's `tryCatch()` swallowed and
+  reported as a missing CHM.
+
 * **The ODM stage history no longer mixes RGB and multispectral runs.** Stage
   durations were pooled across every past run and scaled linearly by image
   count, so a 39-image multispectral run estimated against a history of

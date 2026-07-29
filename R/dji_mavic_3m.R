@@ -508,10 +508,12 @@ run_one_dji_band <- function(project,
   # as success so the orchestrator can move on to the next band.
   if (!identical(status, 0L) && file.exists(ortho_path)) {
     warning(sprintf(
-      "ODM exited with status %s on band %s but the orthomosaic is on disk. ",
-      "This usually means a post-processing stage (PDF report, hillshade ",
-      "preview) failed; the orthomosaic, DSM/DTM and point cloud should ",
-      "still be valid. Treating as success.",
+      paste0(
+        "ODM exited with status %s on band %s but the orthomosaic is on disk. ",
+        "This usually means a post-processing stage (PDF report, hillshade ",
+        "preview) failed; the orthomosaic, DSM/DTM and point cloud should ",
+        "still be valid. Treating as success."
+      ),
       status, band
     ), call. = FALSE)
     status <- 0L

@@ -28,6 +28,12 @@ Shiny's own \code{validate()} / \code{req()} / \code{need()} raise the
 \code{shiny.silent.error} condition, which \code{with_error_toast()} re-throws so
 those inline validations keep working unchanged.
 
+That re-throw only preserves a \emph{visible} failure inside \code{render*()} and
+\code{reactive()}, where Shiny displays the message in the dependent output. In
+an \code{observeEvent()} there is no such output and the condition is discarded,
+so a failed \code{validate()} produces nothing at all. Use \code{\link[=observer_need]{observer_need()}}
+there instead.
+
 Outside a Shiny session the error is re-emitted via \code{warning()} so the
 helper is safe to call from package-level code too.
 }

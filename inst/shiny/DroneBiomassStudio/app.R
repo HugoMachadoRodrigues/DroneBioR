@@ -6059,7 +6059,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$browser_go, {
     path <- input$browser_path_text
-    validate(need(nzchar(path), "Enter a folder path."))
+    observer_need(nzchar(path), "Enter a folder path.")
     if (dir.exists(path)) {
       browser_dir(normalizePath(path, mustWork = FALSE))
       browser_selected(normalizePath(path, mustWork = FALSE))
@@ -7165,7 +7165,7 @@ server <- function(input, output, session) {
   #     opacity, without resetting pan/zoom).
   render_gis_overlays <- function(all_selected, opacity, fit_to_bounds = TRUE,
                                   stretch_mode = "Fixed semantic") {
-    validate(need(length(all_selected) > 0, "Select at least one overlay product."))
+    observer_need(length(all_selected) > 0, "Select at least one overlay product.")
 
     # Hillshade + the four canonical raster products (RGB / DSM / DTM /
     # CHM) live outside gis_stack() -- they read from external files.
@@ -7180,11 +7180,11 @@ server <- function(input, output, session) {
     if (!is.null(x)) {
       spectral_selected <- intersect(spectral_selected, names(x))
     }
-    validate(need(
+    observer_need(
       hillshade_selected || length(external_products) > 0 ||
         length(spectral_selected) > 0,
       "Selected products are not available in the current raster stack."
-    ))
+    )
 
     # Helper: resolve a product key to its on-disk path, preferring the
     # local cache (~/.dronebior/cache/<slug>/) when migration ran.
@@ -7519,7 +7519,7 @@ server <- function(input, output, session) {
   observeEvent(input$save_annotations, {
     with_error_toast("Save annotations", {
       df <- annotations()
-      validate(need(nrow(df) > 0, "No annotations to save."))
+      observer_need(nrow(df) > 0, "No annotations to save.")
       out_path <- studio_assets_annotations_path(input$project_dir)
       dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
       sf_obj <- sf::st_as_sf(df, coords = c("lng", "lat"), crs = 4326)
@@ -7545,9 +7545,9 @@ server <- function(input, output, session) {
   observeEvent(input$load_annotations, {
     with_error_toast("Load annotations", {
       file <- input$load_annotations
-      validate(need(!is.null(file), "Select a GeoJSON file."))
+      observer_need(!is.null(file), "Select a GeoJSON file.")
       g <- sf::st_read(file$datapath, quiet = TRUE)
-      validate(need(nrow(g) > 0, "GeoJSON file is empty."))
+      observer_need(nrow(g) > 0, "GeoJSON file is empty.")
       coords <- sf::st_coordinates(sf::st_transform(g, 4326))
       label_col <- if ("label" %in% names(g)) as.character(g$label) else rep("", nrow(g))
       created_col <- if ("created_at" %in% names(g)) as.character(g$created_at) else rep("", nrow(g))
@@ -8852,9 +8852,9 @@ server <- function(input, output, session) {
 
     with_error_toast("Run processing engine", {
       if (identical(engine, "webodm")) {
-        validate(need(nzchar(input$webodm_url  %||% ""), "WebODM URL is required."))
-        validate(need(nzchar(input$webodm_user %||% ""), "WebODM username is required."))
-        validate(need(nzchar(input$webodm_pass %||% ""), "WebODM password is required."))
+        observer_need(nzchar(input$webodm_url  %||% ""), "WebODM URL is required.")
+        observer_need(nzchar(input$webodm_user %||% ""), "WebODM username is required.")
+        observer_need(nzchar(input$webodm_pass %||% ""), "WebODM password is required.")
         showNotification(
           paste0("Submitting to WebODM at ", input$webodm_url,
                  ". This can take many hours; status updates appear in the R console."),
@@ -9455,11 +9455,11 @@ server <- function(input, output, session) {
     # outputs to disk.
     thresholds_full <- c(input$class_water_max, input$class_bare_max,
                          input$class_stress_max, input$class_moderate_max)
-    validate(need(all(diff(sort(thresholds_full)) > 0),
-                  "Application thresholds must be distinct."))
-    validate(need(input$application_index %in% names(all_indices()),
+    observer_need(all(diff(sort(thresholds_full)) > 0),
+                  "Application thresholds must be distinct.")
+    observer_need(input$application_index %in% names(all_indices()),
                   paste("Index not available at full resolution:",
-                        input$application_index)))
+                        input$application_index))
     app_raster <- build_application_map(
       all_indices()[[input$application_index]], thresholds_full
     )
@@ -9573,9 +9573,18 @@ server <- function(input, output, session) {
     }
     # No chm.tif on disk. Build via the package helper (which writes
     # one to the cache so the next call hits the fast path above).
-    dsm_path <- products[["dsm"]]
-    dtm_path <- products[["dtm"]]
-    if (!file.exists(dsm_path) || !file.exists(dtm_path)) {
+    # products[[...]] is NULL when that product was never discovered, and
+    # file.exists(NULL) is logical(0), so a bare `if (!file.exists(...))`
+    # raises "argument is of length zero". That error was then swallowed by the
+    # caller's tryCatch and reported as "no CHM is available", hiding the real
+    # reason. Normalise to a plain missing-file answer instead.
+    one_path <- function(p) {
+      if (length(p) != 1L || is.na(p)) "" else as.character(p)
+    }
+    dsm_path <- one_path(products[["dsm"]])
+    dtm_path <- one_path(products[["dtm"]])
+    if (!nzchar(dsm_path) || !nzchar(dtm_path) ||
+        !file.exists(dsm_path) || !file.exists(dtm_path)) {
       return(NULL)
     }
     p <- tryCatch(project(), error = function(e) NULL)
@@ -13081,19 +13090,33 @@ server <- function(input, output, session) {
   observeEvent(input$field_extract, {
     result <- with_error_toast("Extract field samples", {
       pts <- field_points()
-      validate(need(!is.null(pts) && nrow(pts) > 0,
-                    "Load field points and map the sample-id / biomass columns first."))
+      observer_need(!is.null(pts) && nrow(pts) > 0,
+                    "Load field points and map the sample-id / biomass columns first.")
       selected <- field_cov_selected()
-      validate(need(length(selected) > 0,
-                    "Tick at least one covariate in the sidebar."))
+      observer_need(length(selected) > 0,
+                    "Tick at least one covariate in the sidebar.")
       refl <- tryCatch(reflectance(), error = function(e) NULL)
-      validate(need(!is.null(refl),
-                    "Load a mosaic in Spectral Analytics first."))
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
       window <- as.integer(input$field_window %||% 3)
       fun <- input$field_window_fun %||% "mean"
       aux <- field_aux_rasters(selected)
       if (any(grepl("_x_CHM$", selected) | selected == "CHM_m") && is.null(aux$chm)) {
-        stop("A canopy-height covariate is ticked but no CHM is available. Build one in 3D Modeling, or untick it.")
+        # Name the reason: "no CHM" is ambiguous between "no DEMs discovered"
+        # and "DEMs are there but the subtraction failed", and the fix differs.
+        s <- tryCatch(field_cov_sources(), error = function(e) NULL)
+        why <- if (is.null(s)) {
+          "no products are loaded"
+        } else if (!isTRUE(s$has_dsm) || !isTRUE(s$has_dtm)) {
+          paste0("the DEMs it needs are missing (DSM: ",
+                 if (isTRUE(s$has_dsm)) "found" else "not found",
+                 ", DTM: ", if (isTRUE(s$has_dtm)) "found" else "not found", ")")
+        } else {
+          "the DSM and DTM are present but the CHM could not be built from them"
+        }
+        stop("A canopy-height covariate is ticked but ", why,
+             ". Build a CHM in 3D Modeling, or untick the covariate.",
+             call. = FALSE)
       }
       started <- Sys.time()
       # with_gis_task (the top banner), NOT withProgress: the app
@@ -13288,16 +13311,16 @@ server <- function(input, output, session) {
   observeEvent(input$field_train, {
     result <- with_error_toast("Train field models", {
       tab <- extracted_field()
-      validate(need(!is.null(tab) && nrow(tab) > 0,
-                    "Extract field samples before training."))
-      validate(need(requireNamespace("caret", quietly = TRUE),
-                    "caret is not installed. Run install.packages(\"caret\") and restart the app."))
+      observer_need(!is.null(tab) && nrow(tab) > 0,
+                    "Extract field samples before training.")
+      observer_need(requireNamespace("caret", quietly = TRUE),
+                    "caret is not installed. Run install.packages(\"caret\") and restart the app.")
       methods <- input$field_model_method
-      validate(need(length(methods) > 0,
-                    "Pick at least one caret method in the sidebar."))
+      observer_need(length(methods) > 0,
+                    "Pick at least one caret method in the sidebar.")
       predictors <- attr(tab, "covariates")
-      validate(need(length(predictors) > 0,
-                    "The extraction table carries no covariates; extract again."))
+      observer_need(length(predictors) > 0,
+                    "The extraction table carries no covariates; extract again.")
 
       # Pre-flight gate. caret:::checkInstall() calls menu() when
       # interactive() is TRUE, which blocks the R process on stdin and
@@ -13326,8 +13349,8 @@ server <- function(input, output, session) {
           type = "warning", duration = 15)
       }
       methods <- methods[ok]
-      validate(need(length(methods) > 0,
-                    "None of the selected models can run here; install the packages listed in the picker."))
+      observer_need(length(methods) > 0,
+                    "None of the selected models can run here; install the packages listed in the picker.")
 
       cat_df <- caret_catalogue_val()
       metric <- input$field_metric %||% "RMSE"
@@ -13582,8 +13605,8 @@ server <- function(input, output, session) {
     result <- with_error_toast("Predict biomass map", {
       m <- field_best_model()
       refl <- tryCatch(reflectance(), error = function(e) NULL)
-      validate(need(!is.null(refl),
-                    "Load a mosaic in Spectral Analytics first."))
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
       aux <- field_aux_rasters(m$predictors)
       window <- max(1L, as.integer(m$window_px %||% 1L))
       # A fresh directory with a stable basename: the file is served
@@ -13773,11 +13796,11 @@ server <- function(input, output, session) {
     with_error_toast("Export full-resolution biomass map", {
       m <- field_best_model()
       refl <- tryCatch(reflectance(), error = function(e) NULL)
-      validate(need(!is.null(refl),
-                    "Load a mosaic in Spectral Analytics first."))
+      observer_need(!is.null(refl),
+                    "Load a mosaic in Spectral Analytics first.")
       export_dir <- input$output_dir %||% ""
-      validate(need(nzchar(export_dir),
-                    "Set an output directory in the Exports tab first."))
+      observer_need(nzchar(export_dir),
+                    "Set an output directory in the Exports tab first.")
       if (!dir.exists(export_dir)) {
         dir.create(export_dir, recursive = TRUE, showWarnings = FALSE)
       }
@@ -14197,10 +14220,10 @@ server <- function(input, output, session) {
 
   observeEvent(input$ts_register, {
     with_error_toast("Register flight", {
-      validate(need(nzchar(input$ts_flight_project_dir),
-                    "Enter the project directory for the flight."))
-      validate(need(dir.exists(input$ts_flight_project_dir),
-                    paste("Project directory not found:", input$ts_flight_project_dir)))
+      observer_need(nzchar(input$ts_flight_project_dir),
+                    "Enter the project directory for the flight.")
+      observer_need(dir.exists(input$ts_flight_project_dir),
+                    paste("Project directory not found:", input$ts_flight_project_dir))
       register_flight(
         date          = input$ts_flight_date,
         project_dir   = input$ts_flight_project_dir,
