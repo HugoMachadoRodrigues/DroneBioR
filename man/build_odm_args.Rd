@@ -15,6 +15,7 @@ build_odm_args(
   fast_orthophoto = TRUE,
   build_dsm = FALSE,
   build_dtm = FALSE,
+  pc_quality = NULL,
   pc_filter = 2.5,
   pc_sample = NULL,
   pc_rectify = FALSE,
@@ -56,6 +57,11 @@ multispectral, omitted for RGB. Set to \code{"none"} to skip explicitly.}
 \item{build_dsm}{Logical. Add DSM generation.}
 
 \item{build_dtm}{Logical. Add DTM generation options.}
+
+\item{pc_quality}{Densification detail (\code{--pc-quality}): one of \code{"ultra"},
+\code{"high"}, \code{"medium"}, \code{"low"}, \code{"lowest"}. Each step up produces a denser
+cloud and costs roughly four times the time. \code{NULL} (default) leaves ODM's
+own default of \code{"medium"}.}
 
 \item{pc_filter}{Statistical outlier removal, in standard deviations from
 the local mean (\code{--pc-filter}). Applied in ODM's \code{odm_filterpoints}

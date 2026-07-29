@@ -224,6 +224,9 @@ run_one_dji_band <- function(project,
                              max_concurrency = 4,
                              build_dsm    = TRUE,
                              build_dtm    = TRUE,
+                             pc_filter    = 2.5,
+                             pc_sample    = NULL,
+                             pc_rectify   = FALSE,
                              fast_orthophoto = FALSE,
                              auto_boundary = TRUE,
                              pc_las       = FALSE,
@@ -361,6 +364,12 @@ run_one_dji_band <- function(project,
     fast_orthophoto = if (is_rgb) isTRUE(fast_orthophoto) else TRUE,
     build_dsm       = if (is_rgb) isTRUE(build_dsm) else FALSE,
     build_dtm       = if (is_rgb) isTRUE(build_dtm) else FALSE,
+    # The point-cloud cleanup matters on the RGB run, which is the one that
+    # reconstructs the geometry every DEM and the stacked ortho inherit. The
+    # MS runs contribute radiance only and already use --fast-orthophoto.
+    pc_filter       = if (is_rgb) pc_filter else NULL,
+    pc_sample       = if (is_rgb) pc_sample else NULL,
+    pc_rectify      = if (is_rgb) isTRUE(pc_rectify) else FALSE,
     # By default skip everything that DroneBioR's downstream pipeline
     # does not need (textured 3D model, PDF report, LAS point cloud).
     # Users who want the LAS for `improve_dtm_csf()` or the 3D model
@@ -877,6 +886,9 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
                                                orthophoto_resolution_cm,
                                                max_concurrency, primary_band,
                                                build_dsm, build_dtm,
+                                               pc_filter = 2.5,
+                                               pc_sample = NULL,
+                                               pc_rectify = FALSE,
                                                fast_orthophoto, auto_boundary,
                                                pc_las, skip_3dmodel, skip_report,
                                                cleanup_intermediates,
@@ -895,7 +907,8 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
     rgb_extra_args = rgb_extra_args, ms_extra_args = ms_extra_args,
     orthophoto_resolution_cm = orthophoto_resolution_cm,
     max_concurrency = max_concurrency, build_dsm = build_dsm,
-    build_dtm = build_dtm, fast_orthophoto = fast_orthophoto,
+    build_dtm = build_dtm, pc_filter = pc_filter, pc_sample = pc_sample,
+    pc_rectify = pc_rectify, fast_orthophoto = fast_orthophoto,
     auto_boundary = auto_boundary, pc_las = pc_las, skip_3dmodel = skip_3dmodel,
     skip_report = skip_report, use_ppk_mrk = use_ppk_mrk,
     ppk_min_fix_quality = ppk_min_fix_quality, ppk_cli = ppk_cli
@@ -1004,6 +1017,11 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
 #'   DTM on the RGB run. Set both to `FALSE` when you only need the
 #'   orthomosaic + spectral indices — combined with
 #'   `fast_orthophoto = TRUE` this is the fastest path.
+#' @param pc_filter,pc_sample,pc_rectify Point-cloud cleanup, as in
+#'   [build_odm_args()]. They are applied to the RGB run, which is the one
+#'   whose geometry the DEMs and the stacked orthomosaic inherit; the four MS
+#'   runs contribute calibrated radiance only and already use
+#'   `--fast-orthophoto`.
 #' @param fast_orthophoto Logical, default `FALSE`. When `TRUE`, the
 #'   RGB run adds ODM's `--fast-orthophoto`, which skips the dense
 #'   MVS reconstruction (often the single longest stage). The
@@ -1134,6 +1152,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  primary_band = "auto",
                                  build_dsm    = TRUE,
                                  build_dtm    = TRUE,
+                                 pc_filter    = 2.5,
+                                 pc_sample    = NULL,
+                                 pc_rectify   = FALSE,
                                  fast_orthophoto = FALSE,
                                  auto_boundary = TRUE,
                                  pc_las       = FALSE,
@@ -1175,6 +1196,7 @@ run_odm_dji_mavic_3m <- function(project,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency = max_concurrency, primary_band = primary_band,
       build_dsm = build_dsm, build_dtm = build_dtm,
+      pc_filter = pc_filter, pc_sample = pc_sample, pc_rectify = pc_rectify,
       fast_orthophoto = fast_orthophoto, auto_boundary = auto_boundary,
       pc_las = pc_las, skip_3dmodel = skip_3dmodel, skip_report = skip_report,
       cleanup_intermediates = cleanup_intermediates,
@@ -1272,6 +1294,9 @@ run_odm_dji_mavic_3m <- function(project,
       max_concurrency  = max_concurrency,
       build_dsm        = build_dsm,
       build_dtm        = build_dtm,
+      pc_filter        = pc_filter,
+      pc_sample        = pc_sample,
+      pc_rectify       = pc_rectify,
       fast_orthophoto  = fast_orthophoto,
       auto_boundary    = auto_boundary,
       pc_las           = pc_las,

@@ -27,6 +27,7 @@ reference:
       - list_aerial_images
       - copy_images_for_odm
       - build_odm_args
+      - build_point_cloud_only
       - run_odm_project
       - refilter_odm_point_cloud
       - rebuild_from_edited_cloud
@@ -79,6 +80,8 @@ reference:
       - default_rgb_band_map
       - default_dji_mavic_3m_band_map
       - orthomosaic_band_presence
+      - canonical_band_names
+      - default_band_map_for_layers
       - scale_to_reflectance
       - summarize_spatraster
       - write_dronebio_rasters

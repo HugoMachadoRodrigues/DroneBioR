@@ -14,6 +14,9 @@ run_odm_dji_mavic_3m(
   primary_band = "auto",
   build_dsm = TRUE,
   build_dtm = TRUE,
+  pc_filter = 2.5,
+  pc_sample = NULL,
+  pc_rectify = FALSE,
   fast_orthophoto = FALSE,
   auto_boundary = TRUE,
   pc_las = FALSE,
@@ -65,6 +68,12 @@ drive the reconstruction, passed as \code{--primary-band}. \code{"auto"}
 DTM on the RGB run. Set both to \code{FALSE} when you only need the
 orthomosaic + spectral indices — combined with
 \code{fast_orthophoto = TRUE} this is the fastest path.}
+
+\item{pc_filter, pc_sample, pc_rectify}{Point-cloud cleanup, as in
+\code{\link[=build_odm_args]{build_odm_args()}}. They are applied to the RGB run, which is the one
+whose geometry the DEMs and the stacked orthomosaic inherit; the four MS
+runs contribute calibrated radiance only and already use
+\code{--fast-orthophoto}.}
 
 \item{fast_orthophoto}{Logical, default \code{FALSE}. When \code{TRUE}, the
 RGB run adds ODM's \code{--fast-orthophoto}, which skips the dense
