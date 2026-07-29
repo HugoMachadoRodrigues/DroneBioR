@@ -337,10 +337,21 @@ test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run
 })
 
 test_that("default_max_concurrency leaves one core free and can be pinned", {
+  # Unmocked smoke check: whatever this machine is, the answer is usable.
   n <- default_max_concurrency()
   expect_true(is.finite(n) && n >= 1L)
-  cores <- suppressWarnings(parallel::detectCores())
-  if (is.finite(cores) && cores >= 2L) expect_equal(n, as.integer(cores - 1L))
+
+  # Then pin BOTH inputs the function reads - the host core count and the
+  # Docker CPU budget - and assert the n-1 rule against those. Deriving the
+  # expectation from the live machine failed on the Windows runner, which hands
+  # Docker fewer CPUs than detectCores() reports, so min(host, budget) - 1 was
+  # 1 where the test demanded 3.
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
+  expect_equal(default_max_concurrency(), 7L)
 
   withr::with_options(list(dronebior.max_concurrency = 3L), {
     expect_equal(default_max_concurrency(), 3L)
