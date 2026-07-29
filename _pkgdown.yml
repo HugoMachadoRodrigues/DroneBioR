@@ -28,6 +28,7 @@ reference:
       - copy_images_for_odm
       - build_odm_args
       - run_odm_project
+      - refilter_odm_point_cloud
       - convert_undistorted_tiffs_for_texturing
       - odm_product_paths
       - summarize_odm_products

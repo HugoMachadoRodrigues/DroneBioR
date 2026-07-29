@@ -13,8 +13,16 @@
 #' @export
 odm_product_paths <- function(project) {
   d <- project$odm_project_dir
+  # A DJI Mavic 3M run reconstructs each band separately and stacks them into
+  # odm_orthophoto_dji.tif beside the RGB orthomosaic. That stack is the
+  # multispectral product; the plain odm_orthophoto.tif next to it carries only
+  # R/G/B, so returning it hides NIR and RedEdge -- and with them NDVI, NDRE,
+  # EVI and every other multispectral index -- from a multispectral flight.
+  ortho <- project$odm_orthomosaic
+  dji_stack <- file.path(dirname(ortho), "odm_orthophoto_dji.tif")
+  if (file.exists(dji_stack)) ortho <- dji_stack
   c(
-    orthomosaic        = project$odm_orthomosaic,
+    orthomosaic        = ortho,
     dsm                = file.path(d, "odm_dem", "dsm.tif"),
     dtm                = file.path(d, "odm_dem", "dtm.tif"),
     chm                = file.path(d, "odm_dem", "chm.tif"),

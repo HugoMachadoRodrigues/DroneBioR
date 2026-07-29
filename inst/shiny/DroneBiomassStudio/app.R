@@ -3283,6 +3283,22 @@ ui <- page_navbar(
         checkboxInput("fast_orthophoto", "Fast orthophoto", value = FALSE),
         checkboxInput("build_dsm", "Generate DSM", value = TRUE),
         checkboxInput("build_dtm", "Generate DTM", value = TRUE),
+        # Point-cloud cleanup. ODM applies this in odm_filterpoints, before
+        # meshing, texturing, the DEMs and the orthophoto, so it is the only
+        # place where removing reconstruction noise fixes every downstream
+        # product at once.
+        sliderInput("pc_filter",
+                    "Point-cloud outlier filter (std. dev.)",
+                    min = 0, max = 6, value = 2.5, step = 0.5),
+        div(class = "small text-muted mb-2",
+            "Removes points deviating more than N standard deviations from the local mean. ",
+            "Lower is more aggressive; 0 disables it. ODM's own default is 5, which leaves ",
+            "the floating specks and needles seen in the 3D view."),
+        checkboxInput("pc_rectify",
+                      "Rectify ground points (better DTM)", value = FALSE),
+        numericInput("pc_sample",
+                     "Thin to one point per N metres (0 = keep all)",
+                     value = 0, min = 0, step = 0.01),
         checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
         checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
         checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
@@ -7988,6 +8004,9 @@ server <- function(input, output, session) {
         fast_orthophoto = input$fast_orthophoto,
         build_dsm = input$build_dsm,
         build_dtm = input$build_dtm,
+        pc_filter = input$pc_filter %||% 2.5,
+        pc_sample = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+        pc_rectify = isTRUE(input$pc_rectify),
         pc_las = input$pc_las,
         pc_copc = input$pc_copc,
         pc_csv = input$pc_csv,
@@ -8689,6 +8708,9 @@ server <- function(input, output, session) {
       fast_orthophoto         = input$fast_orthophoto,
       build_dsm               = input$build_dsm,
       build_dtm               = input$build_dtm,
+      pc_filter               = input$pc_filter %||% 2.5,
+      pc_sample               = if (isTRUE((input$pc_sample %||% 0) > 0)) input$pc_sample else NULL,
+      pc_rectify              = isTRUE(input$pc_rectify),
       pc_las                  = input$pc_las,
       pc_copc                 = input$pc_copc,
       pc_csv                  = input$pc_csv,
@@ -12753,7 +12775,19 @@ server <- function(input, output, session) {
                     detail = "first use only",
                     caret_model_catalogue("Regression", installed = installed))
     })
-    caret_catalogue_val(cat_df %||% data.frame())
+    # Storing an empty frame on failure would latch: the early return above
+    # sees a non-NULL value and never retries, so one transient error leaves
+    # both the Family and the caret-method pickers empty for the rest of the
+    # session with no way back. Leave the value NULL so reopening the panel
+    # tries again, and say what happened.
+    if (is.null(cat_df) || !nrow(cat_df)) {
+      caret_catalogue_val(NULL)
+      showNotification(
+        "Could not read caret's model list. Reopen the Model panel to retry.",
+        type = "warning", duration = 8)
+      return(invisible(NULL))
+    }
+    caret_catalogue_val(cat_df)
     invisible(NULL)
   }
 
