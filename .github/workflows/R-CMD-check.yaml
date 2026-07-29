@@ -26,13 +26,13 @@ jobs:
           # compiling it. lidR is optional here (every use is guarded by
           # requireNamespace), and the other four jobs cover it, so this one
           # runs without it.
-          - {os: ubuntu-latest,  r: 'oldrel-1', skip-lidr: true}
+          - {os: ubuntu-latest,  r: 'oldrel-1', skiplidr: true}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
       # The oldrel job deliberately runs without the optional packages.
-      _R_CHECK_FORCE_SUGGESTS_: ${{ matrix.config.skip-lidr && 'false' || 'true' }}
+      _R_CHECK_FORCE_SUGGESTS_: ${{ matrix.config.skiplidr && 'false' || 'true' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
           # lidR was archived from CRAN; pull it from the maintainer's
           # r-universe so the Suggests dependency still resolves. Omitted on
           # the job that would have to compile it.
-          extra-repositories: ${{ matrix.config.skip-lidr && ' ' || 'https://r-lidar.r-universe.dev' }}
+          extra-repositories: ${{ matrix.config.skiplidr && ' ' || 'https://r-lidar.r-universe.dev' }}
 
       # Without the r-universe, lidR cannot be resolved at all, so that job
       # installs the hard dependencies plus the toolchain the check itself
@@ -57,9 +57,9 @@ jobs:
         with:
           extra-packages: >-
             any::rcmdcheck
-            ${{ matrix.config.skip-lidr && ', any::testthat, any::knitr, any::rmarkdown, any::withr' || '' }}
-          dependencies: ${{ matrix.config.skip-lidr && '"hard"' || 'NA' }}
-          needs: ${{ matrix.config.skip-lidr && '' || 'check' }}
+            ${{ matrix.config.skiplidr && ', any::testthat, any::knitr, any::rmarkdown, any::withr' || '' }}
+          dependencies: ${{ matrix.config.skiplidr && '"hard"' || '' }}
+          needs: ${{ matrix.config.skiplidr && '' || 'check' }}
 
       - uses: r-lib/actions/check-r-package@v2
         with:
