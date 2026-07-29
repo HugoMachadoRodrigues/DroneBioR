@@ -372,14 +372,17 @@ test_that("concurrency respects the Docker CPU budget, not just the host", {
   cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
   old <- cache$value
   on.exit({ cache$value <- old }, add = TRUE)
-  host <- suppressWarnings(parallel::detectCores())
-  skip_if(!is.finite(host) || host < 3L, "needs a multi-core host")
+  # Pin the host so these assertions describe the guard, not the CI runner.
+  # The implementation prefers physical cores; detectCores() with no argument
+  # counts logical ones. On the Windows runner those differ (2 vs 4), so a
+  # host-derived expectation asked for 3 and the guard correctly answered 1.
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
 
   cache$value <- 2L
   expect_equal(default_max_concurrency(), 1L)
 
   cache$value <- NA_integer_          # docker absent or silent
-  expect_equal(default_max_concurrency(), as.integer(host - 1L))
+  expect_equal(default_max_concurrency(), 7L)
 
   cache$value <- 1L                   # never emit --max-concurrency 0
   expect_equal(default_max_concurrency(), 1L)
