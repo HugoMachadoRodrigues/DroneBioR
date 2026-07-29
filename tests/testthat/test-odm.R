@@ -269,3 +269,39 @@ test_that("rebuild_from_edited_cloud reruns from odm_meshing and refuses earlier
   # Asking for the stage it already uses is harmless.
   expect_silent(rebuild_from_edited_cloud(p, rerun_from = "odm_meshing"))
 })
+
+test_that("build_odm_args emits and validates --pc-quality", {
+  a <- build_odm_args(tempdir(), "demo", pc_quality = "high")
+  expect_equal(a[which(a == "--pc-quality") + 1L], "high")
+  # NULL leaves ODM's own default alone rather than pinning it.
+  expect_false("--pc-quality" %in% build_odm_args(tempdir(), "demo"))
+  expect_error(build_odm_args(tempdir(), "demo", pc_quality = "turbo"))
+})
+
+test_that("build_point_cloud_only stops at odm_filterpoints and forbids fast orthophoto", {
+  # fast_orthophoto skips densification, so there would be no dense cloud to
+  # inspect -- the whole point of this stage.
+  dir <- tempfile("stage0-")
+  p <- dronebio_project(dir)
+  called <- NULL
+  testthat::local_mocked_bindings(
+    run_odm_project = function(project, ...) { called <<- list(...); invisible(TRUE) }
+  )
+  build_point_cloud_only(p, pc_quality = "low", pc_filter = 1.5)
+  expect_equal(called$end_with, "odm_filterpoints")
+  expect_equal(called$pc_quality, "low")
+  expect_equal(called$pc_filter, 1.5)
+  expect_false(called$fast_orthophoto)
+
+  expect_error(build_point_cloud_only(p, fast_orthophoto = TRUE),
+               "skips the dense reconstruction")
+})
+
+test_that("the DJI runner threads the point-cloud settings to the RGB run", {
+  # The MS runs contribute radiance only; the RGB run is the one whose
+  # geometry every DEM and the stacked ortho inherit.
+  a <- names(formals(run_odm_dji_mavic_3m))
+  expect_true(all(c("pc_filter", "pc_sample", "pc_rectify") %in% a))
+  b <- names(formals(DroneBioR:::run_one_dji_band))
+  expect_true(all(c("pc_filter", "pc_sample", "pc_rectify") %in% b))
+})

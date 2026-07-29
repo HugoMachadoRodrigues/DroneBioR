@@ -68,6 +68,10 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' @param orthophoto_resolution_cm Orthophoto resolution in centimeters.
 #' @param max_concurrency Maximum concurrent ODM workers.
 #' @param fast_orthophoto Logical. Add `--fast-orthophoto`.
+#' @param pc_quality Densification detail (`--pc-quality`): one of `"ultra"`,
+#'   `"high"`, `"medium"`, `"low"`, `"lowest"`. Each step up produces a denser
+#'   cloud and costs roughly four times the time. `NULL` (default) leaves ODM's
+#'   own default of `"medium"`.
 #' @param pc_filter Statistical outlier removal, in standard deviations from
 #'   the local mean (`--pc-filter`). Applied in ODM's `odm_filterpoints`
 #'   stage, which runs *before* meshing, texturing, the DEMs and the
@@ -129,6 +133,7 @@ build_odm_args <- function(dataset_dir,
                            fast_orthophoto = TRUE,
                            build_dsm = FALSE,
                            build_dtm = FALSE,
+                           pc_quality = NULL,
                            pc_filter = 2.5,
                            pc_sample = NULL,
                            pc_rectify = FALSE,
@@ -170,6 +175,14 @@ build_odm_args <- function(dataset_dir,
   }
   if (isTRUE(build_dtm)) {
     odm_args <- c(odm_args, "--dtm", "--smrf-threshold", "0.5")
+  }
+  # Densification detail. ODM's own default is "medium"; each step up costs
+  # roughly 4x the time, so this is the main speed/quality dial for the
+  # reconstruction that every later product inherits.
+  if (!is.null(pc_quality)) {
+    pc_quality <- match.arg(tolower(as.character(pc_quality)[1L]),
+                            c("ultra", "high", "medium", "low", "lowest"))
+    odm_args <- c(odm_args, "--pc-quality", pc_quality)
   }
   # Point-cloud cleanup. ODM applies these in `odm_filterpoints`, stage 6 of
   # 13 -- before meshing, texturing, the DEMs and the orthophoto -- so this is
@@ -571,4 +584,64 @@ rebuild_from_edited_cloud <- function(project, ...) {
   dots$rerun_from <- NULL
   do.call(run_odm_project,
           c(list(project, rerun_from = "odm_meshing"), dots))
+}
+
+#' Reconstruct up to the point cloud and stop
+#'
+#' Runs ODM from the raw images through alignment (`opensfm`) and densification
+#' (`openmvs`) and stops at `odm_filterpoints`, leaving
+#' `odm_filterpoints/point_cloud.ply` ready to inspect and edit before any
+#' product is derived from it. Pair it with [rebuild_from_edited_cloud()],
+#' which resumes at `odm_meshing` once the cloud is clean.
+#'
+#' `fast_orthophoto` is forced off and cannot be enabled: it skips the dense
+#' reconstruction entirely, so there would be no dense cloud to inspect -- only
+#' the sparse SfM points, which is what produces the jagged DSMs this workflow
+#' exists to avoid.
+#'
+#' @param project A `dronebio_project`.
+#' @param pc_quality Densification detail: `"ultra"`, `"high"`, `"medium"`
+#'   (ODM's default), `"low"` or `"lowest"`. Each step up costs roughly four
+#'   times the time.
+#' @param pc_filter,pc_sample,pc_rectify Cleanup applied in `odm_filterpoints`,
+#'   as in [build_odm_args()]. The cloud you inspect is the filtered one, so
+#'   these settings decide how much is left to remove by hand.
+#' @param ... Passed to [run_odm_project()], e.g. `camera_type`,
+#'   `max_concurrency`.
+#' @return Invisibly, a list with the `point_cloud` path and the result of
+#'   [run_odm_project()].
+#' @examples
+#' \dontrun{
+#' p <- dronebio_project("~/flights/2026-05-01")
+#' stage <- build_point_cloud_only(p, pc_quality = "medium", pc_filter = 2.5)
+#' pc <- read_ply_point_cloud(stage$point_cloud, max_points = 2e5)
+#' # ... inspect, then delete blunders with write_ply_subset(), then:
+#' rebuild_from_edited_cloud(p, build_dsm = TRUE, build_dtm = TRUE)
+#' }
+#' @export
+build_point_cloud_only <- function(project,
+                                   pc_quality = "medium",
+                                   pc_filter = 2.5,
+                                   pc_sample = NULL,
+                                   pc_rectify = FALSE,
+                                   ...) {
+  dots <- list(...)
+  if (isTRUE(dots$fast_orthophoto)) {
+    stop("`fast_orthophoto` skips the dense reconstruction, so there would be ",
+         "no dense cloud to inspect. Leave it off for this stage.",
+         call. = FALSE)
+  }
+  dots$fast_orthophoto <- NULL
+  dots$end_with <- NULL
+  res <- do.call(run_odm_project, c(
+    list(project,
+         pc_quality      = pc_quality,
+         pc_filter       = pc_filter,
+         pc_sample       = pc_sample,
+         pc_rectify      = pc_rectify,
+         fast_orthophoto = FALSE,
+         end_with        = "odm_filterpoints"),
+    dots))
+  ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  invisible(list(point_cloud = ply, exists = file.exists(ply), run = res))
 }

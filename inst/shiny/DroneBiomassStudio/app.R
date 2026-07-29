@@ -1408,6 +1408,7 @@ project_control_center <- function() {
 # calls updateNavbarPage("main_nav", ...).
 workflow_stepper <- function() {
   steps <- list(
+    list(n = 0L, label = "Cloud",       tab = "Point Cloud"),
     list(n = 1L, label = "Process",     tab = "Processing Engine"),
     list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
     list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
@@ -3235,6 +3236,67 @@ ui <- page_navbar(
     "))
   )),
   nav_panel(
+    "Point Cloud",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 380,
+        textInput("project_dir_pc", "Project root",
+                  value = default_project$project_dir),
+        textInput("images_dir_pc", "Source images folder",
+                  value = default_project$images_dir),
+        selectInput("pc_quality", "Detail (densification quality)",
+                    choices = c("Ultra"  = "ultra",
+                                "High"   = "high",
+                                "Medium (ODM default)" = "medium",
+                                "Low"    = "low",
+                                "Lowest" = "lowest"),
+                    selected = "medium"),
+        div(class = "small text-muted mb-2",
+            "Each step up produces a denser cloud and costs roughly 4x the ",
+            "time. Start at Medium; go higher only once the flow works."),
+        sliderInput("pc_filter_stage0", "Outlier filter (std. dev.)",
+                    min = 0, max = 6, value = 2.5, step = 0.5),
+        checkboxInput("pc_rectify_stage0",
+                      "Rectify ground points (better DTM)", value = FALSE),
+        actionButton("run_stage0", "1. Build the point cloud",
+                     class = "btn-primary w-100"),
+        div(class = "small text-muted mt-1 mb-2",
+            "Aligns the images and densifies, then stops. Nothing else is ",
+            "generated yet."),
+        actionButton("goto_cloud_editor", "2. Inspect and clean it in 3D",
+                     class = "btn-outline-secondary w-100"),
+        div(class = "small text-muted mt-1 mb-2",
+            "Opens the 3D tab, where box / lasso / polygon select and the ",
+            "delete button live."),
+        actionButton("run_stage0_rebuild", "3. Build DSM, DTM and orthomosaic",
+                     class = "btn-outline-primary w-100"),
+        div(class = "small text-muted mt-1",
+            "Resumes at odm_meshing from the cloud as it stands now, reusing ",
+            "the alignment and densification.")
+      ),
+      div(
+        class = "p-2",
+        h5("Stage 0 - reconstruct, clean, then derive"),
+        p(class = "text-muted",
+          "The orthomosaic, the DSM and the DTM are all derived from the ",
+          "point cloud. Cleaning it here fixes all three at once, instead of ",
+          "patching the DSM afterwards."),
+        tags$pre(class = "small",
+"raw images
+  -> opensfm         alignment
+  -> openmvs         densification   <- 'Detail' sets this
+  -> odm_filterpoints  STOP: inspect and clean here
+  -> odm_meshing -> mvs_texturing -> odm_orthophoto
+  -> odm_dem           DSM and DTM"),
+        hr(),
+        h6("Current point cloud"),
+        verbatimTextOutput("stage0_cloud_status"),
+        h6("What this will run"),
+        verbatimTextOutput("stage0_command")
+      )
+    )
+  ),
+  nav_panel(
     "Processing Engine",
     layout_sidebar(
       sidebar = sidebar(
@@ -3288,14 +3350,13 @@ ui <- page_navbar(
           "Processing preset",
           choices = c(
             "Scientific canopy model (recommended)",
-            "Fast orthomosaic only",
+            "Orthomosaic only",
             "Full 3D deliverables",
             "Custom"
           ),
           selected = "Scientific canopy model (recommended)"
         ),
         numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
-        checkboxInput("fast_orthophoto", "Fast orthophoto", value = FALSE),
         checkboxInput("build_dsm", "Generate DSM", value = TRUE),
         checkboxInput("build_dtm", "Generate DTM", value = TRUE),
         # Point-cloud cleanup. ODM applies this in odm_filterpoints, before
@@ -3322,7 +3383,7 @@ ui <- page_navbar(
         checkboxInput("gltf", "Export glTF model", value = FALSE),
         actionButton("refresh_command", "Build command", class = "btn-primary"),
         actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "For full 3D textured products, turn off fast orthophoto. ODM uses fast orthophoto to prioritize rapid orthomosaic generation. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
+        div(class = "sidebar-note", "Reconstruction always runs dense: the DSM, DTM and orthomosaic are all derived from the point cloud, and a sparse one yields jagged surfaces. Use the Point Cloud tab to set the detail level and to clean the cloud before the products are built. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
       ),
       panel_intro_card(
         "Processing Engine",
@@ -4355,8 +4416,24 @@ ui <- page_navbar(
           card_header("Predicted biomass map"),
           div(class = "small text-muted mb-2",
               textOutput("field_map_caption")),
-          div(class = "map-frame",
-              leafletOutput("field_map", height = "58vh"))
+          # Until a prediction exists the leaflet has no data and no bounds,
+          # so it renders the whole world in a very wide frame and reads as a
+          # broken widget. Show the placeholder instead and only mount the map
+          # once there is something on it.
+          conditionalPanel(
+            condition = "!output.field_map_ready",
+            div(class = "text-muted d-flex align-items-center justify-content-center",
+                style = "height:58vh; border:1px dashed var(--bs-border-color); border-radius:.5rem;",
+                div(class = "text-center p-3",
+                    tags$div("No predicted map yet."),
+                    tags$div(class = "small mt-1",
+                             "Extract the covariates, train a model, then press Predict map.")))
+          ),
+          conditionalPanel(
+            condition = "output.field_map_ready",
+            div(class = "map-frame",
+                leafletOutput("field_map", height = "58vh"))
+          )
         ),
         card(
           card_header("Model details"),
@@ -6483,8 +6560,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$processing_preset, {
     preset <- input$processing_preset
-    if (identical(preset, "Fast orthomosaic only")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = TRUE)
+    if (identical(preset, "Orthomosaic only")) {
       updateCheckboxInput(session, "build_dsm", value = FALSE)
       updateCheckboxInput(session, "build_dtm", value = FALSE)
       updateCheckboxInput(session, "pc_las", value = FALSE)
@@ -6494,7 +6570,6 @@ server <- function(input, output, session) {
       updateCheckboxInput(session, "three_d_tiles", value = FALSE)
       updateCheckboxInput(session, "gltf", value = FALSE)
     } else if (identical(preset, "Scientific canopy model (recommended)")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = FALSE)
       updateCheckboxInput(session, "build_dsm", value = TRUE)
       updateCheckboxInput(session, "build_dtm", value = TRUE)
       updateCheckboxInput(session, "pc_las", value = TRUE)
@@ -6504,7 +6579,6 @@ server <- function(input, output, session) {
       updateCheckboxInput(session, "three_d_tiles", value = FALSE)
       updateCheckboxInput(session, "gltf", value = FALSE)
     } else if (identical(preset, "Full 3D deliverables")) {
-      updateCheckboxInput(session, "fast_orthophoto", value = FALSE)
       updateCheckboxInput(session, "build_dsm", value = TRUE)
       updateCheckboxInput(session, "build_dtm", value = TRUE)
       updateCheckboxInput(session, "pc_las", value = TRUE)
@@ -8046,7 +8120,7 @@ server <- function(input, output, session) {
         project_name = project()$odm_project_name,
         camera_type = input$camera_type %||% "multispectral",
         orthophoto_resolution_cm = input$resolution,
-        fast_orthophoto = input$fast_orthophoto,
+        fast_orthophoto = FALSE,
         build_dsm = input$build_dsm,
         build_dtm = input$build_dtm,
         pc_filter = input$pc_filter %||% 2.5,
@@ -8733,24 +8807,10 @@ server <- function(input, output, session) {
   })
 
   output$engine_note <- renderText({
-    # Fast orthophoto against DSM/DTM is the costliest combination to get
-    # wrong, so it outranks the 3D-deliverables note: --fast-orthophoto skips
-    # the dense reconstruction, so the DEMs come off the sparse cloud and the
-    # canopy model is built on points that were never densified. The spiky,
-    # ragged surfaces that look like filtering problems often start here.
-    if (isTRUE(input$fast_orthophoto) &&
-        (isTRUE(input$build_dsm) || isTRUE(input$build_dtm))) {
-      paste0(
-        "Fast orthophoto skips the dense reconstruction, so the DSM/DTM you ",
-        "asked for would be built from the SPARSE point cloud - jagged ",
-        "surfaces and spikes, not a defensible canopy height model. Uncheck ",
-        "fast orthophoto for canopy work, or switch to the 'Fast orthomosaic ",
-        "only' preset, which turns the DEMs off so the result is not mistaken ",
-        "for one."
-      )
-    } else if (isTRUE(input$fast_orthophoto) && (isTRUE(input$three_d_tiles) || isTRUE(input$gltf))) {
-      "Fast orthophoto prioritizes rapid orthomosaic generation and ODM can skip full textured 3D outputs. Disable fast orthophoto for commercial-style 3D deliverables."
-    } else if (isTRUE(input$build_dsm) && isTRUE(input$build_dtm)) {
+    # The fast-orthophoto warnings that used to live here are gone with the
+    # control itself: reconstruction is always dense now, so the sparse-cloud
+    # trap they guarded against cannot be reached from the UI.
+    if (isTRUE(input$build_dsm) && isTRUE(input$build_dtm)) {
       "DSM and DTM are enabled. This supports canopy height modeling and later tree segmentation."
     } else {
       "Enable DSM and DTM if you want scientifically defensible tree height, crown and volume estimates."
@@ -8765,7 +8825,8 @@ server <- function(input, output, session) {
       project()                            ,
       camera_type             = cam        ,
       orthophoto_resolution_cm = input$resolution,
-      fast_orthophoto         = input$fast_orthophoto,
+      fast_orthophoto         = FALSE,  # removed from the UI: it skips the dense
+                                        # reconstruction every DEM depends on
       build_dsm               = input$build_dsm,
       build_dtm               = input$build_dtm,
       pc_filter               = input$pc_filter %||% 2.5,
@@ -8918,7 +8979,7 @@ server <- function(input, output, session) {
           project_name             = p$odm_project_name,
           camera_type              = cam,
           orthophoto_resolution_cm = input$resolution,
-          fast_orthophoto          = input$fast_orthophoto,
+          fast_orthophoto          = FALSE,
           build_dsm                = input$build_dsm,
           build_dtm                = input$build_dtm,
           pc_las                   = input$pc_las,
@@ -8953,7 +9014,6 @@ server <- function(input, output, session) {
         # once ODM finishes (we record orthomosaic/dsm/dtm/etc. paths
         # by reading odm_product_paths() and checking file.exists()).
         preset_bits <- c(
-          if (isTRUE(input$fast_orthophoto)) "fast_orthophoto",
           if (isTRUE(input$build_dsm))       "dsm",
           if (isTRUE(input$build_dtm))       "dtm",
           if (isTRUE(input$pc_las))          "pc_las",
@@ -9793,6 +9853,137 @@ server <- function(input, output, session) {
     ids <- input$selected_point_ids %||% integer()
     selected_ids_value(unique(as.integer(unlist(ids))))
   }, ignoreInit = TRUE)
+
+
+  # --- Stage 0: reconstruct to the point cloud, clean it, then derive ------
+  stage0_tick <- reactiveVal(0L)
+
+  # Keep the stage-0 path inputs in step with the other tabs.
+  observeEvent(input$project_dir_pc, {
+    if (!identical(input$project_dir_pc, input$project_dir)) {
+      updateTextInput(session, "project_dir", value = input$project_dir_pc)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir_pc, {
+    if (!identical(input$images_dir_pc, input$images_dir)) {
+      updateTextInput(session, "images_dir", value = input$images_dir_pc)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$project_dir, {
+    if (!identical(input$project_dir_pc, input$project_dir)) {
+      updateTextInput(session, "project_dir_pc", value = input$project_dir)
+    }
+  }, ignoreInit = TRUE)
+  observeEvent(input$images_dir, {
+    if (!identical(input$images_dir_pc, input$images_dir)) {
+      updateTextInput(session, "images_dir_pc", value = input$images_dir)
+    }
+  }, ignoreInit = TRUE)
+
+  stage0_ply <- reactive({
+    stage0_tick()
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return(NA_character_)
+    file.path(p$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+  })
+
+  output$stage0_cloud_status <- renderText({
+    ply <- stage0_ply()
+    if (is.na(ply)) return("No project selected yet.")
+    if (!file.exists(ply)) {
+      return(paste0("Not built yet.\n", ply,
+                    "\n\nRun step 1 to produce it."))
+    }
+    h <- tryCatch(parse_ply_header(ply), error = function(e) NULL)
+    if (is.null(h)) return(paste0("Present but unreadable as a binary PLY:\n", ply))
+    orig <- paste0(ply, ".orig")
+    paste0(
+      format(h$n_vertices, big.mark = ","), " vertices, ",
+      round(file.size(ply) / 1024^2, 1), " MB\n", ply,
+      if (file.exists(orig))
+        sprintf("\n\nEdited: an untouched copy of %s vertices is kept as .orig",
+                format(parse_ply_header(orig)$n_vertices, big.mark = ",")) else "",
+      "\nLast written: ", format(file.info(ply)$mtime, "%Y-%m-%d %H:%M")
+    )
+  })
+
+  output$stage0_command <- renderText({
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return("Set a project root first.")
+    args <- tryCatch(build_odm_args(
+      dataset_dir  = p$odm_dataset_dir,
+      project_name = p$odm_project_name,
+      camera_type  = input$camera_type %||% "multispectral",
+      pc_quality   = input$pc_quality %||% "medium",
+      pc_filter    = input$pc_filter_stage0 %||% 2.5,
+      pc_rectify   = isTRUE(input$pc_rectify_stage0),
+      fast_orthophoto = FALSE,
+      end_with     = "odm_filterpoints"
+    ), error = function(e) NULL)
+    if (is.null(args)) return("Could not build the command.")
+    paste("docker", paste(shQuote(args), collapse = " "))
+  })
+
+  observeEvent(input$goto_cloud_editor, {
+    ply <- stage0_ply()
+    if (!is.na(ply) && file.exists(ply)) {
+      updateTextInput(session, "ply_path", value = ply)
+    }
+    updateNavbarPage(session, "main_nav", selected = "3D Modeling")
+  })
+
+  observeEvent(input$run_stage0, {
+    with_error_toast("Build the point cloud", {
+      p <- project()
+      showNotification(
+        paste0("Reconstructing to the point cloud at '",
+               input$pc_quality %||% "medium",
+               "' detail. This is the long part; the products come later."),
+        type = "message", duration = 10)
+      res <- build_point_cloud_only(
+        p,
+        pc_quality  = input$pc_quality %||% "medium",
+        pc_filter   = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify  = isTRUE(input$pc_rectify_stage0),
+        camera_type = input$camera_type %||% "multispectral"
+      )
+      stage0_tick(isolate(stage0_tick()) + 1L)
+      if (isTRUE(res$exists)) {
+        updateTextInput(session, "ply_path", value = res$point_cloud)
+        showNotification(
+          sprintf("Point cloud ready: %s vertices. Inspect it in 3D before building the products.",
+                  format(parse_ply_header(res$point_cloud)$n_vertices, big.mark = ",")),
+          type = "message", duration = 12)
+      } else {
+        showNotification(
+          "The run finished but no point cloud was written; check the ODM log.",
+          type = "warning", duration = 12)
+      }
+    })
+  })
+
+  observeEvent(input$run_stage0_rebuild, {
+    ply <- stage0_ply()
+    if (is.na(ply) || !file.exists(ply)) {
+      showNotification("There is no point cloud yet; run step 1 first.",
+                       type = "warning", duration = 8)
+      return()
+    }
+    with_error_toast("Build products from the cloud", {
+      p <- project()
+      res <- rebuild_from_edited_cloud(
+        p,
+        build_dsm   = TRUE,
+        build_dtm   = TRUE,
+        camera_type = input$camera_type %||% "multispectral"
+      )
+      stage0_tick(isolate(stage0_tick()) + 1L)
+      showNotification(
+        "Products rebuilt from the current point cloud.",
+        type = "message", duration = 10)
+      invisible(res)
+    })
+  })
 
   observeEvent(input$clear_point_selection, {
     selected_ids_value(integer())
@@ -13444,6 +13635,13 @@ server <- function(input, output, session) {
       setView(lng = 0, lat = 0, zoom = 2)
   })
   outputOptions(output, "field_map", suspendWhenHidden = FALSE)
+
+  # Drives the placeholder / map swap in the Field Models tab.
+  output$field_map_ready <- reactive({
+    info <- tryCatch(field_map_result(), error = function(e) NULL)
+    !is.null(info)
+  })
+  outputOptions(output, "field_map_ready", suspendWhenHidden = FALSE)
 
   # Bare observe(): an error here would tear down the whole session rather than
   # just failing to draw, so the body is toasted like every other action.
