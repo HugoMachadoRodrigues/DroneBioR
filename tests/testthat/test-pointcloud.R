@@ -169,3 +169,36 @@ test_that("editing in place keeps one recoverable original", {
   expect_equal(parse_ply_header(paste0(p, ".orig"))$n_vertices, 10L)
   expect_equal(parse_ply_header(p)$n_vertices, 3L)
 })
+
+test_that("a uint32 property is read without a readBin warning", {
+  # readBin only allows signed = FALSE for 1- and 2-byte integers; passing it
+  # for a uint32 warns on every single call.
+  p <- tempfile(fileext = ".ply")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex 4\n",
+                "property float x\nproperty float y\nproperty float z\n",
+                "property uint views\nend_header\n")
+  con <- file(p, open = "wb"); writeBin(charToRaw(hdr), con)
+  for (i in 1:4) {
+    writeBin(c(i * 1, i * 2, i * 3), con, size = 4L, endian = "little")
+    writeBin(as.integer(i), con, size = 4L, endian = "little")
+  }
+  close(con)
+  expect_equal(parse_ply_header(p)$stride, 16L)
+  expect_silent(pc <- read_ply_point_cloud(p, max_points = 10L))
+  expect_equal(pc$x, c(1, 2, 3, 4))
+  expect_equal(pc$views, 1:4)
+})
+
+test_that("byte offsets stay exact past the 32-bit integer limit", {
+  # starts <- body_at + (point_index - 1) * stride overflows to NA once
+  # (n - 1) * stride passes 2^31, i.e. ~76.7 M vertices for a 28-byte record.
+  n <- 100e6; stride <- 28L
+  expect_true(is.na(suppressWarnings((as.integer(n) - 1L) * stride)))
+  expect_equal((as.numeric(n) - 1) * stride, 2799999972)
+})
+
+test_that("parse_ply_header names the file when the header is not found", {
+  p <- tempfile(fileext = ".ply")
+  writeBin(charToRaw(strrep("not a ply ", 100)), p)
+  expect_error(parse_ply_header(p), "is this a PLY file")
+})

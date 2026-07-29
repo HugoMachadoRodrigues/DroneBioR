@@ -53,11 +53,12 @@ parse_ply_header <- function(path) {
   # The header is ASCII and short; read a bounded prefix rather than the file.
   n_probe <- min(as.numeric(file.info(path)$size), 65536)
   probe <- readBin(path, what = "raw", n = n_probe)
-  header_end <- find_header_end(probe)
-  if (is.na(header_end)) {
+  # find_header_end() throws rather than returning NA, so translate its
+  # generic message into one that names the file and the 64 kB probe.
+  header_end <- tryCatch(find_header_end(probe), error = function(e) {
     stop("Could not find 'end_header' in the first 64 kB of ", path,
-         call. = FALSE)
-  }
+         ": is this a PLY file?", call. = FALSE)
+  })
   header <- rawToChar(probe[seq_len(header_end)])
   if (!grepl("format binary_little_endian", header, fixed = TRUE)) {
     stop("Only binary_little_endian PLY files are supported.", call. = FALSE)
@@ -104,9 +105,16 @@ parse_ply_header <- function(path) {
 
 #' Read a binary little-endian PLY point cloud sample
 #'
-#' This reader supports the ODM/FPCFilter PLY layout used in the current project:
-#' float x/y/z followed by uchar red/blue/green/views. It is intentionally small
-#' and dependency-free for app previews; full LAZ analytics should use PDAL/lidR.
+#' The vertex layout is taken from the header by [parse_ply_header()], so any
+#' binary little-endian PLY with scalar vertex properties is read correctly --
+#' ODM's filtered cloud (x/y/z + normals + colours, 28 bytes) and its
+#' georeferenced cloud (no normals, 16 bytes) alike. Colours are matched by
+#' property name, never by position. Intentionally small and dependency-free
+#' for app previews; full LAZ analytics should use PDAL/lidR.
+#'
+#' `point_id` is the 1-based index of each returned point in the FULL cloud,
+#' which is what makes a selection made on a decimated preview usable to edit
+#' the file itself -- see [write_ply_subset()].
 #'
 #' @param path Path to a PLY file.
 #' @param max_points Maximum number of points to return.
@@ -139,11 +147,13 @@ read_ply_point_cloud <- function(path, max_points = 50000, seed = 42) {
   raw_file <- readBin(path, what = "raw", n = file.info(path)$size)
   body_at  <- h$header_end
   if (n_sel == n_vertices) {
-    recs <- raw_file[(body_at + 1L):(body_at + stride * n_vertices)]
+    recs <- raw_file[(body_at + 1):(body_at + as.numeric(stride) * n_vertices)]
   } else {
     # One strided gather instead of a per-point connection: build the byte
     # positions of every selected record and slice once.
-    starts <- body_at + (point_index - 1) * stride
+    # as.numeric(): integer * integer overflows to NA past 2^31, which for a
+    # 28-byte record is ~76.7 M vertices -- reachable on a high-quality run.
+    starts <- body_at + (as.numeric(point_index) - 1) * stride
     idx <- rep(starts, each = stride) + rep(seq_len(stride), times = n_sel)
     recs <- raw_file[idx]
   }
@@ -156,10 +166,17 @@ read_ply_point_cloud <- function(path, max_points = 50000, seed = 42) {
     row <- h$props[h$props$name == nm, , drop = FALSE]
     if (!nrow(row)) return(NULL)
     sz <- row$size[[1L]]; ty <- .ply_types[[row$type[[1L]]]]
-    pos <- rep((seq_len(n_sel) - 1L) * stride + row$offset[[1L]], each = sz) +
-           rep(seq_len(sz), times = n_sel)
-    readBin(recs[pos], what = ty$what, n = n_sel, size = sz,
-            signed = ty$signed, endian = "little")
+    pos <- rep((seq_len(n_sel) - 1) * as.numeric(stride) + row$offset[[1L]],
+               each = sz) + rep(seq_len(sz), times = n_sel)
+    # readBin only accepts signed = FALSE for 1- and 2-byte integers; passing
+    # it for a uint32 warns on every call and reads it as signed anyway.
+    if (identical(ty$what, "integer") && !ty$signed && sz <= 2L) {
+      readBin(recs[pos], what = "integer", n = n_sel, size = sz,
+              signed = FALSE, endian = "little")
+    } else {
+      readBin(recs[pos], what = ty$what, n = n_sel, size = sz,
+              endian = "little")
+    }
   }
   xyz <- lapply(c("x", "y", "z"), take)
   if (any(vapply(xyz, is.null, logical(1)))) {
