@@ -18,6 +18,17 @@ if (.dronebior_async_available) {
 }
 
 default_project_dir <- getOption("dronebior.project_dir", getwd())
+# run_drone_biomass_studio() always sets that option, but a bare
+# shiny::runApp(<app dir>) leaves getwd() pointing at the app's own folder
+# inside the package. Scaffolding a project there writes outputs/ and imagens/
+# into the installed package -- or, from a source checkout, straight into the
+# git repo. Fall back to a directory outside the package instead.
+if (file.exists(file.path(default_project_dir, "app.R"))) {
+  default_project_dir <- file.path(path.expand("~"), "DroneBioR-projects", "default")
+  dir.create(default_project_dir, recursive = TRUE, showWarnings = FALSE)
+  message("[studio] Launched from the package folder; defaulting to ",
+          default_project_dir, " so nothing is written into the package.")
+}
 default_project <- dronebio_project(default_project_dir)
 default_products <- odm_product_paths(default_project)
 
@@ -156,6 +167,10 @@ raster_header <- function(path, progress_msg = "Reading raster header") {
     bounds_4326 <- tryCatch(raster_bounds_4326(r[[1]]), error = function(e) NULL)
     list(
       nlyr        = as.integer(terra::nlyr(r)),
+      # Band names are what actually says whether NIR / RedEdge are present.
+      # Counting layers cannot: a 7-band DJI stack and a 4-band RGB+alpha
+      # differ in kind, not just in size.
+      lyr_names   = tryCatch(names(r), error = function(e) character()),
       ext         = as.vector(terra::ext(r)),
       crs         = tryCatch(terra::crs(r, describe = TRUE), error = function(e) NULL),
       ncol        = as.integer(terra::ncol(r)),
@@ -5318,25 +5333,32 @@ server <- function(input, output, session) {
   # underlying terra::rast open is cached by (path, mtime, size) and
   # surfaced in the "Now loading" banner on its first hit - keystrokes
   # in input$orthomosaic do not re-open the same multi-GB file.
-  overlay_orthomosaic_nlyr <- reactive({
+  # Which of NIR / RedEdge this orthomosaic actually carries. Names first --
+  # a MicaSense ortho labels its bands Red/Green/Blue/NIR/Rededge, and a DJI
+  # stack likewise -- falling back to the layer count only when the file was
+  # written without useful names. Counting alone was the bug: it greyed out
+  # NDVI on 4-band files that do carry NIR, and read a 3-band RGB run of a
+  # multispectral flight as proof the flight had no NIR at all.
+  overlay_orthomosaic_bands <- reactive({
     path <- input$orthomosaic
     if (!is.character(path) || !length(path) || !nzchar(path) || !file.exists(path)) {
-      return(NA_integer_)
+      return(NULL)
     }
     hdr <- raster_header(path, progress_msg = "Reading orthomosaic band count")
-    if (is.null(hdr)) NA_integer_ else hdr$nlyr
+    if (is.null(hdr)) return(NULL)
+    b <- orthomosaic_band_presence(hdr$lyr_names %||% character(), nlyr = hdr$nlyr)
+    list(nlyr = hdr$nlyr, has_nir = b$has_nir, has_re = b$has_rededge)
   })
   available_overlays <- reactive({
-    n <- overlay_orthomosaic_nlyr()
+    bands <- overlay_orthomosaic_bands()
     # First pass: spectral filtering by band requirements.
-    candidates <- if (is.na(n)) overlay_choices else {
-      if (n <= 4) {
-        keep <- vapply(overlay_choices, function(layer) {
-          req_bands <- overlay_band_requirements[[layer]] %||% character()
-          !any(c("NIR", "RedEdge") %in% req_bands)
-        }, logical(1))
-        overlay_choices[keep]
-      } else overlay_choices
+    candidates <- if (is.null(bands)) overlay_choices else {
+      keep <- vapply(overlay_choices, function(layer) {
+        req_bands <- overlay_band_requirements[[layer]] %||% character()
+        (!("NIR" %in% req_bands)     || isTRUE(bands$has_nir)) &&
+        (!("RedEdge" %in% req_bands) || isTRUE(bands$has_re))
+      }, logical(1))
+      overlay_choices[keep]
     }
     # Second pass: hide DSM / DTM / CHM rows when the file isn't on
     # disk yet (so users don't pick a layer that will fail to load).
@@ -6120,7 +6142,10 @@ server <- function(input, output, session) {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
     paths <- odm_product_paths(p)
-    updateTextInput(session, "orthomosaic",     value = unname(p$odm_orthomosaic))
+    # Use the resolved path, not project$odm_orthomosaic: on a DJI Mavic 3M
+    # flight the latter is the RGB band run, and pointing the GIS tab at it
+    # hides NIR / RedEdge and every index that needs them.
+    updateTextInput(session, "orthomosaic",     value = unname(paths[["orthomosaic"]]))
     updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
     showNotification("Reads switched back to the cloud-synced project folder.",
                      type = "message", duration = 6)
