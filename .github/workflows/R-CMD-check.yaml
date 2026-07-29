@@ -58,8 +58,8 @@ jobs:
           extra-packages: >-
             any::rcmdcheck
             ${{ matrix.config.skiplidr && ', any::testthat, any::knitr, any::rmarkdown, any::withr' || '' }}
-          dependencies: ${{ matrix.config.skiplidr && '"hard"' || '' }}
-          needs: ${{ matrix.config.skiplidr && '' || 'check' }}
+          dependencies: ${{ matrix.config.skiplidr && '"hard"' || 'NA' }}
+          needs: check
 
       - uses: r-lib/actions/check-r-package@v2
         with:
