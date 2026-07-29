@@ -332,6 +332,18 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
          call. = FALSE)
   }
 
+  # A file shorter than its header promises would be padded with zero bytes by
+  # the strided gather below, producing a cloud that reads fine and is mostly
+  # invented. Refuse before touching anything.
+  need_bytes <- as.numeric(h$header_end) + as.numeric(h$stride) * n
+  have_bytes <- as.numeric(file.info(path)$size)
+  if (have_bytes < need_bytes) {
+    stop("Truncated PLY: the header declares ", n, " vertices (",
+         format(need_bytes, big.mark = ","), " bytes) but the file has ",
+         format(have_bytes, big.mark = ","), ". Refusing to write from it.",
+         call. = FALSE)
+  }
+
   same_file <- normalizePath(path, mustWork = FALSE) ==
                normalizePath(out_path, mustWork = FALSE)
   if (isTRUE(backup) && same_file) {
@@ -368,7 +380,14 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
   start <- 1L
   while (start <= n) {
     stop_at <- min(start + chunk_size - 1L, n)
-    block <- readBin(con_in, what = "raw", n = stride * (stop_at - start + 1L))
+    want <- as.numeric(stride) * (stop_at - start + 1)
+    block <- readBin(con_in, what = "raw", n = want)
+    if (length(block) < want) {
+      stop("Short read at vertex ", start, ": expected ", format(want, big.mark = ","),
+           " bytes, got ", format(length(block), big.mark = ","),
+           ". The source cloud is truncated or was changed underneath us.",
+           call. = FALSE)
+    }
     sel <- keep_idx[keep_idx >= start & keep_idx <= stop_at]
     if (length(sel)) {
       local_start <- (sel - start) * stride

@@ -202,3 +202,18 @@ test_that("parse_ply_header names the file when the header is not found", {
   writeBin(charToRaw(strrep("not a ply ", 100)), p)
   expect_error(parse_ply_header(p), "is this a PLY file")
 })
+
+test_that("write_ply_subset refuses a truncated source instead of inventing points", {
+  # A file shorter than its header promises: the strided gather would pad with
+  # zero bytes and produce a cloud that reads fine and is mostly fabricated.
+  p <- tempfile(fileext = ".ply")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex 100\n",
+                "property float x\nproperty float y\nproperty float z\nend_header\n")
+  con <- file(p, open = "wb")
+  writeBin(charToRaw(hdr), con)
+  for (i in 1:10) writeBin(c(i, i, i), con, size = 4L, endian = "little")
+  close(con)
+  expect_error(write_ply_subset(p, tempfile(fileext = ".ply"), keep = 1:100,
+                                backup = FALSE),
+               "Truncated PLY")
+})
