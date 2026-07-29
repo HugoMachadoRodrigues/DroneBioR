@@ -214,6 +214,7 @@ reference:
     contents:
       - run_drone_biomass_studio
       - with_error_toast
+      - observer_need
 
 articles:
   - title: "Getting started"

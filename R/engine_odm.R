@@ -474,10 +474,12 @@ run_odm_project <- function(project,
   # continue to the next band / next flight.
   if (!identical(status, 0L) && file.exists(project$odm_orthomosaic)) {
     warning(sprintf(
-      "ODM exited with status %s but %s is present. This usually means a ",
-      "post-processing stage (PDF report, hillshade preview) failed; the ",
-      "orthomosaic, DSM/DTM and point cloud should still be valid. ",
-      "Treating as success.",
+      paste0(
+        "ODM exited with status %s but %s is present. This usually means a ",
+        "post-processing stage (PDF report, hillshade preview) failed; the ",
+        "orthomosaic, DSM/DTM and point cloud should still be valid. ",
+        "Treating as success."
+      ),
       status, basename(project$odm_orthomosaic)
     ), call. = FALSE)
     status <- 0L
