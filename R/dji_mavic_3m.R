@@ -63,27 +63,6 @@ keep_only_final_odm_products <- function(project_dir, keep_extra = character()) 
   invisible(removed)
 }
 
-#' Default ODM worker concurrency for this machine
-#'
-#' ODM's per-stage parallelism scales with `--max-concurrency`. The old
-#' hardcoded default of 4 left most of a modern multi-core machine
-#' idle (an Apple M1 Max has 10 cores; 4 workers used ~2 of them in
-#' practice). This returns the physical core count, capped at 16 to
-#' avoid pathological memory pressure on very large core counts. Each
-#' OpenSfM / OpenMVS worker uses on the order of 1-2 GB, so on a 16 GB
-#' machine you may want to pass a smaller explicit `max_concurrency`.
-#'
-#' @noRd
-default_odm_concurrency <- function() {
-  n <- tryCatch(parallel::detectCores(logical = FALSE),
-                error = function(e) NA_integer_)
-  if (is.na(n) || n < 1L) {
-    n <- tryCatch(parallel::detectCores(), error = function(e) 4L)
-  }
-  if (is.na(n) || n < 1L) n <- 4L
-  as.integer(max(1L, min(n, 16L)))
-}
-
 dji_band_project_name <- function(project, band_label) {
   # The RGB run lands at the project's canonical ODM project dir so
   # everything downstream (`odm_product_paths()`, `build_chm_raster()`,
@@ -1172,9 +1151,9 @@ run_odm_dji_mavic_3m <- function(project,
                                  ms_extra_args  = character()) {
   ms_mode <- match.arg(ms_mode)
   if (is.null(max_concurrency)) {
-    max_concurrency <- default_odm_concurrency()
+    max_concurrency <- default_max_concurrency()
     message(sprintf(
-      "Using --max-concurrency %d (auto-detected physical cores). Pass max_concurrency = N to override.",
+      "Using --max-concurrency %d (physical cores minus one, within Docker's CPU budget). Pass max_concurrency = N to override.",
       max_concurrency
     ))
   }

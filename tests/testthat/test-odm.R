@@ -337,10 +337,21 @@ test_that("build_point_cloud_only routes DJI Mavic 3M folders to the RGB sub-run
 })
 
 test_that("default_max_concurrency leaves one core free and can be pinned", {
+  # Unmocked smoke check: whatever this machine is, the answer is usable.
   n <- default_max_concurrency()
   expect_true(is.finite(n) && n >= 1L)
-  cores <- suppressWarnings(parallel::detectCores())
-  if (is.finite(cores) && cores >= 2L) expect_equal(n, as.integer(cores - 1L))
+
+  # Then pin BOTH inputs the function reads - the host core count and the
+  # Docker CPU budget - and assert the n-1 rule against those. Deriving the
+  # expectation from the live machine failed on the Windows runner, which hands
+  # Docker fewer CPUs than detectCores() reports, so min(host, budget) - 1 was
+  # 1 where the test demanded 3.
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
+  expect_equal(default_max_concurrency(), 7L)
 
   withr::with_options(list(dronebior.max_concurrency = 3L), {
     expect_equal(default_max_concurrency(), 3L)
@@ -372,14 +383,17 @@ test_that("concurrency respects the Docker CPU budget, not just the host", {
   cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
   old <- cache$value
   on.exit({ cache$value <- old }, add = TRUE)
-  host <- suppressWarnings(parallel::detectCores())
-  skip_if(!is.finite(host) || host < 3L, "needs a multi-core host")
+  # Pin the host so these assertions describe the guard, not the CI runner.
+  # The implementation prefers physical cores; detectCores() with no argument
+  # counts logical ones. On the Windows runner those differ (2 vs 4), so a
+  # host-derived expectation asked for 3 and the guard correctly answered 1.
+  local_mocked_bindings(detectCores = function(...) 8L, .package = "parallel")
 
   cache$value <- 2L
   expect_equal(default_max_concurrency(), 1L)
 
   cache$value <- NA_integer_          # docker absent or silent
-  expect_equal(default_max_concurrency(), as.integer(host - 1L))
+  expect_equal(default_max_concurrency(), 7L)
 
   cache$value <- 1L                   # never emit --max-concurrency 0
   expect_equal(default_max_concurrency(), 1L)
@@ -398,4 +412,36 @@ test_that("the OOM retries still pin concurrency to 1", {
   expect_true(grepl("max_concurrency\\s*=\\s*1L", src))
   src2 <- paste(deparse(run_odm_project), collapse = " ")
   expect_true(grepl("max_concurrency\\s*=\\s*1L", src2))
+})
+
+test_that("the unified default keeps both sets of guards", {
+  cache <- asNamespace("DroneBioR")$.docker_ncpu_cache
+  old <- cache$value
+  on.exit({ cache$value <- old }, add = TRUE)
+  cache$value <- NA_integer_
+
+  # The cap the DJI helper contributed: unbounded workers on a very large
+  # machine trade speed for memory pressure. The cap is an upper bound, not a
+  # target -- on a small runner the n-1 rule binds first, so asserting equality
+  # against the real core count would only test the CI hardware.
+  expect_lte(default_max_concurrency(), 16L)
+  expect_lte(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(cap = 1L), 1L)
+
+  # Pinning the host high makes the cap the binding constraint on any machine.
+  local_mocked_bindings(detectCores = function(...) 64L, .package = "parallel")
+  expect_equal(default_max_concurrency(cap = 3L), 3L)
+  expect_equal(default_max_concurrency(), 16L)
+
+  # The Docker budget the other helper contributed. Still binding with a
+  # 64-core host: min(64, 2) - 1.
+  cache$value <- 2L
+  expect_equal(default_max_concurrency(), 1L)
+})
+
+test_that("run_odm_dji_mavic_3m resolves NULL through the unified default", {
+  expect_null(eval(formals(run_odm_dji_mavic_3m)$max_concurrency))
+  src <- paste(deparse(run_odm_dji_mavic_3m), collapse = " ")
+  expect_true(grepl("default_max_concurrency\\(\\)", src))
+  expect_false(grepl("default_odm_concurrency", src))
 })

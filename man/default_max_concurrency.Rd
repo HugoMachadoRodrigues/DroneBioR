@@ -4,15 +4,23 @@
 \alias{default_max_concurrency}
 \title{Default number of ODM workers for this machine}
 \usage{
-default_max_concurrency()
+default_max_concurrency(cap = 16L)
+}
+\arguments{
+\item{cap}{Upper bound on the result. Each worker costs on the order of
+1-2 GB, so an unbounded count on a very large machine trades speed for
+memory pressure; on a 16 GB machine a smaller explicit \code{max_concurrency}
+is worth passing.}
 }
 \value{
 A positive integer.
 }
 \description{
-One less than the number of cores R can see, floored at 1. Leaving a core
-free keeps the machine usable while a reconstruction runs, which matters
-because these runs last tens of minutes.
+One less than the usable physical cores, floored at 1 and capped at \code{cap}.
+Leaving a core free keeps the machine usable while a reconstruction runs,
+which matters because these runs last tens of minutes. Physical cores rather
+than logical ones: OpenSfM and OpenMVS workers are compute- and memory-bound,
+so hyperthreads buy little while doubling the memory demand.
 }
 \details{
 The previous fixed default of 4 was written for a modest laptop and quietly
