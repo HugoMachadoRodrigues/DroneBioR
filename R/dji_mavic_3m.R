@@ -886,6 +886,9 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
                                                orthophoto_resolution_cm,
                                                max_concurrency, primary_band,
                                                build_dsm, build_dtm,
+                                               pc_filter = 2.5,
+                                               pc_sample = NULL,
+                                               pc_rectify = FALSE,
                                                fast_orthophoto, auto_boundary,
                                                pc_las, skip_3dmodel, skip_report,
                                                cleanup_intermediates,
@@ -1014,6 +1017,11 @@ run_odm_dji_mavic_3m_multispectral <- function(project, manifests, force,
 #'   DTM on the RGB run. Set both to `FALSE` when you only need the
 #'   orthomosaic + spectral indices — combined with
 #'   `fast_orthophoto = TRUE` this is the fastest path.
+#' @param pc_filter,pc_sample,pc_rectify Point-cloud cleanup, as in
+#'   [build_odm_args()]. They are applied to the RGB run, which is the one
+#'   whose geometry the DEMs and the stacked orthomosaic inherit; the four MS
+#'   runs contribute calibrated radiance only and already use
+#'   `--fast-orthophoto`.
 #' @param fast_orthophoto Logical, default `FALSE`. When `TRUE`, the
 #'   RGB run adds ODM's `--fast-orthophoto`, which skips the dense
 #'   MVS reconstruction (often the single longest stage). The
@@ -1188,6 +1196,7 @@ run_odm_dji_mavic_3m <- function(project,
       orthophoto_resolution_cm = orthophoto_resolution_cm,
       max_concurrency = max_concurrency, primary_band = primary_band,
       build_dsm = build_dsm, build_dtm = build_dtm,
+      pc_filter = pc_filter, pc_sample = pc_sample, pc_rectify = pc_rectify,
       fast_orthophoto = fast_orthophoto, auto_boundary = auto_boundary,
       pc_las = pc_las, skip_3dmodel = skip_3dmodel, skip_report = skip_report,
       cleanup_intermediates = cleanup_intermediates,
