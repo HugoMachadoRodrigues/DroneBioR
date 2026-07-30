@@ -1,5 +1,23 @@
 # DroneBioR (development version)
 
+## Shiny responsiveness
+
+* **The active tab now finalizes and renders on its own, instead of only after
+  switching tabs and back.** The "now loading" banner helper pumped the libuv
+  event loop with `httpuv::service(0)` from inside a running reactive, to force
+  its banner to appear before a long synchronous block. Pumping the loop from
+  inside a reactive is unsupported: it ran Shiny's deferred flush / `startCycle`
+  / promise callbacks while the cycle was mid-flight, so outputs recomputed in
+  that cycle stayed unsent and queued client inputs never started a new cycle —
+  nothing updated until a fresh client event (a tab switch) drained everything
+  at once. The heartbeat that clears the banner rode the same disrupted path, so
+  the yellow "R is processing…" banner stuck too. Removed the pump;
+  `sendCustomMessage()` already writes to the socket, and long synchronous
+  blocks still surface via the client-side heartbeat watchdog. This was the root
+  cause behind "the tab only updates when I click away and back" across GIS
+  load, field extraction, caret training and CSF refinement. A test fails if any
+  `httpuv::service()` / `later::run_now()` call reappears in the app.
+
 ## OneDrive / cloud-sync robustness
 
 * **Product availability is read only from the project, never from a stale
