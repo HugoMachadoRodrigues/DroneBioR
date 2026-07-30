@@ -465,6 +465,10 @@ attach heights to selected points.
 - [`write_ply_subset()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/write_ply_subset.md)
   : Write a filtered copy of a binary PLY, preserving its exact vertex
   layout
+- [`despike_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/despike_point_cloud.md)
+  : Flag reconstruction spikes in a point cloud
+- [`despike_ply()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/despike_ply.md)
+  : Remove reconstruction spikes from a point-cloud file
 - [`build_chm_from_dsm_dtm()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_from_dsm_dtm.md)
   : Build a canopy height model from DSM and DTM rasters
 - [`build_chm_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/build_chm_raster.md)
