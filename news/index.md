@@ -2,6 +2,21 @@
 
 ## DroneBioR (development version)
 
+### Field Models
+
+- **A projected-coordinate CSV no longer defaults to EPSG:4326 and
+  extracts nothing.** The Field Models CRS input defaulted a plain CSV
+  to 4326; a table of UTM eastings/northings (e.g. 530078 / 5647710) was
+  then read as longitude/latitude, reprojected off the planet, and every
+  sample fell outside the orthomosaic — so all covariates came back NA
+  and the caret model “fit nothing” (a leaderboard row with
+  “Covariate(s) with no data at any sample: …”).
+  [`field_source_columns()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/field_source_columns.md)
+  now reports `xy_geographic` by inspecting the guessed coordinate
+  columns, and the CRS input defaults to 4326 only when the coordinates
+  look geographic; projected coordinates default to the orthomosaic’s
+  CRS. The value is still editable if the guess is wrong.
+
 ### Field Models and 3D editing
 
 - **The Train button is no longer a silent dead button.** The caret
