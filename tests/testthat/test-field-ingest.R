@@ -97,6 +97,35 @@ test_that("a CSV without a CRS is refused rather than silently stamped", {
   expect_true(all(c("sample_id", "biomass_kgha", "x", "y") %in% names(pts)))
 })
 
+test_that("field_source_columns flags whether a CSV's coordinates look geographic", {
+  # Drives the Field Models CRS default: projected eastings/northings must NOT
+  # default to EPSG:4326 (which places them off the planet -> empty extraction
+  # and a model that "fits nothing").
+  proj <- tempfile(fileext = ".csv")
+  utils::write.csv(
+    data.frame(sample_id = 1:3,
+               x = c(530078, 530150, 530300),      # UTM 34N easting
+               y = c(5647710, 5647800, 5647900),   # northing
+               biomass_kgha = c(1000, 2000, 3000)),
+    proj, row.names = FALSE)
+  expect_false(field_source_columns(proj)$xy_geographic)
+
+  geo <- tempfile(fileext = ".csv")
+  utils::write.csv(
+    data.frame(sample_id = 1:3,
+               x = c(-85.1, -85.2, -85.3),
+               y = c(29.6, 29.7, 29.8),
+               biomass_kgha = c(1000, 2000, 3000)),
+    geo, row.names = FALSE)
+  expect_true(field_source_columns(geo)$xy_geographic)
+
+  # No guessable coordinate columns -> NA (caller falls back).
+  none <- tempfile(fileext = ".csv")
+  utils::write.csv(data.frame(id = 1:3, mass = c(1, 2, 3)), none,
+                   row.names = FALSE)
+  expect_true(is.na(field_source_columns(none)$xy_geographic))
+})
+
 test_that("prepare_field_table renames, converts units and reprojects", {
   path <- system.file("extdata", "field_samples.csv", package = "DroneBioR")
   pts <- read_field_points(path, crs = 32617)

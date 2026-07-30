@@ -12735,12 +12735,25 @@ server <- function(input, output, session) {
     # lon/lat in columns called x/y silently extracted garbage before.
     crs_input <- NULL
     if (tabular || is.na(probe$epsg)) {
+      # A plain CSV carries no CRS. Default from the coordinate magnitudes:
+      # projected-looking eastings/northings adopt the orthomosaic's CRS (the
+      # common case for field data recorded on the survey), while lon/lat
+      # degrees default to 4326. The old flat 4326 default silently placed
+      # projected coordinates off the planet -> every extraction came back
+      # empty and the model "fit nothing".
+      tabular_default <- if (isFALSE(probe$xy_geographic) && !is.na(epsg_default)) {
+        epsg_default
+      } else {
+        4326
+      }
       crs_input <- tagList(
         numericInput("field_crs_epsg", "Coordinate CRS (EPSG)",
-                     value = if (tabular) 4326 else epsg_default,
+                     value = if (tabular) tabular_default else epsg_default,
                      min = 1000, max = 1000000, step = 1),
         div(class = "small text-muted mb-2",
-            "Required: plain x / y numbers carry no spatial meaning. 4326 for longitude / latitude in degrees.")
+            "Required: plain x / y numbers carry no spatial meaning. Defaulted ",
+            "from the coordinate values (4326 for longitude / latitude degrees, ",
+            "otherwise the orthomosaic's CRS); change it if that guess is wrong.")
       )
     }
     tagList(
