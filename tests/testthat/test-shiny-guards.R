@@ -204,3 +204,31 @@ test_that("literal sprintf formats match their argument count", {
 
   expect_equal(bad, character())
 })
+
+test_that("the caret method picker has a static default so Train is never a dead button", {
+  # The Train button is disabled while input$field_model_method is empty. If
+  # the picker starts choices = NULL it is empty until a server->client->server
+  # catalogue round-trip lands, and the click is a silent no-op. A static
+  # default keeps the input populated from first render.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  # A static default is present ...
+  expect_true(grepl('choices  = c("lm", "pls", "ranger")', src, fixed = TRUE))
+  # ... and the picker is not created empty (dot-all across the multi-line call).
+  expect_false(grepl(
+    '(?s)selectizeInput\\(\\s*"field_model_method".{0,400}?choices\\s*=\\s*NULL',
+    src, perl = TRUE))
+})
+
+test_that("cloud edits refresh the 3D viewer", {
+  # Despike / delete / restore rewrite the cloud file in place; the viewer only
+  # rebuilds on a Load click, so each must re-trigger it or the user sees a
+  # stale cloud and hits the vertex-count-mismatch guard.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_gte(length(gregexpr("refresh_3d_scene()", src, fixed = TRUE)[[1L]]), 3L)
+})
