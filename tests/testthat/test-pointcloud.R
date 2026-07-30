@@ -279,3 +279,83 @@ test_that("write_ply_subset refuses a truncated source instead of inventing poin
                                 backup = FALSE),
                "Truncated PLY")
 })
+
+# --- despiking -------------------------------------------------------------
+
+# A rough flat-ish surface plus a handful of tall vertical needles, as a
+# data frame. The needles are the reconstruction spikes we want gone.
+.mk_spiky_cloud <- function(n_ground = 4000L, n_spikes = 60L, seed = 11L) {
+  set.seed(seed)
+  g <- data.frame(x = runif(n_ground, 0, 40), y = runif(n_ground, 0, 40))
+  g$z <- 100 + 0.05 * g$x + rnorm(n_ground, 0, 0.15)   # gentle slope + roughness
+  s <- data.frame(x = runif(n_spikes, 2, 38), y = runif(n_spikes, 2, 38))
+  s$z <- 100 + runif(n_spikes, 5, 30)                  # 5-30 m needles
+  list(cloud = rbind(g, s), n_ground = n_ground, n_spikes = n_spikes)
+}
+
+test_that("despike_point_cloud (surface) removes tall needles, keeps the surface", {
+  skip_if_not_installed("terra")
+  d <- .mk_spiky_cloud()
+  keep <- despike_point_cloud(d$cloud, methods = "surface", height_cap = 2)
+  is_spike <- seq_len(nrow(d$cloud)) > d$n_ground
+  # Every planted needle is dropped ...
+  expect_true(all(!keep[is_spike]))
+  # ... and the ground surface is essentially all kept (a rough surface loses
+  # only a sliver to noise).
+  expect_gt(mean(keep[!is_spike]), 0.97)
+})
+
+test_that("despike_point_cloud (sor) removes sparse floaters", {
+  skip_if(is.null(DroneBioR:::.knn_backend()), "no kNN backend (RANN/FNN)")
+  set.seed(3)
+  ground <- data.frame(x = runif(3000, 0, 20), y = runif(3000, 0, 20))
+  ground$z <- rnorm(3000, 0, 0.05)
+  floaters <- data.frame(x = runif(15, 0, 20), y = runif(15, 0, 20),
+                         z = runif(15, 3, 8))          # isolated points aloft
+  pc <- rbind(ground, floaters)
+  keep <- despike_point_cloud(pc, methods = "sor", sor_mult = 2)
+  is_float <- seq_len(nrow(pc)) > 3000
+  expect_gt(mean(!keep[is_float]), 0.8)   # most floaters flagged
+  expect_gt(mean(keep[!is_float]), 0.90)  # ground largely kept (SOR trims a
+                                          # few % of a tight gaussian at mult 2)
+})
+
+test_that("despike_point_cloud keeps everything when the cloud has no spikes", {
+  skip_if_not_installed("terra")
+  set.seed(5)
+  flat <- data.frame(x = runif(2000, 0, 20), y = runif(2000, 0, 20),
+                     z = rnorm(2000, 50, 0.05))
+  keep <- despike_point_cloud(flat, methods = "surface", height_cap = 2)
+  expect_gt(mean(keep), 0.98)
+})
+
+test_that("despike_ply rewrites a cleaned cloud and preserves layout + original", {
+  skip_if_not_installed("terra")
+  d <- .mk_spiky_cloud(n_ground = 3000L, n_spikes = 40L)
+  cl <- d$cloud
+  # Write a binary PLY (x,y,z float + one uchar) carrying the spiky cloud.
+  p <- tempfile(fileext = ".ply")
+  hdr <- paste0("ply\nformat binary_little_endian 1.0\nelement vertex ",
+                nrow(cl), "\n",
+                "property float x\nproperty float y\nproperty float z\n",
+                "property uchar intensity\nend_header\n")
+  con <- file(p, "wb"); writeBin(charToRaw(hdr), con)
+  fb <- writeBin(as.numeric(t(as.matrix(cl[, c("x", "y", "z")]))), raw(),
+                 size = 4L, endian = "little")
+  fmat <- matrix(fb, nrow = 12)                        # 12 bytes x n (3 floats)
+  ub <- as.raw(rep(7L, nrow(cl)))
+  writeBin(as.vector(rbind(fmat, matrix(ub, nrow = 1))), con)  # + 1 uchar = 13 B
+  close(con)
+  expect_equal(parse_ply_header(p)$stride, 13L)
+
+  orig <- sub("[.]ply$", ".original.ply", p)
+  res <- despike_ply(p, backup_path = orig, methods = "surface", height_cap = 2)
+  expect_equal(res$n_before, nrow(cl))
+  expect_equal(res$n_removed, d$n_spikes)              # exactly the needles
+  expect_true(file.exists(orig))
+  expect_equal(parse_ply_header(orig)$n_vertices, nrow(cl))
+  # Result is a valid PLY with the same layout, re-readable.
+  h <- parse_ply_header(p)
+  expect_equal(h$n_vertices, nrow(cl) - d$n_spikes)
+  expect_equal(h$stride, 13L)
+})

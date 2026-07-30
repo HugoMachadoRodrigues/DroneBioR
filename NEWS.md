@@ -1,5 +1,26 @@
 # DroneBioR (development version)
 
+## Point cloud despiking
+
+* **A one-click despiker removes the reconstruction spikes from the 3D cloud.**
+  ODM's `--pc-filter` only strips sparse statistical outliers; it cannot touch
+  the coherent vertical "needles" that dense reconstruction of low-texture
+  vegetation leaves behind, so the 3D view stayed spiky at any std-dev setting.
+  New `despike_point_cloud()` / `despike_ply()` apply the two standard
+  point-cloud denoisers (as in CloudCompare / PDAL / PCL / lidR): 3D
+  **statistical outlier removal** for sparse floaters and needle tips, and a
+  **height-above-surface** filter that estimates a robust local ground/canopy
+  base on a grid (lower-envelope of a low per-cell quantile and its
+  neighbourhood, so a whole clump of spike points is still measured against the
+  real surface) and drops points standing more than a chosen height above it.
+  On the sample MicaSense cloud this cut the height-above-surface tail from ~28
+  m to ~3 m and roughly halved the DSM roughness, while leaving genuinely high
+  terrain intact. Exposed in 3D Modeling → "Point Cloud step 2" as a **Despike**
+  button with a "max height above local surface" slider; it writes the cleaned
+  cloud with the same original-snapshot / restore / rerun-from-`odm_meshing`
+  flow as manual editing, so the products rebuild from the cleaned cloud.
+  Adds `RANN` to Suggests (the SOR pass degrades gracefully without it).
+
 ## Shiny responsiveness
 
 * **The active tab now finalizes and renders on its own, instead of only after

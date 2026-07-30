@@ -449,3 +449,212 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
   }
   invisible(written)
 }
+
+#' Flag reconstruction spikes in a point cloud
+#'
+#' Photogrammetric dense reconstruction of low-texture vegetation leaves two
+#' kinds of noise the ODM `--pc-filter` stage does not remove: sparse floating
+#' points / needle tips, and thin vertical "needles" that shoot up well above
+#' the local canopy from mis-matched features. This is the classic point-cloud
+#' denoising problem, and this function applies the two standard filters used
+#' by CloudCompare, PDAL (`filters.outlier`), PCL and lidR:
+#'
+#' * **Statistical Outlier Removal (SOR)** -- for each point, the mean distance
+#'   to its `sor_k` nearest neighbours (in 3D). Points whose mean distance is a
+#'   robust outlier (above `median + sor_mult * MAD`) are flagged. This clears
+#'   sparse floaters and the isolated tips of needles.
+#' * **Height-above-surface filter** -- a robust local ground/canopy-base
+#'   surface is estimated on a grid (a low quantile of z per `cell`, smoothed
+#'   across a neighbourhood so a cell full of spikes borrows its neighbours'
+#'   base), and a point standing more than `height_cap` metres above that
+#'   surface -- or, when `height_cap` is `NULL`, more than `surface_mult`
+#'   robust deviations above the residual distribution -- is flagged. Unlike a
+#'   neighbour-mean reference, a *cluster* of tall spike points cannot hide
+#'   itself here: its base comes from the low quantile / surrounding cells, so
+#'   the whole clump is measured against the real surface and removed. This is
+#'   what actually knocks down the tall needles, not just the scattered noise.
+#'
+#' The SOR pass is robust (median / MAD, not mean / sd) so a few gross spikes
+#' do not inflate the threshold and mask the rest. Run either or both.
+#'
+#' @param coords A data frame or matrix with numeric columns `x`, `y`, `z`
+#'   (case-insensitive), one row per point.
+#' @param methods Which passes to apply: any of `"sor"` and `"surface"`.
+#' @param sor_k,sor_mult SOR neighbour count and robust-deviation multiplier.
+#'   Lower `sor_mult` is more aggressive. Ignored unless `"sor"` is in
+#'   `methods`.
+#' @param cell Grid cell size (metres) for the surface estimate.
+#' @param ground_q Quantile of z per cell taken as the local surface base
+#'   (`0.1` = 10th percentile). Lower is closer to bare ground.
+#' @param smooth_w Odd window (in cells) used to smooth / gap-fill the surface.
+#' @param height_cap Maximum height (metres) a point may stand above the local
+#'   surface before it is flagged. `NULL` (default) uses a robust cut instead
+#'   (`median + surface_mult * MAD` of the residuals), which adapts to the
+#'   flight; set an explicit value (e.g. `3`) to cap vegetation height directly.
+#' @param surface_mult Robust-deviation multiplier used when `height_cap` is
+#'   `NULL`. Lower is more aggressive.
+#' @return A logical vector, one per input row, `TRUE` for points to **keep**
+#'   and `FALSE` for flagged spikes. Suitable as the `keep` mask for
+#'   [write_ply_subset()] once you take `which(keep)`.
+#' @examples
+#' set.seed(1)
+#' ground <- data.frame(x = runif(2000, 0, 10), y = runif(2000, 0, 10))
+#' ground$z <- 0.2 * ground$x + rnorm(2000, 0, 0.05)     # a gentle sloped surface
+#' spikes <- data.frame(x = runif(20, 0, 10), y = runif(20, 0, 10),
+#'                      z = runif(20, 5, 9))              # tall needles
+#' pc <- rbind(ground, spikes)
+#' keep <- despike_point_cloud(pc, methods = "sor")
+#' sum(!keep)   # the scattered spikes
+#' @export
+despike_point_cloud <- function(coords,
+                                methods = c("sor", "surface"),
+                                sor_k = 16L, sor_mult = 2.0,
+                                cell = 1.0, ground_q = 0.1, smooth_w = 5L,
+                                height_cap = NULL, surface_mult = 3.0) {
+  methods <- match.arg(methods, c("sor", "surface"), several.ok = TRUE)
+  cn <- tolower(colnames(coords))
+  pick <- function(axis) {
+    j <- which(cn == axis)
+    if (!length(j)) stop("`coords` needs an ", axis, " column.", call. = FALSE)
+    as.numeric(coords[[j[[1L]]]])
+  }
+  x <- pick("x"); y <- pick("y"); z <- pick("z")
+  n <- length(x)
+  keep <- rep(TRUE, n)
+  if (n < 8L) return(keep)
+
+  if ("sor" %in% methods && n > sor_k + 1L) {
+    knn <- .knn_backend()
+    if (is.null(knn)) {
+      warning("The SOR pass needs the 'RANN' or 'FNN' package; skipping it.",
+              call. = FALSE)
+    } else {
+      d <- knn(cbind(x, y, z), k = sor_k + 1L)   # column 1 is the point itself
+      mean_dist <- rowMeans(d[, -1L, drop = FALSE])
+      m <- stats::median(mean_dist); s <- stats::mad(mean_dist)
+      if (!is.finite(s) || s == 0) s <- stats::sd(mean_dist)
+      if (is.finite(s) && s > 0) {
+        keep <- keep & (mean_dist <= m + sor_mult * s)
+      }
+    }
+  }
+
+  if ("surface" %in% methods) {
+    if (!requireNamespace("terra", quietly = TRUE)) {
+      warning("The surface pass needs the 'terra' package; skipping it.",
+              call. = FALSE)
+    } else {
+      resid <- .height_above_surface(x, y, z, cell = cell, ground_q = ground_q,
+                                     smooth_w = smooth_w)
+      thr <- if (!is.null(height_cap) && is.finite(height_cap)) {
+        height_cap
+      } else {
+        m <- stats::median(resid, na.rm = TRUE)
+        s <- stats::mad(resid, na.rm = TRUE)
+        if (!is.finite(s) || s == 0) s <- stats::sd(resid, na.rm = TRUE)
+        if (!is.finite(s) || s == 0) Inf else m + surface_mult * s
+      }
+      keep <- keep & (is.finite(resid) & resid <= thr)
+    }
+  }
+  keep
+}
+
+# Height of each point above a robust local surface. The surface is a grid of
+# the `ground_q` quantile of z per `cell`, smoothed / gap-filled with a focal
+# median over `smooth_w` cells so a cell that is all spike inherits its
+# neighbours' base. A tall CLUSTER of spikes cannot mask itself: its base comes
+# from the low quantile and the surrounding cells, not from its own members.
+.height_above_surface <- function(x, y, z, cell = 1.0, ground_q = 0.1,
+                                   smooth_w = 5L) {
+  rr <- terra::rast(xmin = min(x), xmax = max(x) + cell,
+                    ymin = min(y), ymax = max(y) + cell,
+                    resolution = cell)
+  cells <- terra::cellFromXY(rr, cbind(x, y))
+  base_by_cell <- tapply(z, cells, stats::quantile, probs = ground_q,
+                         names = FALSE, na.rm = TRUE)
+  rr[as.integer(names(base_by_cell))] <- as.numeric(base_by_cell)
+  smooth_w <- as.integer(smooth_w)
+  if (smooth_w %% 2L == 0L) smooth_w <- smooth_w + 1L
+  # Fill empty cells from their neighbours first.
+  filled <- terra::focal(rr, w = smooth_w, fun = "median", na.rm = TRUE,
+                         na.policy = "only")
+  filled <- terra::cover(rr, filled)
+  # Lower envelope: the base is the SMALLER of the cell's own low quantile and
+  # the median of its neighbourhood. Where a cell is genuine ground (dense with
+  # low points) it keeps its own sharp value; where a cell is nothing but a
+  # spike -- its own low quantile is still high -- it is pulled down to the
+  # surrounding ground, so the spike is measured against the real base instead
+  # of against itself. A base can never sit above its neighbours.
+  neigh <- terra::focal(filled, w = smooth_w, fun = "median", na.rm = TRUE)
+  surface <- min(c(filled, terra::cover(neigh, filled)))
+  base_pt <- terra::extract(surface, cbind(x, y))[, 1L]
+  base_pt[!is.finite(base_pt)] <- stats::median(z, na.rm = TRUE)
+  z - base_pt
+}
+
+# kNN distance backend: returns a function(query, k) -> distance matrix
+# (n x k, first column self). Prefers RANN (ANN kd-tree), falls back to FNN.
+.knn_backend <- function() {
+  if (requireNamespace("RANN", quietly = TRUE)) {
+    return(function(m, k) RANN::nn2(m, k = min(k, nrow(m)))$nn.dists)
+  }
+  if (requireNamespace("FNN", quietly = TRUE)) {
+    return(function(m, k) {
+      r <- FNN::get.knn(m, k = min(k, nrow(m)) - 1L)
+      cbind(0, r$nn.dist)
+    })
+  }
+  NULL
+}
+
+# kNN index backend: returns an n x k integer matrix of neighbour row indices
+# (first column self).
+.knn_idx <- function(m, k) {
+  if (requireNamespace("RANN", quietly = TRUE)) {
+    return(RANN::nn2(m, k = min(k, nrow(m)))$nn.idx)
+  }
+  r <- FNN::get.knn(m, k = min(k, nrow(m)) - 1L)
+  cbind(seq_len(nrow(m)), r$nn.index)
+}
+
+#' Remove reconstruction spikes from a point-cloud file
+#'
+#' Reads a binary PLY in full, flags spikes with [despike_point_cloud()], and
+#' writes the cleaned cloud back with [write_ply_subset()] -- preserving every
+#' vertex property (colours, normals) so the result still meshes. The default
+#' rewrites the file in place after snapshotting the untouched original, so the
+#' app's "restore" and rerun-from-`odm_meshing` flow work unchanged.
+#'
+#' @param path Source binary PLY.
+#' @param out_path Destination; defaults to `path` (in place).
+#' @param backup,backup_path Passed to [write_ply_subset()]; by default the
+#'   untouched original is kept next to the cloud.
+#' @param ... Despike tuning passed to [despike_point_cloud()] (`methods`,
+#'   `sor_k`, `sor_mult`, `local_k`, `local_mult`).
+#' @return Invisibly, a list with `n_before`, `n_after`, `n_removed`.
+#' @examples
+#' \dontrun{
+#' ply <- file.path(project$odm_project_dir, "odm_filterpoints", "point_cloud.ply")
+#' despike_ply(ply, backup_path = sub("\\.ply$", ".original.ply", ply))
+#' }
+#' @export
+despike_ply <- function(path, out_path = path, backup = TRUE,
+                        backup_path = NULL, ...) {
+  h <- parse_ply_header(path)
+  n <- h$n_vertices
+  if (n == 0L) stop("The point cloud is empty.", call. = FALSE)
+  pc <- read_ply_point_cloud(path, max_points = n)   # every point, point_id = 1:n
+  keep <- despike_point_cloud(pc[, c("x", "y", "z")], ...)
+  n_keep <- sum(keep)
+  if (n_keep == n) {
+    return(invisible(list(n_before = n, n_after = n, n_removed = 0L)))
+  }
+  if (n_keep == 0L) {
+    stop("Despiking would remove every point; loosen the thresholds.",
+         call. = FALSE)
+  }
+  written <- write_ply_subset(path, out_path, keep = which(keep),
+                              backup = backup, backup_path = backup_path)
+  invisible(list(n_before = n, n_after = written, n_removed = n - written))
+}

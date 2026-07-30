@@ -167,6 +167,8 @@ reference:
       - read_ply_point_cloud
       - parse_ply_header
       - write_ply_subset
+      - despike_point_cloud
+      - despike_ply
       - build_chm_from_dsm_dtm
       - build_chm_raster
       - despike_dem
