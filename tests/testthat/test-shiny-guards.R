@@ -245,3 +245,16 @@ test_that("the field-points CRS default is not a hardcoded 4326 for CSVs", {
   expect_false(grepl("value\\s*=\\s*if\\s*\\(tabular\\)\\s*4326", src))
   expect_true(grepl("xy_geographic", src, fixed = TRUE))
 })
+
+test_that("Extract enables on a staged file, not a silent all-three gate", {
+  # Extract used to be hard-disabled until field_points() + covariates + mosaic
+  # all existed. Because field_points() itself needs the mosaic's CRS, a missing
+  # mosaic left the button dead with no explanation. It must enable on a staged
+  # file so the observer's toasts can name the missing prerequisite.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_true(grepl(
+    '(?s)field_staged_path.{0,200}?id = "field_extract"', src, perl = TRUE))
+})

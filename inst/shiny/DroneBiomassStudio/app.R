@@ -13042,15 +13042,23 @@ server <- function(input, output, session) {
 
   observeEvent(input$field_extract, {
     result <- with_error_toast("Extract field samples", {
-      pts <- field_points()
-      observer_need(!is.null(pts) && nrow(pts) > 0,
-                    "Load field points and map the sample-id / biomass columns first.")
-      selected <- field_cov_selected()
-      observer_need(length(selected) > 0,
-                    "Tick at least one covariate in the sidebar.")
+      # Guard the prerequisites in order, each with its own toast. The mosaic
+      # is checked BEFORE field_points() because field_points() reprojects onto
+      # the mosaic's CRS and would otherwise silently abort (its internal
+      # validate() is a shiny.silent.error) when no mosaic is loaded.
+      observer_need(
+        !is.null(tryCatch(field_staged_path(), error = function(e) NULL)),
+        "Upload a field-points file (CSV or shapefile) in the sidebar first.")
       refl <- tryCatch(reflectance(), error = function(e) NULL)
       observer_need(!is.null(refl),
-                    "Load a mosaic in Spectral Analytics first.")
+                    "Load a mosaic in Spectral Analytics first - the field points are sampled onto it.")
+      selected <- field_cov_selected()
+      observer_need(length(selected) > 0,
+                    "Tick at least one covariate in the sidebar (section 2 - Covariates).")
+      pts <- tryCatch(field_points(), error = function(e) NULL)
+      observer_need(
+        !is.null(pts) && nrow(pts) > 0,
+        "Field points could not be read - check the sample-id / biomass / X / Y column mappings and the coordinate CRS (EPSG) in the sidebar.")
       window <- as.integer(input$field_window %||% 3)
       fun <- input$field_window_fun %||% "mean"
       aux <- field_aux_rasters(selected)
@@ -13841,12 +13849,14 @@ server <- function(input, output, session) {
   )
 
   # -- 10. Button gating + graceful caret-absent degradation ----------
-  # Hard-disabled until the prerequisites exist, so a full-resolution
-  # job can never fire with no points or no covariates selected.
+  # Enable Extract as soon as a points file is staged. It used to also require
+  # a readable field_points(), a ticked covariate AND a loaded mosaic all at
+  # once -- but field_points() needs the mosaic's CRS, so with no mosaic the
+  # button stayed disabled with no explanation (a dead button). The observer
+  # now guards each prerequisite with a named toast instead, so the click
+  # always tells the user what is missing.
   observe({
-    ready <- !is.null(tryCatch(field_points(), error = function(e) NULL)) &&
-      length(field_cov_selected()) > 0 &&
-      !is.null(tryCatch(reflectance_preview(), error = function(e) NULL))
+    ready <- !is.null(tryCatch(field_staged_path(), error = function(e) NULL))
     session$sendCustomMessage("dronebior_set_disabled",
                               list(id = "field_extract", disabled = !ready))
   })
