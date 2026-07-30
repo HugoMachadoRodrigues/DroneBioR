@@ -198,22 +198,26 @@ raster_header <- function(path, progress_msg = "Reading raster header") {
 # call. Without the client-side ticker the elapsed display would
 # freeze along with the rest of the UI.
 #
-# CRITICAL: session$sendCustomMessage() queues the message and Shiny
-# only flushes the queue at the END of the current reactive flush
-# cycle. If we just queue the "start" message and immediately enter
-# a 5-minute synchronous terra::rast() call, the message sits in the
-# queue for those 5 minutes - the banner never appears. We yield to
-# the libuv event loop via httpuv::service(0) right after sending,
-# which drains pending WebSocket writes and forces the banner to
-# render BEFORE the heavy work blocks the R session.
+# We do NOT pump the event loop here. An earlier version called
+# httpuv::service(0) right after sending, believing the message was
+# queued until the end of the flush cycle. It is not -- sendCustomMessage
+# writes to the WebSocket immediately. What service(0) actually did was
+# run one iteration of the libuv loop RE-ENTRANTLY from inside a running
+# reactive, which ran Shiny's deferred flush / startCycle / promise
+# callbacks while `.inFlush`/`busyCount` were non-zero and mis-sequenced
+# the whole cycle: outputs recomputed in the current cycle stayed unsent
+# and queued client inputs never started a cycle, so the active tab did
+# not update until a fresh client event (a tab switch) drained everything
+# at once -- and the heartbeat that clears this very banner rode the same
+# disrupted path, so it stuck. Pumping the loop from inside a reactive is
+# unsupported; the fix is to never do it. Long *synchronous* blocks still
+# get a banner: the client-side heartbeat watchdog raises a generic
+# "R is processing..." banner once heartbeats stop for 2.5 s. If a
+# specific named banner must appear before a long block, move that block
+# off the main loop (future_promise) rather than pumping the loop here.
 gis_task_send <- function(session, payload) {
   if (is.null(session)) return(invisible(NULL))
   session$sendCustomMessage("dronebior_gis_task", payload)
-  if (requireNamespace("httpuv", quietly = TRUE)) {
-    # service(0) processes one iteration of the event loop without
-    # blocking - just enough to flush queued WebSocket frames.
-    tryCatch(httpuv::service(0), error = function(e) NULL)
-  }
 }
 gis_task_start <- function(session, name, detail = NULL) {
   gis_task_send(session, list(action = "start",

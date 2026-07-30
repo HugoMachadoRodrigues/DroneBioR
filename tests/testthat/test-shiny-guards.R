@@ -1,6 +1,47 @@
+# Walks a parsed expression, tracking the enclosing Shiny wrapper of each
+# call. Defined first so every test below can use it.
+.guard_walk <- function(e, ctx, visit) {
+  if (!is.call(e)) return(invisible())
+  nm <- if (is.name(e[[1L]])) as.character(e[[1L]]) else ""
+  visit(nm, e, ctx)
+  if (nm %in% c("observeEvent", "observe", "reactive", "eventReactive",
+                "reactiveVal") || grepl("^render", nm)) {
+    ctx <- c(ctx, nm)
+  }
+  for (el in as.list(e)) {
+    if (missing(el)) next
+    if (is.symbol(el) && !nzchar(as.character(el))) next
+    .guard_walk(el, ctx, visit)
+  }
+  invisible()
+}
+
 test_that("observer_need lets a truthy condition through", {
   expect_true(observer_need(TRUE, "nope", session = NULL))
   expect_silent(observer_need(1 > 0, "nope", session = NULL))
+})
+
+test_that("the app never pumps the event loop from inside a reactive", {
+  # httpuv::service() / later::run_now() run the libuv loop re-entrantly. Called
+  # from inside a running reactive (as gis_task_send once did to flush a banner)
+  # they execute Shiny's deferred flush/startCycle while .inFlush/busyCount are
+  # non-zero, mis-sequencing the cycle: the active tab stops updating until a
+  # fresh client event. Guard so this anti-pattern cannot come back.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+
+  banned <- character()
+  # AST walk so comments mentioning httpuv::service() do not trip the guard.
+  for (e in parse(app)) .guard_walk(e, character(), function(nm, ee, ctx) {
+    fn <- if (is.call(ee) && is.call(ee[[1L]]) && length(ee[[1L]]) >= 3L)
+            as.character(ee[[1L]][[3L]])          # pkg::fn -> "fn"
+          else nm
+    if (fn %in% c("service", "run_now")) {
+      banned <<- c(banned, paste(deparse(ee), collapse = " "))
+    }
+  })
+  expect_equal(banned, character())
 })
 
 test_that("leaflet maps are invalidated after content updates, not only on tab change", {
@@ -58,21 +99,6 @@ test_that("observer_need toasts, then aborts, inside a Shiny session", {
 })
 
 # Walks a parsed expression, tracking which Shiny wrapper encloses each call.
-.guard_walk <- function(e, ctx, visit) {
-  if (!is.call(e)) return(invisible())
-  nm <- if (is.name(e[[1L]])) as.character(e[[1L]]) else ""
-  visit(nm, e, ctx)
-  if (nm %in% c("observeEvent", "observe", "reactive", "eventReactive",
-                "reactiveVal") || grepl("^render", nm)) {
-    ctx <- c(ctx, nm)
-  }
-  for (el in as.list(e)) {
-    if (missing(el)) next
-    if (is.symbol(el) && !nzchar(as.character(el))) next
-    .guard_walk(el, ctx, visit)
-  }
-  invisible()
-}
 
 test_that("no observer guards its inputs with validate()", {
   # validate() raises shiny.silent.error, which Shiny displays in a render
