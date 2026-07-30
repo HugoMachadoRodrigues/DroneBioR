@@ -3,6 +3,22 @@ test_that("observer_need lets a truthy condition through", {
   expect_silent(observer_need(1 > 0, "nope", session = NULL))
 })
 
+test_that("leaflet maps are invalidated after content updates, not only on tab change", {
+  # A leaflet map only re-measures its container on a resize event. When
+  # overlays are added via leafletProxy while the map's tab was hidden or the
+  # browser deferred layout, they stay invisible until invalidateSize() fires.
+  # That nudge used to fire only from observeEvent(input$main_nav), so the user
+  # had to switch tabs for freshly loaded GIS / biomass data to appear. It must
+  # also fire from the render paths themselves (GIS overlays, field map).
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  n <- length(gregexpr('sendCustomMessage\\("dronebior_invalidate_maps"',
+                       src)[[1L]])
+  expect_gte(n, 3L)
+})
+
 test_that("observer_need matches need() truthiness", {
   for (falsy in list(FALSE, NULL, NA, "", character(0), integer(0))) {
     expect_warning(observer_need(falsy, "missing", session = NULL), "missing")
