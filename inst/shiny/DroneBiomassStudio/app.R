@@ -7288,6 +7288,15 @@ server <- function(input, output, session) {
         ),
         options = layersControlOptions(collapsed = FALSE)
       )
+
+    # The overlays above are pushed to the map via leafletProxy. A leaflet map
+    # only re-measures its container on a resize event, so if it was first laid
+    # out while its tab was hidden (or the browser deferred layout) the freshly
+    # added overlays can stay invisible until something calls invalidateSize().
+    # That nudge previously fired ONLY on a tab change (observeEvent main_nav),
+    # which is why the user had to click away and back for the GIS data to
+    # appear. Fire it now so the overlays show as soon as the load finishes.
+    session$sendCustomMessage("dronebior_invalidate_maps", list())
   }
 
   observeEvent(input$load_gis, {
@@ -13636,6 +13645,10 @@ server <- function(input, output, session) {
         overlayGroups = c("Predicted biomass",
                           if (isTRUE(input$field_map_points)) "Field points"),
         options = layersControlOptions(collapsed = FALSE))
+
+    # Same leaflet re-measure nudge as the GIS map: make the freshly drawn
+    # biomass surface and field points appear without needing a tab switch.
+    session$sendCustomMessage("dronebior_invalidate_maps", list())
   }) })
 
   # The exact surface: every covariate recomputed per native pixel by
