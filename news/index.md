@@ -4,6 +4,19 @@
 
 ### Field Models
 
+- **The Extract button is no longer a silent dead button.** It was
+  hard-disabled until a readable `field_points()`, a ticked covariate
+  AND a loaded mosaic all existed at once. Because reading the points
+  needs the mosaic’s CRS to reproject them, a project with products on
+  disk but no mosaic loaded left Extract disabled with no hint why.
+  Extract now enables as soon as a points file is staged, and the
+  click’s guards name the missing prerequisite in order (upload a file →
+  load a mosaic → tick a covariate → fix the column/CRS mapping) with a
+  toast, instead of a dead button. The mosaic is now checked before
+  `field_points()` so a missing mosaic no longer aborts silently.
+
+### Field Models
+
 - **A projected-coordinate CSV no longer defaults to EPSG:4326 and
   extracts nothing.** The Field Models CRS input defaulted a plain CSV
   to 4326; a table of UTM eastings/northings (e.g. 530078 / 5647710) was
