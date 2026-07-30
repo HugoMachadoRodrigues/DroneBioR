@@ -377,8 +377,6 @@ and check what actually landed on disk.
   : Lightweight existence + size check on ODM outputs
 - [`is_cloud_sync_path()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/is_cloud_sync_path.md)
   : Detect whether a path lives inside a cloud-sync provider folder
-- [`sync_outputs_to_local_cache()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/sync_outputs_to_local_cache.md)
-  : Copy ODM outputs to a fast local cache once, return the new paths
 
 ## Shiny app
 
