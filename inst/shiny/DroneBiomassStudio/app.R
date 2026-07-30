@@ -3719,11 +3719,27 @@ ui <- page_navbar(
           accordion_panel(
             "Point Cloud step 2 - clean the cloud",
             div(class = "small text-muted mb-2",
-                "This is step 2 of the Point Cloud tab's flow. Select the bad ",
-                "points with box / lasso / polygon and delete them, then use ",
-                "the button below to go back and build the products from the ",
-                "cloud you cleaned - the reconstruction is reused, not redone."),
+                "This is step 2 of the Point Cloud tab's flow. Auto-despike to ",
+                "knock down the reconstruction spikes, and/or select stragglers ",
+                "with box / lasso / polygon and delete them, then use the button ",
+                "below to build the products from the cloud you cleaned - the ",
+                "reconstruction is reused, not redone."),
             textOutput("cloud_edit_status"),
+            tags$div(
+              class = "mt-2",
+              tags$strong(class = "small", "Auto-despike"),
+              div(class = "small text-muted",
+                  "Removes points that stand more than this far above the local ",
+                  "surface (the vertical needles), plus sparse floaters. Lower ",
+                  "= more aggressive."),
+              sliderInput("despike_height_cap",
+                          "Max height above local surface (m)",
+                          min = 0.5, max = 10, value = 3, step = 0.5),
+              actionButton("despike_cloud",
+                           "Despike (remove spikes automatically)",
+                           class = "btn-outline-primary w-100")
+            ),
+            hr(class = "my-2"),
             actionButton("delete_selected_points",
                          "Delete selected points from the cloud",
                          class = "btn-outline-danger w-100 mt-2"),
@@ -9990,6 +10006,42 @@ server <- function(input, output, session) {
         sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Point Cloud” to build the products from the cleaned cloud.",
                 format(length(ids), big.mark = ","), format(n, big.mark = ",")),
         type = "message", duration = 12)
+    })
+  })
+
+  observeEvent(input$despike_cloud, {
+    with_error_toast("Despike the point cloud", {
+      tgt <- cloud_edit_target()
+      p <- tgt$path
+      if (!nzchar(p) || !file.exists(p)) {
+        showNotification("Build the point cloud first; there is nothing to despike.",
+                         type = "warning", duration = 6)
+        return()
+      }
+      cap <- as.numeric(input$despike_height_cap %||% 3)
+      orig <- cloud_original_path(p)
+      res <- with_gis_task(
+        session, "Despiking the point cloud",
+        detail = sprintf("removing points > %.1f m above the surface", cap),
+        despike_ply(p, backup = TRUE, backup_path = orig,
+                    methods = c("sor", "surface"), height_cap = cap))
+      # The cached preview is now a different cloud; drop it so Load re-caches.
+      if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
+      selected_ids_value(integer())
+      cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
+      updateTextInput(session, "ply_path", value = p)
+      if (res$n_removed == 0L) {
+        showNotification(
+          "No spikes exceeded the threshold; nothing removed. Lower the height to be more aggressive.",
+          type = "message", duration = 10)
+      } else {
+        showNotification(
+          sprintf("Despiked: removed %s spike points (%.1f%%); %s remain. Press Load to refresh the view, then “Back to Point Cloud” to build the products.",
+                  format(res$n_removed, big.mark = ","),
+                  100 * res$n_removed / res$n_before,
+                  format(res$n_after, big.mark = ",")),
+          type = "message", duration = 12)
+      }
     })
   })
 
