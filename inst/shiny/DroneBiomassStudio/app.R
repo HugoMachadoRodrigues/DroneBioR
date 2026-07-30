@@ -3515,11 +3515,6 @@ ui <- page_navbar(
           div(class = "metric", div(class = "label", "Point cloud"), div(class = "value", uiOutput("metric_cloud", inline = TRUE))),
           div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
         ),
-        # Banner appears only when the project root is inside a cloud-
-        # sync folder (OneDrive / Google Drive / Dropbox / iCloud). Lets
-        # the user migrate big binary outputs to a fast local cache
-        # so the app never re-triggers cloud downloads on Load.
-        uiOutput("cloud_sync_banner"),
         # Map toolbar: horizontal CAD-style button strip above the map
         # canvas. The active tool gets the .active class via a small
         # CSS rule + an R observer. Replaces the previous "Map
@@ -4953,22 +4948,13 @@ server <- function(input, output, session) {
     p
   })
 
-  # Cache-aware product paths. For every entry in odm_product_paths(),
-  # returns the same path UNLESS a same-named file already lives in the
-  # local cache (~/.dronebior/cache/<slug>/), in which case we point
-  # readers at the cached copy. This is what stops the 3D Modeling tab
-  # from re-pulling the DSM / point cloud from OneDrive Files-On-Demand
-  # on every reactive invocation - the cache copy is local SSD and
-  # never triggers a sync. The user must have run "Copy outputs to
-  # local cache" once for any of this to matter; otherwise it
-  # transparently returns the canonical paths.
-  cached_products <- reactive({
-    p <- project()
-    paths <- odm_product_paths(p)
-    for (k in names(paths)) {
-      paths[[k]] <- DroneBioR:::cache_aware_path(unname(paths[[k]]), p)
-    }
-    paths
+  # Canonical product paths for the current project. Reactive so every
+  # reader re-resolves when the project changes. There is deliberately no
+  # local-copy cache here: a same-named file left in a shared cache from a
+  # previous project used to mask a fresh project's true (missing) state,
+  # so product availability is now read only from the project's own files.
+  product_paths <- reactive({
+    odm_product_paths(project())
   })
 
   # ---- Project Control Center + Workflow Stepper ------------------------
@@ -5297,7 +5283,7 @@ server <- function(input, output, session) {
                  div(class = "empty-cta",
                      "Tick layers in the sidebar's 'Map layers' panel and click Load.")))
     }
-    products <- cached_products()
+    products <- product_paths()
     rows <- lapply(selected, function(layer_name) {
       meta <- product_metadata[[layer_name]]
       label <- if (!is.null(meta) && nzchar(meta$label %||% "")) meta$label else layer_name
@@ -6167,93 +6153,6 @@ server <- function(input, output, session) {
     summarize_odm_products(project())
   })
 
-  # Detect cloud-sync project roots (OneDrive / Google Drive / etc.)
-  # and offer a one-click migration of the heavy binary outputs to a
-  # local cache directory outside any cloud sync. Once migrated, the
-  # app repoints every path input at the local copy and never touches
-  # the cloud folder again for analysis.
-  cloud_sync_provider <- reactive({
-    is_cloud_sync_path(input$project_dir %||% "")
-  })
-
-  output$cloud_sync_banner <- renderUI({
-    provider <- cloud_sync_provider()
-    if (is.na(provider)) return(NULL)
-    p <- tryCatch(project(), error = function(e) NULL)
-    if (is.null(p)) return(NULL)
-    cache_dir <- DroneBioR:::local_cache_dir(p)
-    already_migrated <- dir.exists(cache_dir) &&
-      length(list.files(cache_dir, pattern = "\\.(tif|laz|las|obj|glb)$",
-                        ignore.case = TRUE)) > 0L
-    if (already_migrated) {
-      tags$div(
-        style = paste("background:#ecfdf5; color:#065f46; padding:10px 14px;",
-                      "border-radius:6px; margin-bottom:12px;"),
-        tags$strong("✓ Outputs cached locally"),
-        tags$br(),
-        sprintf("Reads come from %s — no more %s traffic.",
-                cache_dir, provider),
-        tags$br(),
-        actionButton("repoint_to_cloud", "Switch reads back to cloud folder",
-                     class = "btn-link btn-sm",
-                     style = "padding:0; margin-top:4px;"))
-    } else {
-      tags$div(
-        style = paste("background:#fef3c7; color:#92400e; padding:10px 14px;",
-                      "border-radius:6px; margin-bottom:12px;"),
-        tags$strong("⚠ Project lives inside ", provider),
-        tags$br(),
-        "Reading the orthomosaic / DSM / point cloud from a cloud-synced ",
-        "folder can trigger background up/downloads. Copy the heavy outputs ",
-        "to a local cache once and the app reads from there from then on.",
-        tags$br(), tags$br(),
-        actionButton("migrate_to_local_cache",
-                     paste0("Copy outputs to local cache (",
-                            "~/.dronebior/cache/...)"),
-                     class = "btn-warning btn-sm"))
-    }
-  })
-
-  observeEvent(input$migrate_to_local_cache, {
-    p <- tryCatch(project(), error = function(e) NULL)
-    if (is.null(p)) return()
-    withProgress(message = "Copying outputs to local cache",
-                 detail = "this is a one-time copy",
-                 value = 0.1, {
-      res <- tryCatch(sync_outputs_to_local_cache(p),
-                      error = function(e) {
-                        showNotification(paste("Migration failed:", conditionMessage(e)),
-                                         type = "error", duration = 10)
-                        NULL
-                      })
-      if (is.null(res)) return()
-      incProgress(0.7, detail = "Repointing path inputs")
-      # Repoint each input at the cached copy if we have one.
-      ck <- res$paths
-      if (!is.na(ck["orthomosaic"]))      updateTextInput(session, "orthomosaic",     value = unname(ck["orthomosaic"]))
-      pc <- ck[c("point_cloud_copc", "point_cloud_laz")]
-      pc <- pc[!is.na(pc)]
-      if (length(pc))                     updateTextInput(session, "full_cloud_path", value = unname(pc[1L]))
-      incProgress(0.2, detail = "Done")
-    })
-    showNotification(
-      paste0("Copied ", length(res$paths), " files to ", res$cache_dir,
-             ". App now reads from local cache."),
-      type = "message", duration = 10)
-  })
-
-  observeEvent(input$repoint_to_cloud, {
-    p <- tryCatch(project(), error = function(e) NULL)
-    if (is.null(p)) return()
-    paths <- odm_product_paths(p)
-    # Use the resolved path, not project$odm_orthomosaic: on a DJI Mavic 3M
-    # flight the latter is the RGB band run, and pointing the GIS tab at it
-    # hides NIR / RedEdge and every index that needs them.
-    updateTextInput(session, "orthomosaic",     value = unname(paths[["orthomosaic"]]))
-    updateTextInput(session, "full_cloud_path", value = pick_best_point_cloud(p))
-    showNotification("Reads switched back to the cloud-synced project folder.",
-                     type = "message", duration = 6)
-  })
 
   # Project-actions panel. Used to mix project metadata + product
   # status, but the Project Control Center at the top of the page now
@@ -6338,7 +6237,7 @@ server <- function(input, output, session) {
     if (is.null(p)) return()
     withProgress(message = "Building CHM", value = 0.1,
                  detail = "DSM - DTM, clamping negatives", {
-      out <- tryCatch(build_chm_raster(p, force = FALSE, cache_aware = TRUE),
+      out <- tryCatch(build_chm_raster(p, force = FALSE),
                       error = function(e) {
                         showNotification(paste("Build CHM failed:",
                                                 conditionMessage(e)),
@@ -6985,13 +6884,7 @@ server <- function(input, output, session) {
     with_error_toast("Compute hillshade", {
       p <- project()
       products <- odm_product_paths(p)
-      dsm_default <- unname(products[["dsm"]])
-      # Prefer the local-cache copy of the DSM when migration ran;
-      # otherwise fall back to the project's canonical (often
-      # cloud-synced) path.
-      cache_dir  <- DroneBioR:::local_cache_dir(p)
-      dsm_cached <- file.path(cache_dir, basename(dsm_default))
-      dsm_path   <- if (file.exists(dsm_cached)) dsm_cached else dsm_default
+      dsm_path <- unname(products[["dsm"]])
       validate(need(
         file.exists(dsm_path),
         "DSM not available - hillshade needs odm_dem/dsm.tif."
@@ -7183,17 +7076,13 @@ server <- function(input, output, session) {
       "Selected products are not available in the current raster stack."
     )
 
-    # Helper: resolve a product key to its on-disk path, preferring the
-    # local cache (~/.dronebior/cache/<slug>/) when migration ran.
+    # Helper: resolve a product key to its on-disk path.
     p_active <- tryCatch(project(), error = function(e) NULL)
     resolve_product_path <- function(key) {
       if (is.null(p_active)) return(NULL)
       paths <- odm_product_paths(p_active)
       default <- unname(paths[[key]])
       if (!nzchar(default)) return(NULL)
-      cache_dir <- DroneBioR:::local_cache_dir(p_active)
-      cached    <- file.path(cache_dir, basename(default))
-      if (file.exists(cached))  return(cached)
       if (file.exists(default)) return(default)
       NULL
     }
@@ -8788,29 +8677,14 @@ server <- function(input, output, session) {
                     input$odm_project_pick), {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
-    # Prefer local-cache copies of heavy products when they exist, so a
-    # previously migrated project keeps reading from the fast local disk
-    # instead of OneDrive after the user edits any path input.
-    cache_dir <- DroneBioR:::local_cache_dir(p)
-    use_cache <- function(filename) {
-      candidate <- file.path(cache_dir, filename)
-      if (file.exists(candidate)) candidate else NULL
-    }
-    ortho_default <- unname(p$odm_orthomosaic)
-    ortho_cached  <- use_cache(basename(ortho_default))
     updateTextInput(session, "orthomosaic",
-                    value = if (!is.null(ortho_cached)) ortho_cached else ortho_default)
-
-    pc_default <- pick_best_point_cloud(p)
-    pc_cached  <- use_cache(basename(pc_default))
+                    value = unname(p$odm_orthomosaic))
     updateTextInput(session, "full_cloud_path",
-                    value = if (!is.null(pc_cached)) pc_cached else pc_default)
+                    value = pick_best_point_cloud(p))
 
     paths <- odm_product_paths(p)
-    ply_default <- unname(paths[["point_cloud_ply"]])
-    ply_cached  <- use_cache(basename(ply_default))
     updateTextInput(session, "ply_path",
-                    value = if (!is.null(ply_cached)) ply_cached else ply_default)
+                    value = unname(paths[["point_cloud_ply"]]))
   })
 
   output$engine_note <- renderText({
@@ -9536,11 +9410,9 @@ server <- function(input, output, session) {
   # ROI metrics, time-series CHM mean, and the report.
   #
   # Strategy:
-  #   1. Pick the DSM / DTM via cached_products() (already cache-aware).
+  #   1. Pick the DSM / DTM via product_paths().
   #   2. Resolve the canonical chm.tif written by build_chm_raster()
-  #      (the helper places it next to the DSM, which - through
-  #      cache_aware_path - is the local cache when the user has run
-  #      migration, otherwise the project folder).
+  #      (the helper places it next to the DSM, in the project folder).
   #   3. If chm.tif exists AND is newer than both DSM and DTM, just
   #      open the file - microseconds.
   #   4. Otherwise call build_chm_raster() once, which writes chm.tif
@@ -9551,7 +9423,7 @@ server <- function(input, output, session) {
   # running ODM correctly invalidates the in-session memo and we go
   # back to step (3) or (4) for the new pair.
   chm_raster <- reactive({
-    products <- cached_products()
+    products <- product_paths()
     # Honour an existing chm.tif unconditionally: either the canonical
     # products$chm path or chm.tif next to the DSM (the path that
     # build_chm_raster writes to). Previously we ALSO required the
@@ -9594,7 +9466,7 @@ server <- function(input, output, session) {
     p <- tryCatch(project(), error = function(e) NULL)
     if (!is.null(p)) {
       written <- tryCatch(
-        build_chm_raster(p, force = FALSE, cache_aware = TRUE),
+        build_chm_raster(p, force = FALSE),
         error = function(e) NULL
       )
       if (!is.null(written) && file.exists(written)) {
@@ -9612,19 +9484,19 @@ server <- function(input, output, session) {
     build_chm_from_dsm_dtm(dsm_path, dtm_path)
   }) |>
     bindCache(
-      cached_products()[["chm"]] %||% "",
-      cached_products()[["dsm"]] %||% "",
-      cached_products()[["dtm"]] %||% ""
+      product_paths()[["chm"]] %||% "",
+      product_paths()[["dsm"]] %||% "",
+      product_paths()[["dtm"]] %||% ""
     )
 
   dsm_raster <- reactive({
-    products <- cached_products()
+    products <- product_paths()
     if (!file.exists(products[["dsm"]])) return(NULL)
     terra::rast(products[["dsm"]])[[1]]
   })
 
   dtm_raster <- reactive({
-    products <- cached_products()
+    products <- product_paths()
     if (!file.exists(products[["dtm"]])) return(NULL)
     terra::rast(products[["dtm"]])[[1]]
   })
@@ -9655,18 +9527,18 @@ server <- function(input, output, session) {
   # user perceived "the 3D plot is processing non-stop." Cached on
   # (dsm path, ortho path, draped-mode flag); recomputes only when
   # one of those actually changes. The dsm_path goes through
-  # cached_products() so reads come from the local cache instead of
+  # product_paths() so reads come from the local cache instead of
   # OneDrive once the user has run the migration.
   draped_dsm_heightmap <- reactive({
     if (!isTRUE(input$show_draped_dsm)) return(NULL)
-    dsm_path <- cached_products()[["dsm"]]
+    dsm_path <- product_paths()[["dsm"]]
     if (is.null(dsm_path) || !nzchar(dsm_path) || !file.exists(dsm_path)) {
       return(NULL)
     }
     build_dsm_heightmap(dsm_path, input$orthomosaic, grid_size = 180)
   }) |>
     bindCache(
-      cached_products()[["dsm"]] %||% "",
+      product_paths()[["dsm"]] %||% "",
       input$orthomosaic %||% "",
       isTRUE(input$show_draped_dsm)
     )
@@ -9685,7 +9557,7 @@ server <- function(input, output, session) {
     bindCache(input$orthomosaic %||% "")
 
   point_cloud_reference_raster <- reactive({
-    products <- cached_products()
+    products <- product_paths()
     if (file.exists(products[["dsm"]])) {
       return(terra::rast(products[["dsm"]])[[1]])
     }
@@ -9702,80 +9574,19 @@ server <- function(input, output, session) {
     points
   }
 
-  # Cache-aware path resolvers for the two scene-source inputs. Both
-  # textInputs let the user type any path; if a file with the same
-  # basename also exists in ~/.dronebior/cache/<slug>/, we transparently
-  # read from there instead. The biggest practical win is on OneDrive
-  # projects where the canonical .laz file lives behind Files-On-Demand
-  # but a local copy already sits in the cache from a previous "Copy
-  # outputs to local cache" pass.
+  # Path resolvers for the two scene-source inputs. Both textInputs let the
+  # user type any path; it is read as-is (no local-copy cache indirection).
   resolved_full_cloud_path <- reactive({
-    raw <- input$full_cloud_path %||% ""
-    if (!nzchar(raw)) return("")
-    DroneBioR:::cache_aware_path(raw, project())
+    input$full_cloud_path %||% ""
   })
   resolved_ply_path <- reactive({
-    raw <- input$ply_path %||% ""
-    if (!nzchar(raw)) return("")
-    DroneBioR:::cache_aware_path(raw, project())
+    input$ply_path %||% ""
   })
 
   georeferenced_3d_layer_requested <- reactive({
     isTRUE(input$show_orthomosaic_basemap) ||
       isTRUE(input$show_draped_dsm)
   })
-
-  # When the resolved PLY path is still on a cloud-sync folder
-  # (OneDrive / iCloud / Dropbox / Google Drive), copy it ONCE into
-  # the project's local cache and use the local copy from then on.
-  # Without this, every Load 3D scene click on a fresh-from-sync
-  # project triggers Files-On-Demand to rehydrate the PLY over the
-  # network - and after periods of inactivity the OS may dehydrate
-  # again. The local cache copy is permanent until the user wipes
-  # it, so the second Load (and every Load after a long idle)
-  # stays sub-second. Returns the (possibly new) local path; falls
-  # back to the original path if the copy fails.
-  materialize_ply_to_cache <- function(ply_path, proj) {
-    if (!is.character(ply_path) || !nzchar(ply_path) ||
-        !file.exists(ply_path)) {
-      return(ply_path)
-    }
-    if (is.null(proj)) return(ply_path)
-    sync_label <- tryCatch(DroneBioR:::is_cloud_sync_path(ply_path),
-                           error = function(e) NA_character_)
-    if (is.na(sync_label)) return(ply_path)  # not on cloud-sync
-    cache_dir <- tryCatch(DroneBioR:::local_cache_dir(proj),
-                          error = function(e) NULL)
-    if (is.null(cache_dir) || !nzchar(cache_dir)) return(ply_path)
-    dest <- file.path(cache_dir, basename(ply_path))
-    src_info <- file.info(ply_path)
-    dest_info <- if (file.exists(dest)) file.info(dest) else NULL
-    if (!is.null(dest_info) &&
-        isTRUE(dest_info$size  == src_info$size) &&
-        isTRUE(dest_info$mtime >= src_info$mtime)) {
-      return(dest)  # already cached, fresh
-    }
-    note_id <- showNotification(
-      paste0("Caching PLY preview locally from ", sync_label,
-             " (", round(src_info$size / 1024^2, 1), " MB). ",
-             "One-time copy so future Load 3D scene clicks are instant."),
-      type     = "message",
-      duration = NULL,
-      closeButton = FALSE
-    )
-    on.exit(removeNotification(note_id), add = TRUE)
-    dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
-    ok <- tryCatch(
-      withProgress(message = "Caching PLY", value = 0.1, {
-        incProgress(0.5, detail = paste0("Copying ", basename(ply_path)))
-        result <- file.copy(ply_path, dest, overwrite = TRUE)
-        incProgress(0.4, detail = "Done")
-        result
-      }),
-      error = function(e) FALSE
-    )
-    if (isTRUE(ok) && file.exists(dest)) dest else ply_path
-  }
 
   point_cloud <- reactive({
     with_error_toast("Load point cloud", {
@@ -9800,18 +9611,9 @@ server <- function(input, output, session) {
       }
 
       if (isTRUE(use_full_sample)) {
-        # The preview_cache_dir argument turns the first LAZ / COPC
-        # read into a self-caching one: lidR decompresses the source
-        # once, we write a small PLY next to the project's local
-        # cache, and every subsequent Load 3D scene reads that PLY
-        # in ~100 ms instead of 10-15 s. Caller-only behaviour - the
-        # underlying R package keeps working without a cache dir.
-        preview_dir <- tryCatch(DroneBioR:::local_cache_dir(project()),
-                                error = function(e) NULL)
         pts <- read_full_point_cloud(
           full_path,
-          max_points        = input$max_points,
-          preview_cache_dir = preview_dir
+          max_points = input$max_points
         )
         chm <- chm_raster()
         if (!is.null(chm)) {
@@ -9824,13 +9626,6 @@ server <- function(input, output, session) {
       } else {
         validate(need(nzchar(ply_path) && file.exists(ply_path),
                       paste("PLY file not found:", ply_path)))
-        # Auto-migrate the PLY from cloud-sync to the local cache on
-        # the first Load. After this returns, ply_path points at the
-        # local copy (or stays on cloud sync if copy failed); all
-        # downstream attributes use the actual path read from.
-        ply_path <- materialize_ply_to_cache(ply_path,
-                                             tryCatch(project(),
-                                                      error = function(e) NULL))
         pts <- read_ply_point_cloud(ply_path, max_points = input$max_points)
         pts <- add_point_heights(pts)
         pts <- add_cloud_runtime_attributes(pts, ply_path, "local_preview", "local low-Z proxy")
@@ -10669,7 +10464,7 @@ server <- function(input, output, session) {
     mesh_url     <- NULL
     mesh_mtl_url <- NULL
     if (isTRUE(input$show_textured_mesh)) {
-      mesh_path <- cached_products()[["textured_obj"]]
+      mesh_path <- product_paths()[["textured_obj"]]
       if (file.exists(mesh_path)) {
         shiny::addResourcePath("dronebior_obj", dirname(mesh_path))
         mesh_url <- paste0("dronebior_obj/", basename(mesh_path))
@@ -11851,7 +11646,7 @@ server <- function(input, output, session) {
     paste(layers, collapse = " + ")
   })
   output$modeling_metric_surface_sub <- renderUI({
-    products <- cached_products()
+    products <- product_paths()
     ortho_ok <- file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]])
     dsm_ok   <- file.exists(products[["dsm"]])
     mesh_ok  <- file.exists(products[["textured_obj"]])
@@ -11871,7 +11666,7 @@ server <- function(input, output, session) {
   # Workspace tab, the pills here flip from Missing to Available without
   # any extra action.
   scene_sources_state <- reactive({
-    products <- cached_products()
+    products <- product_paths()
     list(
       ortho = file.exists(input$orthomosaic) || file.exists(products[["orthomosaic"]]),
       dsm   = file.exists(products[["dsm"]]),
@@ -12950,7 +12745,7 @@ server <- function(input, output, session) {
 
   # -- 2. Covariate catalogue ----------------------------------------
   # Pure metadata: no raster is read here, so the picker is instant.
-  # Product availability is checked through cached_products() - never
+  # Product availability is checked through product_paths() - never
   # odm_product_paths() directly, which hits OneDrive Files-On-Demand.
   # input$field_cov_refresh is a dependency because chm_raster()'s
   # bindCache key is only the three product paths, so a rebuilt
@@ -12967,7 +12762,7 @@ server <- function(input, output, session) {
                             error = function(e) character(0))
     if (!is.null(custom)) index_names <- setdiff(index_names, custom)
 
-    products <- tryCatch(cached_products(), error = function(e) NULL)
+    products <- tryCatch(product_paths(), error = function(e) NULL)
     path_of <- function(key) {
       if (is.null(products)) return("")
       p <- unname(products[[key]] %||% "")

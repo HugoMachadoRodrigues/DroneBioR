@@ -4,20 +4,12 @@
 \alias{build_chm_raster}
 \title{Build a Canopy Height Model (CHM) from the DSM and DTM}
 \usage{
-build_chm_raster(
-  project,
-  force = FALSE,
-  cache_aware = TRUE,
-  outlier_percentile = 99.5
-)
+build_chm_raster(project, force = FALSE, outlier_percentile = 99.5)
 }
 \arguments{
 \item{project}{A \code{dronebio_project} object.}
 
 \item{force}{Logical. Recompute even when \code{chm.tif} already exists.}
-
-\item{cache_aware}{Logical. Prefer the local cache when DSM + DTM
-already live there.}
 
 \item{outlier_percentile}{Numeric in (0, 100], default \code{99.5}.
 After differencing, canopy-height pixels strictly above this
@@ -38,10 +30,7 @@ Absolute path to the written \code{chm.tif}.
 \description{
 Computes \code{CHM = DSM - DTM}, clamps negatives to zero (small noise from
 SMRF ground classification), and writes the result as a COG-style
-GeoTIFF. By default reads/writes from the local cache directory
-(\verb{~/.dronebior/cache/<slug>/}) when DSM + DTM are already cached
-there, so we never touch the cloud-synced project folder. Falls
-back to writing into the project's \verb{odm_dem/} directory otherwise.
+GeoTIFF into the project's \verb{odm_dem/} directory, alongside the DSM.
 }
 \examples{
 \dontrun{

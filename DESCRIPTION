@@ -49,6 +49,7 @@ Suggests:
     processx,
     promises,
     ranger,
+    RCSF,
     rmarkdown,
     shiny,
     testthat (>= 3.0.0),

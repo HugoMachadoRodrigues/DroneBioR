@@ -115,6 +115,17 @@ classify_ground_csf <- function(las_path,
       call. = FALSE
     )
   }
+  # lidR's csf() delegates to RCSF, a separate package. Without it lidR fails
+  # deep in the call with a terse "Package 'RCSF' needed". Say so up front, and
+  # name both packages, since CSF needs the pair.
+  if (!requireNamespace("RCSF", quietly = TRUE)) {
+    stop(
+      "The 'RCSF' package is required for CSF ground classification ",
+      "(it powers lidR's cloth-simulation filter). ",
+      "Install it with install.packages('RCSF').",
+      call. = FALSE
+    )
+  }
   if (!file.exists(las_path)) {
     stop("LAS file not found: ", las_path, call. = FALSE)
   }
@@ -140,8 +151,7 @@ classify_ground_csf <- function(las_path,
 #' around zero. Cloth Simulation Filter (CSF) from lidR handles dense
 #' vegetation more reliably. This helper:
 #'
-#' 1. Reads the LAZ / LAS point cloud (preferring the local cache when
-#'    migration has run).
+#' 1. Reads the LAZ / LAS point cloud from the project.
 #' 2. Runs CSF via [classify_ground_csf()].
 #' 3. Rasterises the ground points to a new DTM at the requested
 #'    resolution.
@@ -195,13 +205,8 @@ improve_dtm_csf <- function(project,
   }
 
   paths <- odm_product_paths(project)
-  cache <- local_cache_dir(project)
-  cache_exists <- dir.exists(cache)
   candidates <- character()
   for (k in c("point_cloud_laz", "point_cloud_las", "point_cloud_copc")) {
-    if (cache_exists) {
-      candidates <- c(candidates, file.path(cache, basename(paths[[k]])))
-    }
     candidates <- c(candidates, unname(paths[[k]]))
   }
   laz_path <- NULL
@@ -232,11 +237,7 @@ improve_dtm_csf <- function(project,
   dtm <- lidR::rasterize_terrain(las, res = resolution,
                                  algorithm = lidR::knnidw(k = 10L, p = 2))
 
-  out_path <- if (cache_exists) {
-    file.path(cache, dtm_filename)
-  } else {
-    file.path(dirname(unname(paths[["dtm"]])), dtm_filename)
-  }
+  out_path <- file.path(dirname(unname(paths[["dtm"]])), dtm_filename)
   dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
   terra::writeRaster(
     dtm, out_path,
@@ -252,12 +253,7 @@ improve_dtm_csf <- function(project,
     # because that helper reads from `paths[["dtm"]]` (the SMRF DTM)
     # and writes to the canonical `chm.tif`, which would silently
     # overwrite the SMRF CHM and ignore our just-improved DTM.
-    dsm_candidates <- character()
-    if (cache_exists) {
-      dsm_candidates <- c(dsm_candidates,
-                          file.path(cache, basename(paths[["dsm"]])))
-    }
-    dsm_candidates <- c(dsm_candidates, unname(paths[["dsm"]]))
+    dsm_candidates <- unname(paths[["dsm"]])
     dsm_path <- NULL
     for (p in dsm_candidates) {
       if (file.exists(p)) { dsm_path <- p; break }

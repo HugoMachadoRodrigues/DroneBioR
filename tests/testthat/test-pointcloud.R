@@ -203,6 +203,35 @@ test_that("backup_path refuses to be the file being written", {
   )
 })
 
+test_that("a cloud-sync destination is written correctly with no leftover .part", {
+  # A path under Library/CloudStorage/<Provider> triggers the local-staging
+  # branch: the streamed chunks go to the OS tempdir, then one copy lands the
+  # result. Regression guard that this path produces the right cloud, keeps the
+  # original, and does not litter the synced folder with a .part staging file.
+  root <- tempfile("cloudroot_")
+  dest_dir <- file.path(root, "Library", "CloudStorage",
+                        "OneDrive-Test", "proj", "odm_filterpoints")
+  dir.create(dest_dir, recursive = TRUE)
+  skip_if(is.na(DroneBioR::is_cloud_sync_path(dest_dir)),
+          "path did not register as cloud-sync on this platform")
+
+  p <- file.path(dest_dir, "point_cloud.ply")
+  ref <- .mk_ply(p, n = 40L)
+  orig <- sub("\\.ply$", ".original.ply", p)
+  keep <- c(3L, 8L, 15L, 40L)
+
+  n <- write_ply_subset(p, p, keep = keep, backup = TRUE, backup_path = orig)
+  expect_equal(n, 4L)
+  expect_equal(parse_ply_header(p)$n_vertices, 4L)
+  expect_true(file.exists(orig))
+  expect_equal(parse_ply_header(orig)$n_vertices, 40L)
+
+  # The kept vertices are the right ones, and no staging file was left behind.
+  sub <- read_ply_point_cloud(p, max_points = 100L)
+  expect_equal(sub$x, ref$x[keep])
+  expect_length(list.files(dest_dir, pattern = "\\.part$"), 0L)
+})
+
 test_that("a uint32 property is read without a readBin warning", {
   # readBin only allows signed = FALSE for 1- and 2-byte integers; passing it
   # for a uint32 warns on every single call.

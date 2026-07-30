@@ -52,9 +52,21 @@ test_that("classify_ground_csf errors when lidR is missing", {
 
 test_that("classify_ground_csf errors on missing LAS file", {
   skip_if_not_installed("lidR")
+  # The "file not found" check is downstream of the lidR + RCSF dependency
+  # gate, so this path is only reachable when both are installed.
+  skip_if_not_installed("RCSF")
   expect_error(
     classify_ground_csf(tempfile(fileext = ".las")),
     "not found"
+  )
+})
+
+test_that("classify_ground_csf names RCSF when it is missing", {
+  skip_if_not_installed("lidR")
+  skip_if(requireNamespace("RCSF", quietly = TRUE))
+  expect_error(
+    classify_ground_csf(tempfile(fileext = ".las")),
+    "RCSF"
   )
 })
 

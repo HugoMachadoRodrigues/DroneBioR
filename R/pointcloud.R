@@ -350,19 +350,22 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
 
   same_file <- normalizePath(path, mustWork = FALSE) ==
                normalizePath(out_path, mustWork = FALSE)
-  if (isTRUE(backup) && same_file) {
-    orig <- backup_path %||% paste0(path, ".orig")
-    # Never let the snapshot be the file we are about to overwrite, and only
-    # take it once: the point is to preserve the reconstruction as it stood
-    # before the FIRST edit, not after the most recent one.
-    same_as_out <- normalizePath(orig, mustWork = FALSE) ==
-                   normalizePath(out_path, mustWork = FALSE)
-    if (same_as_out) {
-      stop("`backup_path` must differ from `out_path`; it cannot be the file ",
-           "being written.", call. = FALSE)
-    }
-    if (!file.exists(orig)) file.copy(path, orig, overwrite = FALSE)
+  orig <- if (isTRUE(backup) && same_file) {
+    backup_path %||% paste0(path, ".orig")
+  } else {
+    NULL
   }
+  if (!is.null(orig) &&
+      normalizePath(orig, mustWork = FALSE) ==
+        normalizePath(out_path, mustWork = FALSE)) {
+    stop("`backup_path` must differ from `out_path`; it cannot be the file ",
+         "being written.", call. = FALSE)
+  }
+  # Only snapshot once: the point is to preserve the reconstruction as it stood
+  # before the FIRST edit, not after the most recent one. The actual backup
+  # happens after the new cloud is streamed and validated (below), so a failed
+  # rewrite never disturbs the original.
+  take_backup <- !is.null(orig) && !file.exists(orig)
 
   # The header is ASCII; only the vertex count changes.
   new_header <- sub(paste0("element vertex ", n),
@@ -372,8 +375,19 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
     stop("Could not rewrite the vertex count in the PLY header.", call. = FALSE)
   }
 
-  tmp <- tempfile(tmpdir = dirname(normalizePath(out_path, mustWork = FALSE)),
-                  fileext = ".ply.part")
+  # Stream to a staging file. When out_path is on a cloud-sync folder
+  # (OneDrive / iCloud / Dropbox / Google Drive), stage on LOCAL disk and copy
+  # in once at the end: writing the chunks straight into the synced folder
+  # routes every read/write through the OS file provider, which on macOS
+  # OneDrive turns a sub-second rewrite into minutes. On a plain disk, stage
+  # beside the destination so the install is an atomic same-filesystem rename.
+  on_cloud <- !is.na(is_cloud_sync_path(out_path))
+  stage_dir <- if (on_cloud) {
+    tempdir()
+  } else {
+    dirname(normalizePath(out_path, mustWork = FALSE))
+  }
+  tmp <- tempfile(tmpdir = stage_dir, fileext = ".ply.part")
   on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
 
   con_out <- file(tmp, open = "wb")
@@ -416,6 +430,18 @@ write_ply_subset <- function(path, out_path, keep, backup = TRUE,
     stop("Wrote ", written, " vertices but selected ", n_keep,
          "; refusing to install a corrupt cloud.", call. = FALSE)
   }
+
+  # Preserve the pristine original before overwriting. `tmp` is complete and
+  # validated and `path` is still untouched, so this is the safe moment. A
+  # rename is a cheap metadata op (on cloud-sync it is not a re-upload) and is
+  # atomic on a plain disk; fall back to a copy if the move is refused.
+  if (isTRUE(take_backup)) {
+    if (!file.rename(path, orig) &&
+        !file.copy(path, orig, overwrite = FALSE)) {
+      stop("Could not preserve the original cloud as ", orig, call. = FALSE)
+    }
+  }
+
   if (!file.rename(tmp, out_path)) {
     ok <- file.copy(tmp, out_path, overwrite = TRUE)
     if (!ok) stop("Could not move the filtered cloud into ", out_path, call. = FALSE)
