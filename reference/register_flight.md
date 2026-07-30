@@ -50,5 +50,5 @@ register_flight(date = Sys.Date(), project_dir = tempdir(),
                 registry_path = reg)
 list_flights(reg)
 #>           flight_id       date     project_dir notes
-#> 1 20260730-699c00f9 2026-07-30 /tmp/RtmpE0QZRI    NA
+#> 1 20260730-51283260 2026-07-30 /tmp/RtmpwKswcS    NA
 ```

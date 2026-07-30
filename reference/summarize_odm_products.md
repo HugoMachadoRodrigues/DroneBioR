@@ -43,22 +43,22 @@ summarize_odm_products(project)
 #> 17    map_tiles_dir     FALSE      NA
 #> 18           report     FALSE      NA
 #>                                                                                                           path
-#> 1                    /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
-#> 2                                      /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
-#> 3                                      /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
-#> 4                                      /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_dem/chm.tif
-#> 5                                  /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_dem/dtm_csf.tif
-#> 6                                  /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_dem/chm_csf.tif
-#> 7       /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
-#> 8       /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
-#> 9  /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
-#> 10                    /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
-#> 11                         /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
-#> 12            /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj
-#> 13        /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
-#> 14            /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb
-#> 15        /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.glb
-#> 16                               /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/3d_tiles/tileset.json
-#> 17                 /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto_tiles
-#> 18                               /tmp/RtmpE0QZRI/outputs/odm_micasense_dataset/micasense/odm_report/report.pdf
+#> 1                    /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
+#> 2                                      /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
+#> 3                                      /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
+#> 4                                      /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_dem/chm.tif
+#> 5                                  /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_dem/dtm_csf.tif
+#> 6                                  /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_dem/chm_csf.tif
+#> 7       /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
+#> 8       /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
+#> 9  /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
+#> 10                    /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
+#> 11                         /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_meshing/odm_25dmesh.ply
+#> 12            /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj
+#> 13        /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.obj
+#> 14            /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb
+#> 15        /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_texturing_25d/odm_textured_model_geo.glb
+#> 16                               /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/3d_tiles/tileset.json
+#> 17                 /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto_tiles
+#> 18                               /tmp/RtmpwKswcS/outputs/odm_micasense_dataset/micasense/odm_report/report.pdf
 ```
