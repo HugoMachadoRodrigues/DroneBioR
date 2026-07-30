@@ -1,5 +1,26 @@
 # DroneBioR (development version)
 
+## Field Models and 3D editing
+
+* **The Train button is no longer a silent dead button.** The caret method
+  picker was created empty (`choices = NULL`) and only filled after a
+  catalogue round-trip; the Train button was hard-disabled (client-side
+  `disabled`) while the picker was empty, so a click before the round-trip
+  landed did nothing at all — no model, no toast. The picker now ships a static
+  `lm / pls / ranger` default (the full 137-model catalogue still swaps in and
+  preserves the selection), and the Train enable-gate no longer duplicates the
+  method-count check, so if the picker is ever empty the click still reaches the
+  handler and its "Pick at least one caret method" toast fires. (Training itself
+  was never broken — verified R² ≈ 0.9 on the synthetic table.)
+
+* **The 3D viewer refreshes after a cloud edit.** Despike / delete / restore
+  rewrite `odm_filterpoints/point_cloud.ply` in place, but the viewer only
+  rebuilt on a "Load 3D scene" click, so it kept showing the pre-edit cloud and
+  a selection whose point-ids indexed it — the next edit then hit "The selection
+  references vertex N but the cloud has M." Each edit now re-triggers the scene
+  load (when the scene is mounted) so the cleaned cloud shows immediately and
+  the selection resets against it.
+
 ## Point cloud despiking
 
 * **A one-click despiker removes the reconstruction spikes from the 3D cloud.**

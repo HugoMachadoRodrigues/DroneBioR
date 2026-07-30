@@ -4337,8 +4337,17 @@ ui <- page_navbar(
                           "Only models I can run now", value = TRUE),
             selectInput("field_model_family", "Family",
                         choices = "Any", selected = "Any"),
+            # A static default so input$field_model_method is populated from the
+            # first render: the full 137-model catalogue swaps in later (via the
+            # observe that watches caret_catalogue_val), preserving this
+            # selection. Without a default the picker is empty until that
+            # server->client->server round-trip lands, and because the Train
+            # button is disabled while the picker is empty, the click is a
+            # silent no-op -- the "caret won't run" bug.
             selectizeInput("field_model_method", "caret method(s)",
-                           choices = NULL, multiple = TRUE,
+                           choices  = c("lm", "pls", "ranger"),
+                           selected = c("lm", "pls", "ranger"),
+                           multiple = TRUE,
                            options = list(
                              maxItems = 12,
                              plugins = list("remove_button"),
@@ -9424,6 +9433,21 @@ server <- function(input, output, session) {
     input$load_3d_scene + input$load_3d_scene_main
   })
 
+  # After an in-place edit of the cloud file (despike / delete / restore) the
+  # viewer still shows the pre-edit cloud and a selection whose point_ids index
+  # it, so the next edit hits the "selection references vertex N but the cloud
+  # has M" guard. The scene only rebuilds on a "Load 3D scene" click
+  # (point_cloud is bindEvent(point_cloud_event)), so re-trigger that click
+  # server-side to re-read the edited file and reset the client selection --
+  # but only if the scene was already loaded, so an edit made without viewing
+  # does not force a (possibly slow) load.
+  refresh_3d_scene <- function() {
+    if (isTRUE(point_cloud_event() > 0)) {
+      session$sendCustomMessage("dronebior_click_button",
+                                list(id = "load_3d_scene"))
+    }
+  }
+
   point_classes <- reactiveVal(data.frame(point_id = integer(), class = character()))
   manual_crowns <- reactiveVal(data.frame())
   selection_export_paths <- reactiveVal(character())
@@ -10002,6 +10026,7 @@ server <- function(input, output, session) {
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
       updateTextInput(session, "ply_path", value = p)
+      refresh_3d_scene()
       showNotification(
         sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Point Cloud” to build the products from the cleaned cloud.",
                 format(length(ids), big.mark = ","), format(n, big.mark = ",")),
@@ -10030,6 +10055,7 @@ server <- function(input, output, session) {
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
       updateTextInput(session, "ply_path", value = p)
+      refresh_3d_scene()
       if (res$n_removed == 0L) {
         showNotification(
           "No spikes exceeded the threshold; nothing removed. Lower the height to be more aggressive.",
@@ -10069,6 +10095,7 @@ server <- function(input, output, session) {
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
       updateTextInput(session, "ply_path", value = p)
+      refresh_3d_scene()
       showNotification(
         sprintf("Restored the original cloud (%s vertices).",
                 format(parse_ply_header(p)$n_vertices, big.mark = ",")),
@@ -13812,9 +13839,13 @@ server <- function(input, output, session) {
   })
 
   observe({
+    # Do NOT also gate on a non-empty method picker here: that duplicated the
+    # in-observer guard and, while the picker was still empty, left the button
+    # disabled so the click never reached observeEvent(input$field_train) and
+    # its "Pick at least one caret method" toast never fired -- a dead button.
+    # Let the click through; the observer's observer_need() surfaces the reason.
     has_caret <- requireNamespace("caret", quietly = TRUE)
-    ready <- has_caret && !is.null(extracted_field()) &&
-      length(input$field_model_method %||% character(0)) > 0
+    ready <- has_caret && !is.null(extracted_field())
     session$sendCustomMessage("dronebior_set_disabled",
                               list(id = "field_train", disabled = !ready))
   })
