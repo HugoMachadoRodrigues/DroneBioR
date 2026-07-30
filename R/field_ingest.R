@@ -34,6 +34,21 @@
 # Supported biomass units and their multiplier onto kg/ha. "unknown" passes
 # the numbers through untouched, which is what a user with pre-converted
 # data wants.
+# TRUE when both coordinate columns fall inside geographic bounds
+# (longitude in [-180, 180], latitude in [-90, 90]); FALSE when they look
+# projected; NA when the columns are missing or non-numeric. Used to pick a
+# sane default CRS for a plain CSV, which carries none.
+.coords_look_geographic <- function(tab, x_col, y_col) {
+  if (is.null(x_col) || is.null(y_col) ||
+      !all(c(x_col, y_col) %in% names(tab))) {
+    return(NA)
+  }
+  x <- suppressWarnings(as.numeric(tab[[x_col]]))
+  y <- suppressWarnings(as.numeric(tab[[y_col]]))
+  if (!any(is.finite(x)) || !any(is.finite(y))) return(NA)
+  max(abs(x), na.rm = TRUE) <= 180 && max(abs(y), na.rm = TRUE) <= 90
+}
+
 .biomass_unit_factors <- c(
   "kg/ha"   = 1,
   "Mg/ha"   = 1000,
@@ -175,6 +190,7 @@ field_source_columns <- function(path, layer = NULL) {
   ext <- .file_ext(path)
   if (ext %in% .table_extensions) {
     tab <- utils::read.csv(path, stringsAsFactors = FALSE)
+    guess <- .guess_field_columns(names(tab))
     return(list(
       kind         = "table",
       columns      = names(tab),
@@ -185,7 +201,13 @@ field_source_columns <- function(path, layer = NULL) {
       epsg         = NA_integer_,
       has_geometry = FALSE,
       geom_type    = NA_character_,
-      guess        = .guess_field_columns(names(tab))
+      guess        = guess,
+      # Do the guessed coordinate columns look like longitude / latitude
+      # degrees, or projected metres? A plain CSV carries no CRS, and defaulting
+      # projected eastings/northings (~5e5 / ~5e6) to EPSG:4326 places every
+      # point off the planet -> silently empty extractions. NA when the guess is
+      # missing / non-numeric so the caller can fall back sensibly.
+      xy_geographic = .coords_look_geographic(tab, guess$x, guess$y)
     ))
   }
 

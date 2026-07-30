@@ -232,3 +232,16 @@ test_that("cloud edits refresh the 3D viewer", {
   src <- paste(readLines(app, warn = FALSE), collapse = "\n")
   expect_gte(length(gregexpr("refresh_3d_scene()", src, fixed = TRUE)[[1L]]), 3L)
 })
+
+test_that("the field-points CRS default is not a hardcoded 4326 for CSVs", {
+  # A plain CSV carries no CRS. Defaulting projected eastings/northings to 4326
+  # silently placed points off the planet, so every covariate came back NA and
+  # the caret model fit nothing. The default must key off the coordinate
+  # magnitudes (xy_geographic) instead.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_false(grepl("value\\s*=\\s*if\\s*\\(tabular\\)\\s*4326", src))
+  expect_true(grepl("xy_geographic", src, fixed = TRUE))
+})
