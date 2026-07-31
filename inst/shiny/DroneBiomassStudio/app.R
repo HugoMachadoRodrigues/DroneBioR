@@ -3337,113 +3337,26 @@ ui <- page_navbar(
       # Step 4 -----------------------------------------------------------------
       process_step(
         4, "Build the maps & all covariates",
-        paste0("Turn the cloud into the ground model (DTM), surface model ",
-               "(DSM), orthomosaic and canopy height model (CHM). Runs in the ",
-               "background — the app stays usable while it works."),
-        actionButton("run_stage0_rebuild", "Build DSM, DTM, orthomosaic & CHM",
-                     class = "btn-primary btn-lg w-100"),
-        div(class = "mt-3",
+        paste0("One click turns your cleaned cloud into every finished ",
+               "product: the ground model (DTM), surface model (DSM), ",
+               "orthomosaic and canopy height model (CHM, CSF-refined), then ",
+               "every covariate (all bands, vegetation indices and biomass ",
+               "proxies) exported as full-resolution GeoTIFFs to a ",
+               "covariates/ folder — ready for modelling. Runs in the ",
+               "background; the app stays usable while it works."),
+        div(class = "mb-2",
             tags$strong(class = "small", "Products on disk"),
             tableOutput("processing_products")),
-        hr(),
-        div(class = "small text-muted mb-2",
-            "Then compute ", tags$strong("every covariate"), " — all bands, ",
-            "vegetation indices, biomass proxies and CHM/DSM/DTM — and export ",
-            "them as full-resolution GeoTIFFs to a ", tags$code("covariates/"),
-            " folder in the project, ready for biomass modelling. This is the ",
-            "one place to get every possible covariate."),
-        actionButton("field_export_covariates",
-                     "Compute & export all covariates",
-                     class = "btn-outline-primary btn-lg w-100"),
+        actionButton("run_stage0_rebuild",
+                     "Build maps & export all covariates",
+                     class = "btn-primary btn-lg w-100"),
         div(class = "small text-muted mt-1",
             textOutput("field_export_covariates_status", inline = TRUE)),
         div(class = "small text-muted mt-2",
-            "Reads the orthomosaic from disk with default radiometric scaling. ",
-            "For panel-calibrated reflectance, load and calibrate the mosaic in ",
-            "Spectral Analytics first, then run this — the calibrated version is ",
-            "used when one is loaded.")
-      ),
-
-      # Advanced ---------------------------------------------------------------
-      accordion(
-        open = FALSE,
-        class = "mt-2",
-        accordion_panel(
-          "Advanced — reconstruction tuning & one-shot full run",
-          div(class = "small text-muted mb-3",
-              "Most users can ignore this. It holds the fine-tuning knobs for ",
-              "the steps above and a power-user option to run the entire ",
-              "reconstruction in a single pass."),
-          tags$strong(class = "small",
-                      "Point-cloud reconstruction tuning (affects step 2)"),
-          sliderInput("pc_filter_stage0", "Outlier filter (std. dev.)",
-                      min = 0, max = 6, value = 2.5, step = 0.5),
-          checkboxInput("pc_rectify_stage0",
-                        "Rectify ground points (better DTM)", value = FALSE),
-          div(class = "small text-muted mb-1", "What step 2 will run:"),
-          verbatimTextOutput("stage0_command"),
-          hr(),
-          tags$strong(class = "small",
-                      "One-shot full run — replaces steps 2–4"),
-          div(class = "small text-muted mb-2",
-              "Rebuilds the point cloud AND the maps from scratch under the ",
-              "same project, in one long run. Use this instead of steps ",
-              "2–4, not in addition to them."),
-          selectInput(
-            "processing_engine", "Engine",
-            choices = c("ODM Docker (local)" = "odm_docker",
-                        "WebODM REST (remote)" = "webodm"),
-            selected = "odm_docker"),
-          conditionalPanel(
-            "input.processing_engine == 'webodm'",
-            textInput("webodm_url", "WebODM URL", value = "http://localhost:8000",
-                      placeholder = "e.g. http://localhost:8000 or https://webodm.example.org"),
-            textInput("webodm_user", "WebODM username"),
-            passwordInput("webodm_pass", "WebODM password"),
-            numericInput("webodm_poll_seconds", "Status poll interval (s)",
-                         value = 60, min = 15, max = 600, step = 15),
-            div(class = "sidebar-note small text-muted",
-                "WebODM runs the same opendronemap/odm engine remotely. Set up an instance at https://github.com/WebODM/WebODM or use the cloud service at https://webodm.net/.")),
-          selectInput(
-            "processing_preset", "Processing preset",
-            choices = c("Scientific canopy model (recommended)",
-                        "Orthomosaic only", "Full 3D deliverables", "Custom"),
-            selected = "Scientific canopy model (recommended)"),
-          numericInput("resolution", "Orthophoto resolution (cm)",
-                       value = 5, min = 1, max = 30, step = 0.5),
-          checkboxInput("build_dsm", "Generate DSM", value = TRUE),
-          checkboxInput("build_dtm", "Generate DTM", value = TRUE),
-          numericInput("pc_sample",
-                       "Thin to one point per N metres (0 = keep all)",
-                       value = 0, min = 0, step = 0.01),
-          checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
-          checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
-          checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
-          checkboxInput("tiles", "Export 2D web map tiles", value = FALSE),
-          checkboxInput("three_d_tiles", "Export 3D tiles", value = FALSE),
-          checkboxInput("gltf", "Export glTF model", value = FALSE),
-          div(class = "sidebar-note small text-muted",
-              "Reconstruction always runs dense: the DSM, DTM and orthomosaic ",
-              "are all derived from the point cloud. RGB camera mode skips the ",
-              "radiometric-calibration flag (it applies only to MicaSense-style ",
-              "reflectance sensors)."),
-          div(class = "d-flex gap-2 my-2",
-              actionButton("refresh_command", "Build command",
-                           class = "btn-outline-secondary"),
-              actionButton("run_odm", "Run full ODM pipeline",
-                           class = "btn-outline-danger")),
-          card(card_header("What this preset creates"),
-               tableOutput("preset_outputs")),
-          card(card_header("ODM command"), verbatimTextOutput("odm_command")),
-          card(card_header("Processing workflow"),
-               uiOutput("processing_workflow")),
-          card(card_header("Processing guidance"), textOutput("engine_note")),
-          card(card_header("ODM run progress"),
-               textInput("odm_log_path", "Log file (live)",
-                         value = "/tmp/dronebior_logs/odm.log",
-                         placeholder = "Auto-filled when you click Run"),
-               uiOutput("odm_progress_ui"))
-        )
+            "Covariates are read from the orthomosaic on disk with default ",
+            "radiometric scaling. For panel-calibrated reflectance, load and ",
+            "calibrate the mosaic in Spectral Analytics first, then click this ",
+            "— the calibrated version is used when one is loaded.")
       )
     )
   ),
@@ -4120,11 +4033,9 @@ ui <- page_navbar(
                                                inline = TRUE)))),
           uiOutput("layer_manager_panel")
         ),
-        # Project actions card: only carries the Refine DTM + CHM via
-        # CSF action now. Renders an empty-state line when it is not
-        # available.
-        card(card_header("Project actions"),
-             uiOutput("project_status_quick")),
+        # The "Project actions" card (Build CHM / CSF refinement) was removed:
+        # the CHM is now built automatically at Process step 4 (CSF-refined),
+        # so there is no standalone action left for it here.
         card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
         card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
         card(card_header("Available processing products"), tableOutput("product_table"))
@@ -5421,11 +5332,11 @@ server <- function(input, output, session) {
   })
 
   overlay_choices <- c(
-    # Headline composite + the canonical terrain products. CHM is deliberately
-    # NOT offered here: it is just another covariate (canopy height), so it
-    # lives with the covariates (Field Models + the covariate export), not as a
-    # GIS map layer the user has to think about.
-    "RGB Orthomosaic", "DSM", "DTM",
+    # Headline composite + the canonical terrain products, including the CHM.
+    # The CHM is now always built at Process step 4 (CSF-refined), so it is
+    # worth offering as a viewable layer here; it is gated on quick_outputs_check
+    # below so it only appears once chm.tif is on disk.
+    "RGB Orthomosaic", "DSM", "DTM", "CHM",
     # Multispectral vegetation indices (need NIR; some also need RedEdge)
     "NDVI", "NDRE", "EVI", "SAVI", "OSAVI", "MSAVI2", "NDWI",
     "GNDVI", "CIrededge", "GCI", "RVI", "DVI", "WDRVI", "TVI",
@@ -9470,8 +9381,21 @@ server <- function(input, output, session) {
     paste(paths, collapse = "\n")
   })
 
+  # Server-side reload trigger for the 3D scene. An in-place cloud edit
+  # (despike / delete / restore) bumps cloud_reload_tick so point_cloud
+  # re-reads in the SAME flush, without depending on the async input$ply_path
+  # round-trip or a client Load click (that race left the pre-edit cloud
+  # mounted, so a new selection indexed vertices the edited cloud no longer
+  # has -- the "selection references vertex N but the cloud has M" error).
+  cloud_reload_tick <- reactiveVal(0L)
+  # After an in-place edit, force point_cloud to read the freshly-written
+  # canonical file directly rather than the (possibly stale / just-unlinked)
+  # cache path that input$ply_path may still resolve to.
+  edited_cloud_path <- reactiveVal(NULL)
+
   point_cloud_event <- reactive({
-    input$load_3d_scene + input$load_3d_scene_main
+    (input$load_3d_scene %||% 0L) + (input$load_3d_scene_main %||% 0L) +
+      cloud_reload_tick()
   })
 
   # After an in-place edit of the cloud file (despike / delete / restore) the
@@ -9483,9 +9407,11 @@ server <- function(input, output, session) {
   # but only if the scene was already loaded, so an edit made without viewing
   # does not force a (possibly slow) load.
   refresh_3d_scene <- function() {
+    # Only reload if the scene was already loaded, so an edit made without
+    # viewing does not force a (possibly slow) load. Bump the server-side tick
+    # rather than round-tripping a client Load click.
     if (isTRUE(point_cloud_event() > 0)) {
-      session$sendCustomMessage("dronebior_click_button",
-                                list(id = "load_3d_scene"))
+      cloud_reload_tick(isolate(cloud_reload_tick()) + 1L)
     }
   }
 
@@ -9580,7 +9506,23 @@ server <- function(input, output, session) {
     bindCache(
       product_paths()[["chm"]] %||% "",
       product_paths()[["dsm"]] %||% "",
-      product_paths()[["dtm"]] %||% ""
+      product_paths()[["dtm"]] %||% "",
+      # Bust the cache whenever products are (re)built. Keying on the PATHS
+      # alone meant that once this cached NULL (extraction run before the CHM
+      # existed), building the CHM later at the SAME path did not change the
+      # key, so it kept serving the stale "no CHM" -- and field extraction
+      # skipped every canopy-height covariate even with chm.tif on disk.
+      # outputs_refresh_token() is bumped by the Process step-4 rebuild (and
+      # every other product write), so this invalidates exactly then.
+      outputs_refresh_token(),
+      # Belt-and-suspenders for CHMs written outside the app: fingerprint the
+      # chm.tif by (size, mtime) so an on-disk change busts the cache too.
+      {
+        cp <- product_paths()[["chm"]] %||% ""
+        if (nzchar(cp) && file.exists(cp)) {
+          fi <- file.info(cp); paste0(fi$size, "@", as.numeric(fi$mtime))
+        } else "none"
+      }
     )
 
   dsm_raster <- reactive({
@@ -9674,8 +9616,17 @@ server <- function(input, output, session) {
     input$full_cloud_path %||% ""
   })
   resolved_ply_path <- reactive({
-    input$ply_path %||% ""
+    # Prefer the just-edited canonical file (set by despike / delete / restore)
+    # over the visible input, which lags behind by an async round-trip.
+    edited_cloud_path() %||% (input$ply_path %||% "")
   })
+
+  # The user picking a different cloud clears the post-edit override so the
+  # visible path takes over again. (Edit sites set edited_cloud_path and the
+  # matching input$ply_path together, so this does not fight them.)
+  observeEvent(input$ply_path, {
+    if (!identical(edited_cloud_path(), input$ply_path)) edited_cloud_path(NULL)
+  }, ignoreInit = TRUE)
 
   georeferenced_3d_layer_requested <- reactive({
     isTRUE(input$show_orthomosaic_basemap) ||
@@ -9863,7 +9814,7 @@ server <- function(input, output, session) {
   observeEvent(input$back_to_point_cloud, {
     updateNavbarPage(session, "main_nav", selected = "Process")
     showNotification(
-      "Back on Process. Run step 4 - Build the maps - to derive the DSM, DTM and orthomosaic from the cleaned cloud.",
+      "Back on Process. Run step 4 - Build maps & export all covariates - to derive the DSM, DTM, orthomosaic and CHM from the cleaned cloud and export every covariate.",
       type = "message", duration = 10)
   })
 
@@ -9941,17 +9892,24 @@ server <- function(input, output, session) {
       stage0_tick(isolate(stage0_tick()) + 1L)
       outputs_refresh_token(isolate(outputs_refresh_token()) + 1L)
       # Only claim the CHM if it actually landed: the worker builds it with a
-      # tryCatch, so a failed derive must not be reported as ready.
+      # tryCatch (CSF, falling back to the plain CHM), so a failed derive must
+      # not be reported as ready.
       chm_ready <- tryCatch({
         cp <- unname(odm_product_paths(p)[["chm"]])
         length(cp) == 1L && !is.na(cp) && file.exists(cp)
       }, error = function(e) FALSE)
       msg <- if (isTRUE(chm_ready))
-        "Maps rebuilt from the current point cloud: DSM, DTM, orthomosaic and CHM are ready. Now press “Compute & export all covariates” below to write every covariate to the covariates/ folder."
+        "Maps ready (DSM, DTM, orthomosaic and CHM). Now computing and exporting every covariate to the covariates/ folder…"
       else
-        "Maps rebuilt from the current point cloud: DSM, DTM and orthomosaic are ready (the CHM will be derived on demand). Now press “Compute & export all covariates” below to write every covariate to the covariates/ folder."
-      showNotification(msg, type = "message", duration = 14,
+        "Maps ready (DSM, DTM and orthomosaic; the CHM will be derived on demand). Now computing and exporting every covariate to the covariates/ folder…"
+      showNotification(msg, type = "message", duration = 10,
                        id = "stage0_rebuild_result")
+      # Second half of the one-click step 4: compute + export all covariates
+      # now that the fresh ortho + CHM are on disk. Runs only on rebuild
+      # success (the err branch returned above), so covariates never run
+      # against stale/absent products. start_covariate_export re-guards on its
+      # own running flag, so this cannot double-fire.
+      start_covariate_export()
     }
 
     p_snapshot <- p
@@ -9964,7 +9922,7 @@ server <- function(input, output, session) {
                      name   = "ODM rebuild (odm_meshing -> DEMs / orthophoto)",
                      detail = basename(p_snapshot$odm_project_dir))
       showNotification(
-        "Building DSM, DTM and orthomosaic in a background worker (resumes at odm_meshing). The UI stays responsive; this goes away when it finishes - it can take several minutes.",
+        "Building the maps in a background worker: DSM, DTM, orthomosaic and a CSF-refined CHM (resumes at odm_meshing), then every covariate. The UI stays responsive; this goes away when it finishes - it can take several minutes.",
         type = "message", duration = NULL, closeButton = FALSE,
         id = "stage0_rebuild_progress")
       fut <- promises::future_promise({
@@ -9979,12 +9937,31 @@ server <- function(input, output, session) {
                             attach = FALSE, helpers = FALSE)
         }
         res <- DroneBioR::rebuild_from_edited_cloud(
-          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam)
-        # Derive the CHM from the freshly-built DSM/DTM right here, so the
-        # canopy-height covariate is ready the moment the maps are (the user
-        # wants every covariate). force = TRUE because the DEMs just changed.
-        tryCatch(DroneBioR::build_chm_raster(p_snapshot, force = TRUE),
-                 error = function(e) NULL)
+          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
+          pc_las = TRUE)
+        # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
+        # ground under dense canopy far better than ODM's SMRF default, but the
+        # CSF CHM helper skips the P99.5 spike clip and would coarsen the DTM,
+        # so instead: (1) back up the fine ODM DTM once, (2) CSF-refine the DTM
+        # at the DSM's NATIVE resolution (not the 0.5 m default) into the
+        # canonical dtm.tif, then (3) rebuild the canonical CHM with
+        # build_chm_raster, which applies the same spike clean the plain path
+        # uses. Any failure (no lidR, no LAZ, ...) falls back to the plain
+        # DSM - DTM CHM so the maps are never left without one.
+        tryCatch({
+          paths_ <- DroneBioR::odm_product_paths(p_snapshot)
+          dtm_f <- unname(paths_[["dtm"]]); dsm_f <- unname(paths_[["dsm"]])
+          raw_f <- file.path(dirname(dtm_f), "dtm_raw.tif")
+          if (file.exists(dtm_f) && !file.exists(raw_f))
+            file.copy(dtm_f, raw_f)
+          native_res <- min(terra::res(terra::rast(dsm_f)))
+          DroneBioR::improve_dtm_csf(p_snapshot, rebuild_chm = FALSE,
+                                     dtm_filename = "dtm.tif",
+                                     resolution = native_res)
+          DroneBioR::build_chm_raster(p_snapshot, force = TRUE)
+        }, error = function(e)
+          tryCatch(DroneBioR::build_chm_raster(p_snapshot, force = TRUE),
+                   error = function(e2) NULL))
         res
       }, seed = TRUE,
          globals = list(p_snapshot = p_snapshot, cam = cam,
@@ -9995,15 +9972,29 @@ server <- function(input, output, session) {
       invisible(NULL)
     } else {
       showNotification(
-        "Building DSM, DTM and orthomosaic (resumes at odm_meshing). This can take several minutes and the UI will be busy.",
+        "Building the maps (DSM, DTM, orthomosaic, CSF-refined CHM) then every covariate. This can take several minutes and the UI will be busy.",
         type = "message", duration = NULL, closeButton = FALSE,
         id = "stage0_rebuild_progress")
       res <- tryCatch(
         rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                  camera_type = cam),
+                                  camera_type = cam, pc_las = TRUE),
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
-        tryCatch(build_chm_raster(p_snapshot, force = TRUE), error = function(e) NULL)
+        # See the async branch above for the rationale: CSF-refine the DTM at
+        # native resolution (with a backup), then build the CHM with the
+        # spike-cleaning build_chm_raster; fall back to the plain CHM on error.
+        tryCatch({
+          paths_ <- odm_product_paths(p_snapshot)
+          dtm_f <- unname(paths_[["dtm"]]); dsm_f <- unname(paths_[["dsm"]])
+          raw_f <- file.path(dirname(dtm_f), "dtm_raw.tif")
+          if (file.exists(dtm_f) && !file.exists(raw_f)) file.copy(dtm_f, raw_f)
+          native_res <- min(terra::res(terra::rast(dsm_f)))
+          improve_dtm_csf(p_snapshot, rebuild_chm = FALSE,
+                          dtm_filename = "dtm.tif", resolution = native_res)
+          build_chm_raster(p_snapshot, force = TRUE)
+        }, error = function(e)
+          tryCatch(build_chm_raster(p_snapshot, force = TRUE),
+                   error = function(e2) NULL))
         finish_rebuild(res = res)
       }
     }
@@ -10144,15 +10135,17 @@ server <- function(input, output, session) {
                                           format(length(keep), big.mark = ",")),
                          write_ply_subset(p, p, keep = keep, backup = TRUE,
                                           backup_path = orig))
-      # The cached preview copy is now a different cloud; drop it so the next
-      # load re-caches instead of showing the points that were just deleted.
+      # The cached preview copy is now a different cloud; drop it so the reload
+      # re-caches from the edited canonical file instead of showing the points
+      # that were just deleted.
       if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
-      updateTextInput(session, "ply_path", value = p)
+      edited_cloud_path(p)                              # reload reads the edited file
+      updateTextInput(session, "ply_path", value = p)  # cosmetic sync of the field
       refresh_3d_scene()
       showNotification(
-        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Process” to build the maps from the cleaned cloud.",
+        sprintf("Deleted %s points; %s remain. The view updates automatically; keep cleaning, or click “Back to Process” to build the maps from the cleaned cloud.",
                 format(length(ids), big.mark = ","), format(n, big.mark = ",")),
         type = "message", duration = 12)
     })
@@ -10174,11 +10167,13 @@ server <- function(input, output, session) {
         detail = sprintf("removing points > %.1f m above the surface", cap),
         despike_ply(p, backup = TRUE, backup_path = orig,
                     methods = c("sor", "surface"), height_cap = cap))
-      # The cached preview is now a different cloud; drop it so Load re-caches.
+      # The cached preview is now a different cloud; drop it so the reload
+      # re-caches from the edited canonical file.
       if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
-      updateTextInput(session, "ply_path", value = p)
+      edited_cloud_path(p)                              # reload reads the edited file
+      updateTextInput(session, "ply_path", value = p)  # cosmetic sync of the field
       refresh_3d_scene()
       if (res$n_removed == 0L) {
         showNotification(
@@ -10186,7 +10181,7 @@ server <- function(input, output, session) {
           type = "message", duration = 10)
       } else {
         showNotification(
-          sprintf("Despiked: removed %s spike points (%.1f%%); %s remain. Press Load to refresh the view, then “Back to Process” to build the maps.",
+          sprintf("Despiked: removed %s spike points (%.1f%%); %s remain. The view updates automatically; keep cleaning, or click “Back to Process” to build the maps.",
                   format(res$n_removed, big.mark = ","),
                   100 * res$n_removed / res$n_before,
                   format(res$n_after, big.mark = ",")),
@@ -10218,10 +10213,11 @@ server <- function(input, output, session) {
       if (isTRUE(tgt$is_cache) && file.exists(tgt$shown)) unlink(tgt$shown)
       selected_ids_value(integer())
       cloud_edit_tick(isolate(cloud_edit_tick()) + 1L)
-      updateTextInput(session, "ply_path", value = p)
+      edited_cloud_path(p)                              # reload reads the restored file
+      updateTextInput(session, "ply_path", value = p)  # cosmetic sync of the field
       refresh_3d_scene()
       showNotification(
-        sprintf("Restored the original cloud (%s vertices).",
+        sprintf("Restored the original cloud (%s vertices). The view updates automatically.",
                 format(parse_ply_header(p)$n_vertices, big.mark = ",")),
         type = "message", duration = 8)
     })
@@ -13156,21 +13152,26 @@ server <- function(input, output, session) {
   field_extract_elapsed <- reactiveVal(NA_real_)
   covariate_export_running <- reactiveVal(FALSE)
   covariate_export_status  <- reactiveVal(
-    "Builds every covariate to a covariates/ folder once a mosaic is loaded.")
+    "Every covariate is written to a covariates/ folder when you build the maps.")
 
   output$field_export_covariates_status <- renderText(covariate_export_status())
 
   # Compute and write EVERY covariate to <project>/covariates/, in a background
   # worker (docker/CSF pattern) so the full-resolution stack does not freeze the
   # UI. The worker re-reads the DEMs from disk and receives the in-memory
-  # reflectance / custom index packed with terra::wrap().
-  observeEvent(input$field_export_covariates, {
-    if (isTRUE(covariate_export_running())) {
+  # reflectance / custom index packed with terra::wrap(). Called as the second
+  # half of the Process step-4 button (after the maps + CHM are rebuilt); a
+  # plain server-scope function so finish_rebuild can chain to it directly.
+  start_covariate_export <- function() {
+    # Reactive reads are isolate()d: this runs from finish_rebuild inside a
+    # promise callback (the async rebuild's onFulfilled), which has no active
+    # reactive context, so a bare project()/reflectance()/... read would error.
+    if (isTRUE(isolate(covariate_export_running()))) {
       showNotification("A covariate export is already running.", type = "warning",
                        duration = 5)
-      return()
+      return(invisible())
     }
-    p <- tryCatch(project(), error = function(e) NULL)
+    p <- tryCatch(isolate(project()), error = function(e) NULL)
     if (is.null(p)) {
       showNotification("No project is configured.", type = "warning", duration = 6)
       return()
@@ -13184,7 +13185,7 @@ server <- function(input, output, session) {
     # Reflectance source: use the loaded mosaic when the user has one open
     # (Spectral Analytics); otherwise read the orthomosaic straight off disk so
     # this works right after Process step 4 without loading anything first.
-    refl <- tryCatch(reflectance(), error = function(e) NULL)
+    refl <- tryCatch(isolate(reflectance()), error = function(e) NULL)
     ortho_p <- dem_path("orthomosaic")
     if (is.null(refl) && is.na(ortho_p)) {
       showNotification(
@@ -13204,7 +13205,7 @@ server <- function(input, output, session) {
     refl_w <- if (!is.null(refl)) terra::wrap(refl) else NULL
     ortho_path <- if (is.null(refl)) ortho_p else NA_character_
     custom_w <- tryCatch({
-      ci <- custom_index_raster(); if (is.null(ci)) NULL else terra::wrap(ci)
+      ci <- isolate(custom_index_raster()); if (is.null(ci)) NULL else terra::wrap(ci)
     }, error = function(e) NULL)
     dronebior_pkg_path <- tryCatch(find.package("DroneBioR"),
                                    error = function(e) NA_character_)
@@ -13280,7 +13281,7 @@ server <- function(input, output, session) {
                       error = function(e) { finish_export(err = e); NULL })
       if (!is.null(res)) finish_export(res = res)
     }
-  })
+  }
 
   field_aux_rasters <- function(selected) {
     needs_chm <- ("CHM_m" %in% selected) || any(grepl("_x_CHM$", selected))
