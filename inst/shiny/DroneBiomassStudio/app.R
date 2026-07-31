@@ -9641,6 +9641,20 @@ server <- function(input, output, session) {
       isTRUE(input$show_draped_dsm)
   })
 
+  # Fingerprint the cloud files by (size, mtime). The point_cloud bindCache
+  # below keys on the file PATHS, which do not change when an in-place edit
+  # (despike / delete / restore) rewrites the same file -- so without this the
+  # cache would keep serving the pre-edit cloud and the deleted points would
+  # never leave the viewer. Including this makes an edit invalidate the cache.
+  cloud_source_fingerprint <- reactive({
+    paths <- unique(c(resolved_ply_path(), resolved_full_cloud_path()))
+    paths <- paths[nzchar(paths) & file.exists(paths)]
+    if (!length(paths)) return("")
+    fi <- file.info(paths)
+    paste(basename(paths), fi$size,
+          format(fi$mtime, "%Y-%m-%d %H:%M:%OS3"), collapse = "|")
+  })
+
   point_cloud <- reactive({
     with_error_toast("Load point cloud", {
       full_path <- resolved_full_cloud_path()
@@ -9697,7 +9711,8 @@ server <- function(input, output, session) {
       resolved_full_cloud_path(),
       resolved_ply_path(),
       input$max_points,
-      georeferenced_3d_layer_requested()
+      georeferenced_3d_layer_requested(),
+      cloud_source_fingerprint()   # (size, mtime) so an edit busts the cache
     ) |>
     bindEvent(point_cloud_event())
 
