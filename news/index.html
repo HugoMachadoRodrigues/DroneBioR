@@ -42,6 +42,11 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="dronebior-development-version">DroneBioR (development version)<a class="anchor" aria-label="anchor" href="#dronebior-development-version"></a></h2>
 <div class="section level3">
+<h3 id="id_3d-point-cloud-development-version">3D point cloud<a class="anchor" aria-label="anchor" href="#id_3d-point-cloud-development-version"></a></h3>
+<ul><li>
+<strong>Deleting / despiking points now actually leaves the viewer.</strong> The 3D <code>point_cloud</code> reactive is <code>bindCache()</code>d on the cloud file <em>paths</em>, which do not change when an in-place edit (delete / despike / restore) rewrites the same file. So even after a successful edit — and even after clicking Load 3D again — the cache kept serving the pre-edit cloud, and the deleted points never disappeared (and a stale selection then tripped “the selection references vertex N but the cloud has M”). The cache key now includes a <code>(size, mtime)</code> fingerprint of the cloud file, so an edit invalidates it and the reload shows the cleaned cloud.</li>
+</ul></div>
+<div class="section level3">
 <h3 id="field-models-development-version">Field Models<a class="anchor" aria-label="anchor" href="#field-models-development-version"></a></h3>
 <ul><li>
 <strong>The Extract button is no longer a silent dead button.</strong> It was hard-disabled until a readable <code>field_points()</code>, a ticked covariate AND a loaded mosaic all existed at once. Because reading the points needs the mosaic’s CRS to reproject them, a project with products on disk but no mosaic loaded left Extract disabled with no hint why. Extract now enables as soon as a points file is staged, and the click’s guards name the missing prerequisite in order (upload a file → load a mosaic → tick a covariate → fix the column/CRS mapping) with a toast, instead of a dead button. The mosaic is now checked before <code>field_points()</code> so a missing mosaic no longer aborts silently.</li>

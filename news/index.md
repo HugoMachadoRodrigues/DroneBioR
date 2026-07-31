@@ -2,6 +2,19 @@
 
 ## DroneBioR (development version)
 
+### 3D point cloud
+
+- **Deleting / despiking points now actually leaves the viewer.** The 3D
+  `point_cloud` reactive is `bindCache()`d on the cloud file *paths*,
+  which do not change when an in-place edit (delete / despike / restore)
+  rewrites the same file. So even after a successful edit — and even
+  after clicking Load 3D again — the cache kept serving the pre-edit
+  cloud, and the deleted points never disappeared (and a stale selection
+  then tripped “the selection references vertex N but the cloud has M”).
+  The cache key now includes a `(size, mtime)` fingerprint of the cloud
+  file, so an edit invalidates it and the reload shows the cleaned
+  cloud.
+
 ### Field Models
 
 - **The Extract button is no longer a silent dead button.** It was
