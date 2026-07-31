@@ -271,3 +271,18 @@ test_that("the 3D point-cloud cache is keyed on file content, not just the path"
   expect_true(grepl(
     '(?s)bindCache\\(.{0,400}?cloud_source_fingerprint\\(\\)', src, perl = TRUE))
 })
+
+test_that("the Stage-0 product rebuild runs in the background, not a UI-freezing block", {
+  # "Build DSM, DTM and orthomosaic" reruns ODM (docker) for minutes. Running it
+  # synchronously froze the whole app with no feedback, so the click looked
+  # dead. It must dispatch to a background worker (future_promise) guarded by a
+  # running-flag, like the CSF handler.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_true(grepl("stage0_rebuild_running", src, fixed = TRUE))
+  expect_true(grepl(
+    '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,3000}?future_promise',
+    src, perl = TRUE))
+})
