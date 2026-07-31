@@ -247,9 +247,15 @@ quick_outputs_check <- function(project, min_size_mb = 1) {
   dsm   <- size_ok(paths[["dsm"]])
   dtm   <- size_ok(paths[["dtm"]])
   chm   <- size_ok(paths[["chm"]])
+  # Include the odm_filterpoints/point_cloud.ply that the staged flow
+  # (build_point_cloud_only / Process step 2) produces. The LAS/LAZ/COPC
+  # exports only exist after a full ODM run, so without the .ply the
+  # "Point cloud" status pill never turned green for the staged path even
+  # with a cloud sitting on disk.
   pc    <- any(c(size_ok(paths[["point_cloud_copc"]]),
                  size_ok(paths[["point_cloud_laz"]]),
-                 size_ok(paths[["point_cloud_las"]])))
+                 size_ok(paths[["point_cloud_las"]]),
+                 size_ok(paths[["point_cloud_ply"]])))
   c(orthomosaic = ortho, dsm = dsm, dtm = dtm, chm = chm,
     point_cloud = pc, outputs_complete = (ortho && dsm))
 }

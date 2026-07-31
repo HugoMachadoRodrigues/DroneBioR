@@ -292,6 +292,28 @@ test_that("quick_outputs_check reads only the project, never a stray cache", {
   expect_true(quick_outputs_check(p)[["orthomosaic"]])
 })
 
+test_that("quick_outputs_check counts the staged .ply cloud, not only LAS/LAZ", {
+  # The staged flow (build_point_cloud_only / Process step 2) writes
+  # odm_filterpoints/point_cloud.ply; the LAS/LAZ/COPC exports only appear
+  # after a full ODM run. The "Point cloud" status pill must go green off
+  # the .ply alone, otherwise it never lights up for the staged path.
+  tmp <- tempfile("dronebio_qc_ply_"); dir.create(tmp, recursive = TRUE)
+  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+  p <- dronebio_project(project_dir = tmp,
+                        odm_dataset_subdir = "ds", odm_project_name = "proj")
+  paths <- odm_product_paths(p)
+  blob <- as.raw(rep(0L, 1024 * 1024 + 16))  # > 1 MB
+
+  # No cloud of any kind yet.
+  expect_false(quick_outputs_check(p)[["point_cloud"]])
+
+  # Only the .ply exists (no LAS/LAZ/COPC) -> still counts as present.
+  ply <- unname(paths[["point_cloud_ply"]])
+  dir.create(dirname(ply), recursive = TRUE, showWarnings = FALSE)
+  writeBin(blob, ply)
+  expect_true(quick_outputs_check(p)[["point_cloud"]])
+})
+
 test_that("configure_proj_database returns a logical without raising", {
   # Returns TRUE invisibly when proj.db is reachable, FALSE with a warning
   # otherwise. Both outcomes are valid for this smoke test.

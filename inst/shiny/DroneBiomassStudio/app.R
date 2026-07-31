@@ -606,7 +606,7 @@ product_metadata <- list(
     range   = "0 to canopy height (typically 0-40 m)",
     bands   = "None - derived from DSM, DTM",
     reference = "Standard photogrammetric canopy-height workflow (Lim et al. 2003).",
-    use     = "Vegetation height above the bare-earth surface. Click 'Build CHM' in the Project status card if this layer is missing."
+    use     = "Vegetation height above the bare-earth surface. Built automatically when you build the maps (Process step 4)."
   ),
   NDVI = list(
     label = "NDVI",
@@ -1405,17 +1405,17 @@ project_control_center <- function() {
 # the dronebior_stepper_done custom message (see server observer).
 #
 # Step order mirrors the navbar:
-#   1. Process     2. GIS        3. Spectral
-#   4. 3D Modeling 5. Field      6. Export    7. Time Series
+#   1. Process     2. 3D Modeling 3. GIS        4. Spectral
+#   5. Field       6. Export      7. Time Series
 #
 # Clicking a chip sets dronebio_stepper_goto -> the server observer
 # calls updateNavbarPage("main_nav", ...).
 workflow_stepper <- function() {
   steps <- list(
     list(n = 1L, label = "Process",     tab = "Process"),
-    list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
-    list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
-    list(n = 4L, label = "3D Modeling", tab = "3D Modeling"),
+    list(n = 2L, label = "3D Modeling", tab = "3D Modeling"),
+    list(n = 3L, label = "GIS",         tab = "GIS Workspace"),
+    list(n = 4L, label = "Spectral",    tab = "Spectral Analytics"),
     list(n = 5L, label = "Field model", tab = "Field Models"),
     list(n = 6L, label = "Export",      tab = "Exports"),
     list(n = 7L, label = "Time Series", tab = "Time Series")
@@ -3336,22 +3336,32 @@ ui <- page_navbar(
 
       # Step 4 -----------------------------------------------------------------
       process_step(
-        4, "Build the maps",
+        4, "Build the maps & all covariates",
         paste0("Turn the cloud into the ground model (DTM), surface model ",
-               "(DSM) and orthomosaic. Runs in the background — the app ",
-               "stays usable while it works."),
-        actionButton("run_stage0_rebuild", "Build DSM, DTM & orthomosaic",
+               "(DSM), orthomosaic and canopy height model (CHM). Runs in the ",
+               "background — the app stays usable while it works."),
+        actionButton("run_stage0_rebuild", "Build DSM, DTM, orthomosaic & CHM",
                      class = "btn-primary btn-lg w-100"),
-        div(class = "alert alert-light border mt-3 mb-0 small",
-            tags$strong("Next: "),
-            "once the maps are built, open ",
-            tags$strong("Field Models → 2 - Covariates"),
-            " and press ", tags$em("Compute & export all covariates"),
-            " to write every covariate to a ", tags$code("covariates/"),
-            " folder for biomass modelling."),
         div(class = "mt-3",
             tags$strong(class = "small", "Products on disk"),
-            tableOutput("processing_products"))
+            tableOutput("processing_products")),
+        hr(),
+        div(class = "small text-muted mb-2",
+            "Then compute ", tags$strong("every covariate"), " — all bands, ",
+            "vegetation indices, biomass proxies and CHM/DSM/DTM — and export ",
+            "them as full-resolution GeoTIFFs to a ", tags$code("covariates/"),
+            " folder in the project, ready for biomass modelling. This is the ",
+            "one place to get every possible covariate."),
+        actionButton("field_export_covariates",
+                     "Compute & export all covariates",
+                     class = "btn-outline-primary btn-lg w-100"),
+        div(class = "small text-muted mt-1",
+            textOutput("field_export_covariates_status", inline = TRUE)),
+        div(class = "small text-muted mt-2",
+            "Reads the orthomosaic from disk with default radiometric scaling. ",
+            "For panel-calibrated reflectance, load and calibrate the mosaic in ",
+            "Spectral Analytics first, then run this — the calibrated version is ",
+            "used when one is loaded.")
       ),
 
       # Advanced ---------------------------------------------------------------
@@ -3434,202 +3444,6 @@ ui <- page_navbar(
                          placeholder = "Auto-filled when you click Run"),
                uiOutput("odm_progress_ui"))
         )
-      )
-    )
-  ),
-  nav_panel(
-    "GIS Workspace",
-    layout_sidebar(
-      sidebar = sidebar(
-        width = 380,
-        # Sidebar is now organised as accordions: the two essentials
-        # the user touches every session ("Project paths" + "Map
-        # layers") stay open by default; advanced options (Display,
-        # Annotations, ROI comparison) collapse into accordion panels.
-        # Replaces the previous wall-of-controls layout.
-        accordion(
-          open = c("Project paths", "Map layers"),
-          accordion_panel(
-            "Project paths",
-            textInput("project_dir", "Project directory",
-                      value = default_project$project_dir),
-            textInput("images_dir", "Raw test image folder",
-                      value = default_project$images_dir),
-            textInput("orthomosaic", "Multispectral orthomosaic",
-                      value = default_project$odm_orthomosaic),
-            textInput("output_dir", "Analysis output folder",
-                      value = default_project$output_dir),
-            actionButton("open_file_browser", "Browse project files",
-                         class = "btn-outline-secondary w-100")
-          ),
-          accordion_panel(
-            "Map layers",
-            uiOutput("map_layer_controls"),
-            div(class = "d-flex gap-2 mt-2",
-                actionButton("load_gis", "Load",
-                             class = "btn-primary flex-grow-1"),
-                actionButton("clear_gis", "Clear",
-                             class = "btn-outline-secondary"))
-          ),
-          accordion_panel(
-            "Display options",
-            sliderInput("map_opacity", "Global overlay opacity",
-                        min = 0, max = 1, value = 0.72, step = 0.05),
-            selectInput(
-              "gis_color_stretch",
-              "Color stretch",
-              choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
-              selected = "Percentile 2-98"
-            ),
-            checkboxInput("show_raw_flight",
-                          "Show raw image flight plan", value = TRUE),
-            checkboxInput("use_alpha",
-                          "Use alpha band as valid-data mask",
-                          value = TRUE),
-            checkboxInput("scale_reflectance",
-                          "Scale bands to reflectance", value = TRUE)
-          ),
-          accordion_panel(
-            "Annotations",
-            textInput("annotation_text", NULL,
-                      placeholder = "Annotation text..."),
-            checkboxInput("annotation_mode",
-                          "Annotation mode (click map to pin)",
-                          value = FALSE),
-            div(class = "d-flex gap-2",
-                actionButton("save_annotations", "Save GeoJSON",
-                             class = "btn-outline-secondary flex-grow-1"),
-                actionButton("clear_annotations", "Clear",
-                             class = "btn-outline-secondary")),
-            verbatimTextOutput("annotations_save_path"),
-            fileInput("load_annotations", "Load GeoJSON",
-                      accept = c(".geojson", ".json"))
-          ),
-          accordion_panel(
-            "ROI comparison",
-            textInput("roi_name", NULL,
-                      placeholder = "ROI name (e.g. plot_3)",
-                      value = "roi_1"),
-            div(class = "d-flex gap-2",
-                actionButton("start_drawing_roi", "Draw new ROI",
-                             class = "btn-primary flex-grow-1"),
-                actionButton("save_roi", "Save",
-                             class = "btn-outline-secondary")),
-            selectInput("selected_roi_name", "Saved ROIs",
-                        choices = character(0)),
-            div(class = "d-flex gap-2",
-                actionButton("redraw_selected_roi", "Redraw",
-                             class = "btn-outline-secondary flex-grow-1"),
-                actionButton("delete_selected_roi", "Delete",
-                             class = "btn-outline-danger")),
-            div(class = "d-flex gap-2 mt-1",
-                actionButton("compute_roi_comparison", "Compute",
-                             class = "btn-outline-secondary flex-grow-1"),
-                actionButton("clear_rois", "Clear all",
-                             class = "btn-outline-danger")),
-            verbatimTextOutput("rois_save_path")
-          )
-        ),
-        # Hidden input: the map toolbar buttons (above the leaflet
-        # canvas) drive the selected measurement tool through this
-        # selectInput so the existing observers (gis_map_click,
-        # render measurement, render volume ROI) keep working unchanged.
-        div(style = "display:none;",
-            selectInput("gis_measure_tool", NULL,
-                        choices = c("Navigate", "Measure distance",
-                                    "Measure area",
-                                    "Measure volume (CHM)"),
-                        selected = "Navigate"))
-      ),
-      div(
-        class = "main-scroll",
-        panel_intro_card(
-          "GIS Workspace",
-          "Pick the layers you want, click 'Load', then use the map toolbar to measure distances, draw ROIs or pin annotations. The ROIs you save here can be pulled into the 3D Modeling tab and the Spectral Analytics tab from the cross-tab actions below the map.",
-          vignette = "dronebior-overview"
-        ),
-        div(
-          class = "metric-strip",
-          div(class = "metric", div(class = "label", "Image folder"), div(class = "value", uiOutput("metric_images", inline = TRUE))),
-          div(class = "metric", div(class = "label", "Orthomosaic"), div(class = "value", uiOutput("metric_ortho", inline = TRUE))),
-          div(class = "metric", div(class = "label", "Point cloud"), div(class = "value", uiOutput("metric_cloud", inline = TRUE))),
-          div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
-        ),
-        # Map toolbar: horizontal CAD-style button strip above the map
-        # canvas. The active tool gets the .active class via a small
-        # CSS rule + an R observer. Replaces the previous "Map
-        # measurement tool" dropdown buried in the sidebar.
-        div(
-          class = "gis-map-toolbar",
-          div(class = "toolbar-group",
-              tags$span(class = "toolbar-group-label", "Tool"),
-              actionButton("tool_navigate", "Navigate",
-                           class = "gis-tool-btn"),
-              actionButton("tool_distance", "Distance",
-                           class = "gis-tool-btn"),
-              actionButton("tool_area",     "Area / ROI",
-                           class = "gis-tool-btn"),
-              actionButton("tool_volume",   "Volume (CHM)",
-                           class = "gis-tool-btn"),
-              actionButton("tool_annotate", "Annotation",
-                           class = "gis-tool-btn")),
-          tags$span(class = "toolbar-divider"),
-          div(class = "toolbar-group",
-              tags$span(class = "toolbar-group-label", "Action"),
-              actionButton("tool_save_roi",  "Save ROI",
-                           class = "gis-tool-btn primary"),
-              actionButton("tool_clear",     "Clear",
-                           class = "gis-tool-btn"),
-              actionButton("recenter_gis_map", "Center map",
-                           class = "gis-tool-btn")),
-          span(class = "viewer-status",
-               textOutput("gis_toolbar_status", inline = TRUE))
-        ),
-        # Map sits IMMEDIATELY below the toolbar so the toolbar
-        # actions stay visible next to the canvas they operate on.
-        # The Layer Manager and Project actions cards used to live
-        # between the toolbar and the map; as the user ticked more
-        # overlays, the Layer Manager card grew (one row per layer)
-        # and pushed the map far below the toolbar - the user had to
-        # scroll down every time they wanted to draw a polygon. The
-        # post-map cards stay where they were.
-        div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
-        # Cross-tab handoff: once the user has drawn an ROI, picked
-        # layers, or just opened a project, these buttons jump
-        # straight to the next stage with the right context. Each
-        # one calls updateNavbarPage(main_nav, ...) via an observer.
-        div(
-          class = "gis-cta-row",
-          actionButton("gis_cta_3d", "Open in 3D Modeling -->",
-                       class = "btn-outline-primary"),
-          actionButton("gis_cta_spectral", "Run Spectral QA -->",
-                       class = "btn-outline-primary"),
-          actionButton("gis_cta_field", "Open Field Models -->",
-                       class = "btn-outline-secondary"),
-          actionButton("gis_cta_ts", "Add to Time Series -->",
-                       class = "btn-outline-secondary")
-        ),
-        # Layer Manager: live list of what is currently rendered on
-        # the map. Mirrors the sidebar overlay checkboxes but in a
-        # more legible format (one card with type / CRS / opacity
-        # per layer). Below the map so it doesn't push the canvas
-        # away from the toolbar as more overlays are loaded.
-        card(
-          card_header(div(class = "map-card-header",
-                          tags$span("Layer Manager"),
-                          tags$span(class = "viewer-status",
-                                    textOutput("layer_manager_summary",
-                                               inline = TRUE)))),
-          uiOutput("layer_manager_panel")
-        ),
-        # Project actions card: only carries actions (Build CHM,
-        # Refine DTM + CHM via CSF). Renders an empty-state line
-        # when neither action is available.
-        card(card_header("Project actions"),
-             uiOutput("project_status_quick")),
-        card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
-        card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
-        card(card_header("Available processing products"), tableOutput("product_table"))
       )
     )
   ),
@@ -4122,6 +3936,202 @@ ui <- page_navbar(
     )
   ),
   nav_panel(
+    "GIS Workspace",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 380,
+        # Sidebar is now organised as accordions: the two essentials
+        # the user touches every session ("Project paths" + "Map
+        # layers") stay open by default; advanced options (Display,
+        # Annotations, ROI comparison) collapse into accordion panels.
+        # Replaces the previous wall-of-controls layout.
+        accordion(
+          open = c("Project paths", "Map layers"),
+          accordion_panel(
+            "Project paths",
+            textInput("project_dir", "Project directory",
+                      value = default_project$project_dir),
+            textInput("images_dir", "Raw test image folder",
+                      value = default_project$images_dir),
+            textInput("orthomosaic", "Multispectral orthomosaic",
+                      value = default_project$odm_orthomosaic),
+            textInput("output_dir", "Analysis output folder",
+                      value = default_project$output_dir),
+            actionButton("open_file_browser", "Browse project files",
+                         class = "btn-outline-secondary w-100")
+          ),
+          accordion_panel(
+            "Map layers",
+            uiOutput("map_layer_controls"),
+            div(class = "d-flex gap-2 mt-2",
+                actionButton("load_gis", "Load",
+                             class = "btn-primary flex-grow-1"),
+                actionButton("clear_gis", "Clear",
+                             class = "btn-outline-secondary"))
+          ),
+          accordion_panel(
+            "Display options",
+            sliderInput("map_opacity", "Global overlay opacity",
+                        min = 0, max = 1, value = 0.72, step = 0.05),
+            selectInput(
+              "gis_color_stretch",
+              "Color stretch",
+              choices  = c("Fixed semantic", "Data range", "Percentile 2-98"),
+              selected = "Percentile 2-98"
+            ),
+            checkboxInput("show_raw_flight",
+                          "Show raw image flight plan", value = TRUE),
+            checkboxInput("use_alpha",
+                          "Use alpha band as valid-data mask",
+                          value = TRUE),
+            checkboxInput("scale_reflectance",
+                          "Scale bands to reflectance", value = TRUE)
+          ),
+          accordion_panel(
+            "Annotations",
+            textInput("annotation_text", NULL,
+                      placeholder = "Annotation text..."),
+            checkboxInput("annotation_mode",
+                          "Annotation mode (click map to pin)",
+                          value = FALSE),
+            div(class = "d-flex gap-2",
+                actionButton("save_annotations", "Save GeoJSON",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("clear_annotations", "Clear",
+                             class = "btn-outline-secondary")),
+            verbatimTextOutput("annotations_save_path"),
+            fileInput("load_annotations", "Load GeoJSON",
+                      accept = c(".geojson", ".json"))
+          ),
+          accordion_panel(
+            "ROI comparison",
+            textInput("roi_name", NULL,
+                      placeholder = "ROI name (e.g. plot_3)",
+                      value = "roi_1"),
+            div(class = "d-flex gap-2",
+                actionButton("start_drawing_roi", "Draw new ROI",
+                             class = "btn-primary flex-grow-1"),
+                actionButton("save_roi", "Save",
+                             class = "btn-outline-secondary")),
+            selectInput("selected_roi_name", "Saved ROIs",
+                        choices = character(0)),
+            div(class = "d-flex gap-2",
+                actionButton("redraw_selected_roi", "Redraw",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("delete_selected_roi", "Delete",
+                             class = "btn-outline-danger")),
+            div(class = "d-flex gap-2 mt-1",
+                actionButton("compute_roi_comparison", "Compute",
+                             class = "btn-outline-secondary flex-grow-1"),
+                actionButton("clear_rois", "Clear all",
+                             class = "btn-outline-danger")),
+            verbatimTextOutput("rois_save_path")
+          )
+        ),
+        # Hidden input: the map toolbar buttons (above the leaflet
+        # canvas) drive the selected measurement tool through this
+        # selectInput so the existing observers (gis_map_click,
+        # render measurement, render volume ROI) keep working unchanged.
+        div(style = "display:none;",
+            selectInput("gis_measure_tool", NULL,
+                        choices = c("Navigate", "Measure distance",
+                                    "Measure area",
+                                    "Measure volume (CHM)"),
+                        selected = "Navigate"))
+      ),
+      div(
+        class = "main-scroll",
+        panel_intro_card(
+          "GIS Workspace",
+          "Pick the layers you want, click 'Load', then use the map toolbar to measure distances, draw ROIs or pin annotations. The ROIs you save here can be pulled into the 3D Modeling tab and the Spectral Analytics tab from the cross-tab actions below the map.",
+          vignette = "dronebior-overview"
+        ),
+        div(
+          class = "metric-strip",
+          div(class = "metric", div(class = "label", "Image folder"), div(class = "value", uiOutput("metric_images", inline = TRUE))),
+          div(class = "metric", div(class = "label", "Orthomosaic"), div(class = "value", uiOutput("metric_ortho", inline = TRUE))),
+          div(class = "metric", div(class = "label", "Point cloud"), div(class = "value", uiOutput("metric_cloud", inline = TRUE))),
+          div(class = "metric", div(class = "label", "DSM / DTM"), div(class = "value", uiOutput("metric_dem", inline = TRUE)))
+        ),
+        # Map toolbar: horizontal CAD-style button strip above the map
+        # canvas. The active tool gets the .active class via a small
+        # CSS rule + an R observer. Replaces the previous "Map
+        # measurement tool" dropdown buried in the sidebar.
+        div(
+          class = "gis-map-toolbar",
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Tool"),
+              actionButton("tool_navigate", "Navigate",
+                           class = "gis-tool-btn"),
+              actionButton("tool_distance", "Distance",
+                           class = "gis-tool-btn"),
+              actionButton("tool_area",     "Area / ROI",
+                           class = "gis-tool-btn"),
+              actionButton("tool_volume",   "Volume (CHM)",
+                           class = "gis-tool-btn"),
+              actionButton("tool_annotate", "Annotation",
+                           class = "gis-tool-btn")),
+          tags$span(class = "toolbar-divider"),
+          div(class = "toolbar-group",
+              tags$span(class = "toolbar-group-label", "Action"),
+              actionButton("tool_save_roi",  "Save ROI",
+                           class = "gis-tool-btn primary"),
+              actionButton("tool_clear",     "Clear",
+                           class = "gis-tool-btn"),
+              actionButton("recenter_gis_map", "Center map",
+                           class = "gis-tool-btn")),
+          span(class = "viewer-status",
+               textOutput("gis_toolbar_status", inline = TRUE))
+        ),
+        # Map sits IMMEDIATELY below the toolbar so the toolbar
+        # actions stay visible next to the canvas they operate on.
+        # The Layer Manager and Project actions cards used to live
+        # between the toolbar and the map; as the user ticked more
+        # overlays, the Layer Manager card grew (one row per layer)
+        # and pushed the map far below the toolbar - the user had to
+        # scroll down every time they wanted to draw a polygon. The
+        # post-map cards stay where they were.
+        div(class = "map-frame", leafletOutput("gis_map", height = "58vh")),
+        # Cross-tab handoff: once the user has drawn an ROI, picked
+        # layers, or just opened a project, these buttons jump
+        # straight to the next stage with the right context. Each
+        # one calls updateNavbarPage(main_nav, ...) via an observer.
+        div(
+          class = "gis-cta-row",
+          actionButton("gis_cta_3d", "Open in 3D Modeling -->",
+                       class = "btn-outline-primary"),
+          actionButton("gis_cta_spectral", "Run Spectral QA -->",
+                       class = "btn-outline-primary"),
+          actionButton("gis_cta_field", "Open Field Models -->",
+                       class = "btn-outline-secondary"),
+          actionButton("gis_cta_ts", "Add to Time Series -->",
+                       class = "btn-outline-secondary")
+        ),
+        # Layer Manager: live list of what is currently rendered on
+        # the map. Mirrors the sidebar overlay checkboxes but in a
+        # more legible format (one card with type / CRS / opacity
+        # per layer). Below the map so it doesn't push the canvas
+        # away from the toolbar as more overlays are loaded.
+        card(
+          card_header(div(class = "map-card-header",
+                          tags$span("Layer Manager"),
+                          tags$span(class = "viewer-status",
+                                    textOutput("layer_manager_summary",
+                                               inline = TRUE)))),
+          uiOutput("layer_manager_panel")
+        ),
+        # Project actions card: only carries the Refine DTM + CHM via
+        # CSF action now. Renders an empty-state line when it is not
+        # available.
+        card(card_header("Project actions"),
+             uiOutput("project_status_quick")),
+        card(card_header("Map measurement"), tableOutput("gis_measure_summary")),
+        card(card_header("ROI comparison"), tableOutput("roi_comparison_table")),
+        card(card_header("Available processing products"), tableOutput("product_table"))
+      )
+    )
+  ),
+  nav_panel(
     "Spectral Analytics",
     div(
       class = "spectral-page",
@@ -4352,15 +4362,11 @@ ui <- page_navbar(
             actionButton("field_cov_refresh", "Refresh available layers",
                          class = "btn-outline-secondary w-100"),
             hr(class = "my-2"),
-            div(class = "small text-muted mb-1",
-                "Write EVERY covariate (all bands, indices, biomass proxies and ",
-                "CHM/DSM/DTM) as GeoTIFFs to a ", tags$code("covariates/"),
-                " folder in the project, at full resolution, to reuse later."),
-            actionButton("field_export_covariates",
-                         "Compute & export all covariates",
-                         class = "btn-outline-primary w-100"),
-            div(class = "small text-muted mt-1",
-                textOutput("field_export_covariates_status", inline = TRUE))
+            div(class = "small text-muted",
+                "Tick the covariates to sample onto your field points here. To ",
+                "compute and export EVERY covariate as GeoTIFFs, use ",
+                tags$strong("Process → step 4 (Build the maps & all covariates)"),
+                " — it writes them to a ", tags$code("covariates/"), " folder.")
           ),
           accordion_panel(
             "3 - Extraction window",
@@ -5133,14 +5139,16 @@ server <- function(input, output, session) {
   # The recommended next step: first step that is reachable but not done.
   workflow_next_step <- reactive({
     c_ <- workflow_completion()
+    # Order matches the navbar / stepper: Process -> 3D Modeling -> GIS ->
+    # Spectral -> Field -> Export -> Time Series.
     if (!isTRUE(c_$process)) return(list(label = "Process your flight",
                                           tab = "Process"))
+    if (!isTRUE(c_$modeling)) return(list(label = "Inspect the 3D point cloud",
+                                          tab = "3D Modeling"))
     if (!isTRUE(c_$gis))      return(list(label = "Open in GIS Workspace",
                                           tab = "GIS Workspace"))
     if (!isTRUE(c_$spectral)) return(list(label = "Compute spectral indices",
                                           tab = "Spectral Analytics"))
-    if (!isTRUE(c_$modeling)) return(list(label = "Inspect 3D point cloud",
-                                          tab = "3D Modeling"))
     if (!isTRUE(c_$field))    return(list(label = "Fit field biomass model",
                                           tab = "Field Models"))
     if (!isTRUE(c_$export))   return(list(label = "Export deliverables",
@@ -6236,9 +6244,8 @@ server <- function(input, output, session) {
   # Project-actions panel. Used to mix project metadata + product
   # status, but the Project Control Center at the top of the page now
   # covers both, so this output only emits the actionable items
-  # (Build CHM, CSF refinement, Cancel CSF). Renders nothing visible
-  # when no actions apply, so the wrapping card collapses to a thin
-  # line.
+  # (CSF refinement, Cancel CSF). Renders nothing visible when no
+  # actions apply, so the wrapping card collapses to a thin line.
   output$project_status_quick <- renderUI({
     outputs_refresh_token()  # invalidates this render when CSF finishes
     p <- tryCatch(project(), error = function(e) NULL)
@@ -6248,20 +6255,26 @@ server <- function(input, output, session) {
     }
     qc <- tryCatch(quick_outputs_check(p), error = function(e) NULL)
 
-    chm_existing <- isTRUE(qc[["chm"]])
-    chm_buildable <- isTRUE(qc[["dsm"]]) && isTRUE(qc[["dtm"]]) && !chm_existing
-
+    # The CHM is no longer built from a standalone button here: it is derived
+    # automatically when the maps are built (Process step 4), and lazily by
+    # chm_raster() wherever a CHM is needed. This card now only carries the CSF
+    # refinement, which is a genuinely separate, optional improvement step.
     rows <- list()
-    if (chm_buildable) {
-      rows[[length(rows) + 1L]] <- tags$div(
-        style = "margin-top:6px;",
-        actionButton("build_chm", "Build CHM (DSM - DTM)",
-                     class = "btn-outline-primary btn-sm"))
-    }
-    # Always offer the CSF refinement when we have a point cloud +
-    # DSM. ODM's default ground classification is conservative on
-    # dense canopy; CSF often dramatically improves the CHM.
-    if (isTRUE(qc[["point_cloud"]]) && isTRUE(qc[["dsm"]])) {
+    # Always offer the CSF refinement when we have a point cloud + DSM.
+    # ODM's default ground classification is conservative on dense
+    # canopy; CSF often dramatically improves the CHM.
+    #
+    # Gate on a cloud improve_dtm_csf() can actually READ: it only scans
+    # LAZ/LAS/COPC, so the odm_filterpoints/point_cloud.ply from the
+    # staged flow (which now lights the status pill) is not enough on its
+    # own -- offering the button off the .ply alone would let the user
+    # click it only to hit "No point cloud (LAZ / LAS / COPC) was found".
+    csf_paths <- tryCatch(odm_product_paths(p), error = function(e) NULL)
+    csf_cloud_ok <- !is.null(csf_paths) &&
+      any(file.exists(unname(c(csf_paths[["point_cloud_laz"]],
+                               csf_paths[["point_cloud_las"]],
+                               csf_paths[["point_cloud_copc"]]))))
+    if (isTRUE(csf_cloud_ok) && isTRUE(qc[["dsm"]])) {
       csf_busy   <- isTRUE(csf_running())
       btn_label  <- if (csf_busy) "CSF refinement running..."
                     else "Refine DTM + CHM via CSF (lidR)"
@@ -6302,33 +6315,11 @@ server <- function(input, output, session) {
       # explicit empty state instead of a phantom whitespace
       # block, so the wrapping card collapses visually.
       return(tags$div(class = "text-muted small",
-                      "No project actions available right now. Run ODM, ",
-                      "or load DSM + DTM to unlock Build CHM / CSF refinement."))
+                      "No project actions available right now. Build the maps ",
+                      "(Process step 4) or load a point cloud + DSM to unlock ",
+                      "CSF refinement."))
     }
     tags$div(style = "margin-bottom:8px;", rows)
-  })
-
-  # Observer for the Build CHM button -- runs build_chm_raster() with
-  # cache awareness and a visible progress indicator, then notifies
-  # so the user sees it land in the canonical 5-item list above.
-  observeEvent(input$build_chm, {
-    p <- tryCatch(project(), error = function(e) NULL)
-    if (is.null(p)) return()
-    withProgress(message = "Building CHM", value = 0.1,
-                 detail = "DSM - DTM, clamping negatives", {
-      out <- tryCatch(build_chm_raster(p, force = FALSE),
-                      error = function(e) {
-                        showNotification(paste("Build CHM failed:",
-                                                conditionMessage(e)),
-                                         type = "error", duration = 10)
-                        NULL
-                      })
-      incProgress(0.8, detail = "Done")
-      if (!is.null(out)) {
-        showNotification(paste0("CHM written to ", out),
-                         type = "message", duration = 8)
-      }
-    })
   })
 
   # Observer for the 'Refine DTM + CHM via CSF (lidR)' button.
@@ -9533,9 +9524,9 @@ server <- function(input, output, session) {
     # CHM mtime to be >= DSM mtime AND >= DTM mtime, which is too
     # strict on OneDrive: a routine resync touches the DSM/DTM mtime
     # and we rebuilt the entire ~700 MB chm.tif from a 437 Mcell
-    # subtract every single time. The "Build CHM" button in the
-    # sidebar exists for the user to refresh it deliberately when
-    # they really do want a recompute.
+    # subtract every single time. Building the maps (Process step 4)
+    # regenerates chm.tif deliberately (force = TRUE) when the DEMs
+    # change; here we prefer the cached file.
     chm_candidates <- unique(c(
       unname(products[["chm"]]),
       if (!is.null(products[["dsm"]]))
@@ -9949,9 +9940,18 @@ server <- function(input, output, session) {
       }
       stage0_tick(isolate(stage0_tick()) + 1L)
       outputs_refresh_token(isolate(outputs_refresh_token()) + 1L)
-      showNotification(
-        "Products rebuilt from the current point cloud: DSM, DTM and orthomosaic are ready.",
-        type = "message", duration = 12, id = "stage0_rebuild_result")
+      # Only claim the CHM if it actually landed: the worker builds it with a
+      # tryCatch, so a failed derive must not be reported as ready.
+      chm_ready <- tryCatch({
+        cp <- unname(odm_product_paths(p)[["chm"]])
+        length(cp) == 1L && !is.na(cp) && file.exists(cp)
+      }, error = function(e) FALSE)
+      msg <- if (isTRUE(chm_ready))
+        "Maps rebuilt from the current point cloud: DSM, DTM, orthomosaic and CHM are ready. Now press “Compute & export all covariates” below to write every covariate to the covariates/ folder."
+      else
+        "Maps rebuilt from the current point cloud: DSM, DTM and orthomosaic are ready (the CHM will be derived on demand). Now press “Compute & export all covariates” below to write every covariate to the covariates/ folder."
+      showNotification(msg, type = "message", duration = 14,
+                       id = "stage0_rebuild_result")
     }
 
     p_snapshot <- p
@@ -9978,8 +9978,14 @@ server <- function(input, output, session) {
           pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
                             attach = FALSE, helpers = FALSE)
         }
-        DroneBioR::rebuild_from_edited_cloud(
+        res <- DroneBioR::rebuild_from_edited_cloud(
           p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam)
+        # Derive the CHM from the freshly-built DSM/DTM right here, so the
+        # canopy-height covariate is ready the moment the maps are (the user
+        # wants every covariate). force = TRUE because the DEMs just changed.
+        tryCatch(DroneBioR::build_chm_raster(p_snapshot, force = TRUE),
+                 error = function(e) NULL)
+        res
       }, seed = TRUE,
          globals = list(p_snapshot = p_snapshot, cam = cam,
                         dronebior_pkg_path = dronebior_pkg_path))
@@ -9996,7 +10002,10 @@ server <- function(input, output, session) {
         rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
                                   camera_type = cam),
         error = function(e) { finish_rebuild(err = e); NULL })
-      if (!is.null(res)) finish_rebuild(res = res)
+      if (!is.null(res)) {
+        tryCatch(build_chm_raster(p_snapshot, force = TRUE), error = function(e) NULL)
+        finish_rebuild(res = res)
+      }
     }
   })
 
@@ -13161,12 +13170,6 @@ server <- function(input, output, session) {
                        duration = 5)
       return()
     }
-    refl <- tryCatch(reflectance(), error = function(e) NULL)
-    if (is.null(refl)) {
-      showNotification("Load a mosaic in Spectral Analytics first — covariates are computed from it.",
-                       type = "warning", duration = 8)
-      return()
-    }
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) {
       showNotification("No project is configured.", type = "warning", duration = 6)
@@ -13178,6 +13181,17 @@ server <- function(input, output, session) {
       v <- unname(paths[[key]])
       if (length(v) == 1L && !is.na(v) && file.exists(v)) v else NA_character_
     }
+    # Reflectance source: use the loaded mosaic when the user has one open
+    # (Spectral Analytics); otherwise read the orthomosaic straight off disk so
+    # this works right after Process step 4 without loading anything first.
+    refl <- tryCatch(reflectance(), error = function(e) NULL)
+    ortho_p <- dem_path("orthomosaic")
+    if (is.null(refl) && is.na(ortho_p)) {
+      showNotification(
+        "No orthomosaic yet. Build the maps (Process step 4) first, or load a mosaic in Spectral Analytics.",
+        type = "warning", duration = 9)
+      return()
+    }
     chm_p <- dem_path("chm"); dsm_p <- dem_path("dsm"); dtm_p <- dem_path("dtm")
     # If the CHM tif is not on disk yet, try to build it so the *_x_CHM proxies
     # are exported too (the user wants ALL covariates).
@@ -13187,7 +13201,8 @@ server <- function(input, output, session) {
         if (!is.null(b) && file.exists(b)) b else NA_character_
       }, error = function(e) NA_character_)
     }
-    refl_w <- terra::wrap(refl)
+    refl_w <- if (!is.null(refl)) terra::wrap(refl) else NULL
+    ortho_path <- if (is.null(refl)) ortho_p else NA_character_
     custom_w <- tryCatch({
       ci <- custom_index_raster(); if (is.null(ci)) NULL else terra::wrap(ci)
     }, error = function(e) NULL)
@@ -13212,7 +13227,9 @@ server <- function(input, output, session) {
     }
 
     run_export <- function() {
-      r_refl <- terra::unwrap(refl_w)
+      r_refl <- if (!is.null(refl_w)) terra::unwrap(refl_w) else
+        DroneBioR::scale_to_reflectance(
+          DroneBioR::read_multispectral_orthomosaic(ortho_path)$bands)
       rd <- function(pth) if (!is.na(pth)) terra::rast(pth) else NULL
       r_custom <- if (!is.null(custom_w)) terra::unwrap(custom_w) else NULL
       DroneBioR::export_all_covariates(
@@ -13241,7 +13258,9 @@ server <- function(input, output, session) {
           pkgload::load_all(dronebior_pkg_path, quiet = TRUE, attach = FALSE,
                             helpers = FALSE)
         }
-        r_refl <- terra::unwrap(refl_w)
+        r_refl <- if (!is.null(refl_w)) terra::unwrap(refl_w) else
+          DroneBioR::scale_to_reflectance(
+            DroneBioR::read_multispectral_orthomosaic(ortho_path)$bands)
         rd <- function(pth) if (!is.na(pth)) terra::rast(pth) else NULL
         r_custom <- if (!is.null(custom_w)) terra::unwrap(custom_w) else NULL
         DroneBioR::export_all_covariates(
@@ -13250,6 +13269,7 @@ server <- function(input, output, session) {
       }, seed = TRUE,
          globals = list(refl_w = refl_w, custom_w = custom_w, out_dir = out_dir,
                         chm_p = chm_p, dsm_p = dsm_p, dtm_p = dtm_p,
+                        ortho_path = ortho_path,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_export(res = res),
