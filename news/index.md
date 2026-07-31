@@ -4,6 +4,47 @@
 
 ### Process tab
 
+- **Step 4 is now a single button that does everything.** “Build maps &
+  export all covariates” rebuilds the DSM, DTM, orthomosaic and CHM from
+  the cleaned cloud, then computes and exports every covariate to a
+  `covariates/` folder — one click, one background run. The separate
+  covariate button and the reconstruction “Advanced” section (one-shot
+  Run ODM, engine/preset/resolution and export toggles) were removed;
+  the numbered steps already cover the flow, so the tab is just steps
+  1–4 now.
+
+- **The CHM is CSF-refined by default.** Building the maps now runs the
+  Cloth Simulation Filter on the point cloud to refine the ground (DTM)
+  under dense canopy, at the DSM’s native resolution and keeping the
+  original as `dtm_raw.tif`, then rebuilds the canopy height model from
+  it with the usual spike-cleaning. Falls back to the plain DSM − DTM
+  CHM when lidR or a georeferenced cloud is unavailable. The standalone
+  “Build CHM” / CSF buttons were removed from GIS Workspace (the whole
+  “Project actions” card is gone).
+
+- **Cleaning the cloud in 3-D updates the view immediately.** After
+  Despike, Delete or Restore, the 3-D viewer used to keep showing the
+  pre-edit cloud (an async reload race), so a new selection referenced
+  points the edited cloud no longer had — “the selection references
+  vertex N but the cloud has M”. The reload is now server-driven, so the
+  edited cloud and a cleared selection appear at once, with no “press
+  Load”.
+
+### GIS Workspace
+
+- **The CHM is a viewable layer again**, now that it is always built at
+  Process step 4.
+
+### Field Models
+
+- **Canopy-height covariates are no longer skipped after the CHM is
+  built.** `chm_raster()` cached its result by file path only, so once
+  it had cached “no CHM” (extraction run before the CHM existed),
+  building the CHM at the same path did not refresh it and every
+  `*_x_CHM` covariate was silently dropped. The cache now invalidates
+  when products are rebuilt (and on an on-disk change), so re-extracting
+  picks the CHM up.
+
 - **Step 4 builds the CHM and is the one place to export every
   covariate.** “Build the maps” now also derives the canopy height model
   (CHM) from the fresh DSM/DTM, and the **Compute & export all
