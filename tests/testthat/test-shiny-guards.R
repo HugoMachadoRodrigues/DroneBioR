@@ -120,26 +120,42 @@ test_that("no observer guards its inputs with validate()", {
   expect_equal(offenders, character())
 })
 
-test_that("the point-cloud reconstruction controls are not duplicated", {
-  # The outlier filter and ground-rectify used to exist twice: once on the
-  # Point Cloud tab (pc_filter_stage0 / pc_rectify_stage0) and once on the
-  # Processing Engine tab (pc_filter / pc_rectify), as independent inputs that
-  # drifted apart. Those two tabs are now the single merged "Process" tab, and
-  # the _stage0 inputs (in its Advanced area) are the single source of truth.
+test_that("point-cloud reconstruction tuning inputs are read only via safe fallbacks", {
+  # History: the outlier filter and ground-rectify once existed twice (Point
+  # Cloud tab pc_filter_stage0 / pc_rectify_stage0 vs Processing Engine tab
+  # pc_filter / pc_rectify) and drifted apart. Both tabs then merged into one
+  # "Process" tab, and finally the Advanced tuning section was removed for
+  # simplicity, so the widgets are gone entirely. run_stage0 must therefore
+  # only ever read them through a fallback (`%||%` / isTRUE), never bare, or a
+  # now-undefined input would silently break the staged build.
   app <- system.file("shiny", "DroneBiomassStudio", "app.R",
                      package = "DroneBioR")
   skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
   src <- paste(readLines(app, warn = FALSE), collapse = "\n")
 
-  # No widget defines the old duplicate ids.
+  # The old duplicate ids never came back.
   expect_false(grepl('(slider|checkbox|numeric|select)Input\\(\\s*"pc_filter"',
                      src))
   expect_false(grepl('(slider|checkbox|numeric|select)Input\\(\\s*"pc_rectify"',
                      src))
-  # The _stage0 inputs still exist exactly once each.
-  expect_equal(length(gregexpr('sliderInput\\("pc_filter_stage0"', src)[[1L]]), 1L)
-  expect_equal(length(gregexpr('checkboxInput\\("pc_rectify_stage0"', src)[[1L]]), 1L)
-  # Nothing reads the removed ids any more (word boundary excludes _stage0).
+  # Every read of the tuning inputs is guarded: pc_filter_stage0 only as
+  # `input$pc_filter_stage0 %||% <default>`, pc_rectify_stage0 only inside
+  # isTRUE(...). Find any bare read that is NOT so guarded.
+  filter_reads <- gregexpr("input\\$pc_filter_stage0", src)[[1L]]
+  filter_reads <- if (filter_reads[1L] == -1L) integer(0) else filter_reads
+  for (pos in filter_reads) {
+    tail <- substr(src, pos, pos + 60L)
+    expect_true(grepl("input\\$pc_filter_stage0\\s*%\\|\\|%", tail),
+                info = paste("unguarded pc_filter_stage0 read:", tail))
+  }
+  rectify_reads <- gregexpr("input\\$pc_rectify_stage0", src)[[1L]]
+  rectify_reads <- if (rectify_reads[1L] == -1L) integer(0) else rectify_reads
+  for (pos in rectify_reads) {
+    pre <- substr(src, max(1L, pos - 10L), pos + 25L)
+    expect_true(grepl("isTRUE\\(input\\$pc_rectify_stage0", pre),
+                info = paste("unguarded pc_rectify_stage0 read:", pre))
+  }
+  # Nothing reads the ancient non-stage0 ids either.
   expect_false(grepl("input\\$pc_filter\\b(?!_)", src, perl = TRUE))
   expect_false(grepl("input\\$pc_rectify\\b(?!_)", src, perl = TRUE))
 })
@@ -283,7 +299,11 @@ test_that("the Stage-0 product rebuild runs in the background, not a UI-freezing
   skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
   src <- paste(readLines(app, warn = FALSE), collapse = "\n")
   expect_true(grepl("stage0_rebuild_running", src, fixed = TRUE))
+  # Window widened from 3000: the observer's finish_rebuild callback grew when
+  # step 4 gained the CSF-default CHM, the chm-ready check and the chained
+  # covariate export, pushing future_promise a little further down. The async
+  # pattern is unchanged; only the distance grew.
   expect_true(grepl(
-    '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,3000}?future_promise',
+    '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,4500}?future_promise',
     src, perl = TRUE))
 })
