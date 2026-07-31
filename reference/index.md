@@ -179,6 +179,8 @@ DroneBioR raster products to disk.
   : Compute an image-only biomass proxy
 - [`compute_biomass_proxies()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/compute_biomass_proxies.md)
   : Compute multiple biomass-proxy rasters
+- [`export_all_covariates()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/export_all_covariates.md)
+  : Compute and export every covariate to a folder
 
 ## Classification
 
