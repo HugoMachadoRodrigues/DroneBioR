@@ -4,6 +4,26 @@
 
 ### Process tab
 
+- **Step 4 builds the CHM and is the one place to export every
+  covariate.** “Build the maps” now also derives the canopy height model
+  (CHM) from the fresh DSM/DTM, and the **Compute & export all
+  covariates** button moved here from Field Models. It reads the
+  orthomosaic straight off disk (falling back from a loaded, calibrated
+  mosaic when one is open), so it works immediately after the maps are
+  built without loading anything first. The standalone **Build CHM**
+  button was removed from GIS Workspace — the CHM is derived
+  automatically at step 4 and lazily wherever else it is needed.
+
+- **3D Modeling moved to position 2**, right after Process and before
+  GIS Workspace, in both the navbar and the workflow stepper (and the
+  “Next action” recommender now follows the same order).
+
+- **The “Point cloud” status pill lights up after step 2.**
+  [`quick_outputs_check()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/quick_outputs_check.md)
+  now counts the `odm_filterpoints/point_cloud.ply` that the staged flow
+  writes, not only the LAS/LAZ/COPC exports (which only exist after a
+  full ODM run), so a freshly-built cloud reads as present.
+
 - **The “Point Cloud” and “Processing Engine” tabs are now one linear
   “Process” tab.** Reconstruction used to be split across two tabs — a
   staged Point Cloud flow (build cloud → clean → build products) and a
