@@ -2,6 +2,33 @@
 
 ## DroneBioR (development version)
 
+### Process tab
+
+- **The “Point Cloud” and “Processing Engine” tabs are now one linear
+  “Process” tab.** Reconstruction used to be split across two tabs — a
+  staged Point Cloud flow (build cloud → clean → build products) and a
+  one-shot Processing Engine (“Run ODM”) — which duplicated the
+  project-root/photos fields and left the path forward unclear. They are
+  merged into a single tab laid out as four numbered steps a non-expert
+  can follow top to bottom: **1** point to your project, **2** build the
+  point cloud, **3** clean it in 3-D (optional), **4** build the maps
+  (DSM/DTM/orthomosaic), with a plain hand-off to Field Models → “2 -
+  Covariates” at the end. All the fine-tuning knobs and the one-shot
+  full-pipeline run move into a single collapsed **Advanced** section,
+  so the everyday path is just the four steps.
+
+- **The return path after 3-D cleaning is now obvious.** Cleaning still
+  happens on the 3-D Modeling tab, but the button back is labelled **“←
+  Back to Process (build the maps)”** and lands the user on step 4; the
+  notifications no longer reference the retired “Point Cloud” tab or the
+  old step numbers.
+
+- **The redundant project-root / photos fields are gone.** The Point
+  Cloud tab’s mirror inputs (and their four sync observers) were
+  removed; the single Process-tab pair stays in step with the canonical
+  project across every tab. The top workflow stepper collapses the old
+  “Cloud” + “Process” chips into one.
+
 ### Covariates
 
 - **One click computes and exports every covariate.**
@@ -18,8 +45,9 @@
 - **A missing CHM no longer blocks the whole extraction.** With a
   canopy-height covariate ticked but no CHM yet, Extract aborted
   entirely. It now drops just the CHM-dependent covariates (with a
-  warning naming them and pointing to step 3 to build the CHM) and
-  extracts the rest — unless those were the only covariates ticked.
+  warning naming them and pointing to step 4 on the Process tab to build
+  the CHM) and extracts the rest — unless those were the only covariates
+  ticked.
 
 - **CHM is no longer a GIS map layer.** It is a covariate (canopy
   height), so it lives with the covariates (Field Models + the covariate
@@ -27,16 +55,16 @@
 
 ### 3D point cloud
 
-- **“Build DSM, DTM and orthomosaic” (Stage 0, step 3) no longer looks
-  dead.** It reruns ODM from `odm_meshing` — a docker job of several
-  minutes — on the single R thread, with no feedback emitted before the
-  block, so the click froze the whole UI silently (the only sign was the
-  generic heartbeat banner after 2.5 s). It now runs in a background
-  worker like the CSF refinement: an immediate “Building… in a
-  background worker” notification and a live banner, a running-flag that
-  blocks double-clicks, and a success/error toast plus a product-status
-  refresh on completion. A synchronous fallback keeps it working where
-  `future`/`promises` are unavailable.
+- **“Build DSM, DTM and orthomosaic” (the Process tab’s “Build the maps”
+  step) no longer looks dead.** It reruns ODM from `odm_meshing` — a
+  docker job of several minutes — on the single R thread, with no
+  feedback emitted before the block, so the click froze the whole UI
+  silently (the only sign was the generic heartbeat banner after 2.5 s).
+  It now runs in a background worker like the CSF refinement: an
+  immediate “Building… in a background worker” notification and a live
+  banner, a running-flag that blocks double-clicks, and a success/error
+  toast plus a product-status refresh on completion. A synchronous
+  fallback keeps it working where `future`/`promises` are unavailable.
 
 - **A stopped Docker daemon now gives a clear message.**
   [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
