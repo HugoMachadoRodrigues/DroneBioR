@@ -1,5 +1,26 @@
 # DroneBioR (development version)
 
+## Covariates
+
+* **One click computes and exports every covariate.** `export_all_covariates()`
+  builds the reflectance bands, every spectral index, the biomass proxies (with
+  the `*_x_CHM` ones when a CHM exists) and the CHM/DSM/DTM, and writes each as
+  a full-resolution GeoTIFF into a `covariates/` folder in the project. Field
+  Models → "2 - Covariates" gets a **Compute & export all covariates** button
+  that runs it in a background worker (the CSF/rebuild pattern), so the heavy
+  full-resolution stack does not freeze the UI. Missing layers are skipped, not
+  fatal.
+
+* **A missing CHM no longer blocks the whole extraction.** With a canopy-height
+  covariate ticked but no CHM yet, Extract aborted entirely. It now drops just
+  the CHM-dependent covariates (with a warning naming them and pointing to
+  step 3 to build the CHM) and extracts the rest — unless those were the only
+  covariates ticked.
+
+* **CHM is no longer a GIS map layer.** It is a covariate (canopy height), so it
+  lives with the covariates (Field Models + the covariate export), not in the
+  GIS Workspace overlay list.
+
 ## 3D point cloud
 
 * **"Build DSM, DTM and orthomosaic" (Stage 0, step 3) no longer looks dead.**

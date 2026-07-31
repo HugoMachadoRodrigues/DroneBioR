@@ -312,3 +312,86 @@ compute_biomass_proxies <- function(indices, chm = NULL) {
   }
   result
 }
+
+#' Compute and export every covariate to a folder
+#'
+#' Builds the full covariate set the Field Models tab can use -- the reflectance
+#' bands, every spectral index [compute_spectral_indices()] can derive, the
+#' biomass proxies [compute_biomass_proxies()] (the canopy-height ones when a
+#' CHM is supplied), and the terrain layers -- and writes each as its own
+#' GeoTIFF into `out_dir` (a folder named `covariates/` by convention), at the
+#' orthomosaic's native resolution, ready to load into any GIS afterwards.
+#'
+#' Layers that cannot be produced (e.g. the biomass proxies when the cloud has
+#' none of the bands they need) are skipped, not fatal, so the export always
+#' returns whatever could be built.
+#'
+#' @param reflectance A `terra::SpatRaster` of the scaled reflectance bands
+#'   (named, e.g. `Red`, `Green`, `NIR`, `RedEdge`).
+#' @param out_dir Destination folder. Created if missing.
+#' @param chm,dsm,dtm Optional terrain `SpatRaster`s; each exported when given,
+#'   and the CHM also feeds the `*_x_CHM` biomass proxies.
+#' @param custom_index Optional single-layer `SpatRaster` of a user index.
+#' @param overwrite Overwrite existing files (default `TRUE`); when `FALSE`,
+#'   existing outputs are kept and still reported as written.
+#' @return Invisibly, a character vector of the GeoTIFFs written.
+#' @examples
+#' \dontrun{
+#' refl <- read_multispectral_orthomosaic("odm_orthophoto.tif")
+#' chm  <- build_chm_from_dsm_dtm("odm_dem/dsm.tif", "odm_dem/dtm.tif")
+#' export_all_covariates(refl, file.path(project$project_dir, "covariates"),
+#'                       chm = chm)
+#' }
+#' @export
+export_all_covariates <- function(reflectance, out_dir,
+                                  chm = NULL, dsm = NULL, dtm = NULL,
+                                  custom_index = NULL, overwrite = TRUE) {
+  if (!inherits(reflectance, "SpatRaster")) {
+    stop("`reflectance` must be a terra SpatRaster.", call. = FALSE)
+  }
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  indices <- compute_spectral_indices(reflectance)
+  proxies <- tryCatch(compute_biomass_proxies(indices, chm = chm),
+                      error = function(e) NULL)
+
+  # One named single-layer raster per covariate, in a stable order.
+  layers <- list()
+  add <- function(nm, r) if (!is.null(r)) layers[[nm]] <<- r
+  for (b in names(reflectance)) add(b, reflectance[[b]])
+  for (i in names(indices))     add(i, indices[[i]])
+  if (!is.null(proxies)) for (nm in names(proxies)) add(nm, proxies[[nm]])
+  if (inherits(chm, "SpatRaster")) add("CHM", chm[[1L]])
+  if (inherits(dsm, "SpatRaster")) add("DSM", dsm[[1L]])
+  if (inherits(dtm, "SpatRaster")) add("DTM", dtm[[1L]])
+  if (inherits(custom_index, "SpatRaster")) {
+    add(names(custom_index)[[1L]] %||% "Custom_Index", custom_index[[1L]])
+  }
+
+  safe <- function(nm) gsub("[^A-Za-z0-9._-]+", "_", nm)
+  write_one <- function(r, dst) {
+    tryCatch({
+      terra::writeRaster(r, dst, overwrite = TRUE, filetype = "COG",
+                         gdal = c("COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"))
+      TRUE
+    }, error = function(e) {
+      # Older GDAL builds reject the COG driver; plain GeoTIFF is universal.
+      tryCatch({
+        terra::writeRaster(r, dst, overwrite = TRUE, filetype = "GTiff",
+                           gdal = "COMPRESS=DEFLATE")
+        TRUE
+      }, error = function(e2) FALSE)
+    })
+  }
+
+  written <- character()
+  for (nm in names(layers)) {
+    dst <- file.path(out_dir, paste0(safe(nm), ".tif"))
+    if (!isTRUE(overwrite) && file.exists(dst)) {
+      written <- c(written, dst)
+      next
+    }
+    if (isTRUE(write_one(layers[[nm]], dst))) written <- c(written, dst)
+  }
+  invisible(written)
+}

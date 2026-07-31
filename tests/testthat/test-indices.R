@@ -98,3 +98,41 @@ test_that("compute_biomass_proxy errors when required indices are absent", {
   names(r) <- "NDVI"
   expect_error(compute_biomass_proxy(r), "missing")
 })
+
+test_that("export_all_covariates writes bands, indices, proxies and terrain", {
+  bands <- make_reflectance()
+  chm <- bands[[1]]; terra::values(chm) <- 3; names(chm) <- "CHM"
+  dsm <- bands[[1]]; terra::values(dsm) <- 110
+  out <- tempfile("cov_")
+
+  written <- export_all_covariates(bands, out, chm = chm, dsm = dsm)
+  files <- basename(list.files(out, pattern = "[.]tif$"))
+
+  # Every reflectance band ...
+  expect_true(all(paste0(c("Blue", "Green", "Red", "RedEdge", "NIR"), ".tif")
+                  %in% files))
+  # ... every spectral index ...
+  expect_true(all(paste0(names(compute_spectral_indices(bands)), ".tif")
+                  %in% files))
+  # ... a canopy-height biomass proxy (needs the CHM we passed) ...
+  expect_true("Biomass_NDVI_x_CHM.tif" %in% files)
+  # ... and the terrain layers given.
+  expect_true(all(c("CHM.tif", "DSM.tif") %in% files))
+  expect_false("DTM.tif" %in% files)          # not supplied -> not written
+  expect_length(written, length(files))
+  # The result is a real, re-readable raster.
+  expect_s4_class(terra::rast(file.path(out, "NDVI.tif")), "SpatRaster")
+
+  unlink(out, recursive = TRUE)
+})
+
+test_that("export_all_covariates skips the CHM proxies gracefully with no CHM", {
+  bands <- make_reflectance()
+  out <- tempfile("cov_")
+  written <- export_all_covariates(bands, out)   # no CHM/DSM/DTM
+  files <- basename(list.files(out, pattern = "[.]tif$"))
+  expect_true("NDVI.tif" %in% files)
+  expect_false(any(grepl("_x_CHM", files)))      # no CHM -> no CHM proxies
+  expect_false("CHM.tif" %in% files)
+  unlink(out, recursive = TRUE)
+})
