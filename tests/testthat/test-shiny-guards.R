@@ -124,7 +124,8 @@ test_that("the point-cloud reconstruction controls are not duplicated", {
   # The outlier filter and ground-rectify used to exist twice: once on the
   # Point Cloud tab (pc_filter_stage0 / pc_rectify_stage0) and once on the
   # Processing Engine tab (pc_filter / pc_rectify), as independent inputs that
-  # drifted apart. The Point Cloud tab is the single source of truth now.
+  # drifted apart. Those two tabs are now the single merged "Process" tab, and
+  # the _stage0 inputs (in its Advanced area) are the single source of truth.
   app <- system.file("shiny", "DroneBiomassStudio", "app.R",
                      package = "DroneBioR")
   skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")

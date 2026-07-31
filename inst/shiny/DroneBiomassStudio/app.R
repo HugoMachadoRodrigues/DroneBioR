@@ -1412,8 +1412,7 @@ project_control_center <- function() {
 # calls updateNavbarPage("main_nav", ...).
 workflow_stepper <- function() {
   steps <- list(
-    list(n = 0L, label = "Cloud",       tab = "Point Cloud"),
-    list(n = 1L, label = "Process",     tab = "Processing Engine"),
+    list(n = 1L, label = "Process",     tab = "Process"),
     list(n = 2L, label = "GIS",         tab = "GIS Workspace"),
     list(n = 3L, label = "Spectral",    tab = "Spectral Analytics"),
     list(n = 4L, label = "3D Modeling", tab = "3D Modeling"),
@@ -1443,6 +1442,31 @@ workflow_stepper <- function() {
   })
   div(class = "dronebio-stepper-wrapper",
       div(class = "dronebio-stepper", chips))
+}
+
+# One numbered step in the linear "Process" tab. Keeping each step as a card
+# with a big number badge lets the flow read straight down the page as
+# 1 -> 2 -> 3 -> 4, which is what a non-expert user follows.
+process_step <- function(number, title, subtitle = NULL, ..., accent = "#0d6efd") {
+  card(
+    class = "mb-3",
+    card_header(
+      div(
+        class = "d-flex align-items-center",
+        tags$span(
+          style = paste0(
+            "display:inline-flex;align-items:center;justify-content:center;",
+            "width:2rem;height:2rem;border-radius:50%;flex:0 0 auto;",
+            "margin-right:.6rem;font-weight:700;color:#fff;background:", accent, ";"),
+          as.character(number)),
+        tags$span(class = "fw-semibold fs-5", title))
+    ),
+    card_body(
+      if (!is.null(subtitle) && nzchar(subtitle))
+        p(class = "text-muted mb-3", subtitle),
+      ...
+    )
+  )
 }
 
 haversine_m <- function(lon1, lat1, lon2, lat2) {
@@ -1800,7 +1824,7 @@ ui <- page_navbar(
       });
 
       // Apply completion state to the Workflow Stepper chips without
-      // re-rendering them. R sends { tabs: ['Processing Engine',
+      // re-rendering them. R sends { tabs: ['Process',
       // 'GIS Workspace', ...] } - we toggle the .done class on each
       // chip whose data-step-tab is in the list, swap the step
       // number for a check glyph when done, and revert otherwise.
@@ -3243,162 +3267,174 @@ ui <- page_navbar(
     "))
   )),
   nav_panel(
-    "Point Cloud",
-    layout_sidebar(
-      sidebar = sidebar(
-        width = 380,
-        textInput("project_dir_pc", "Project root",
-                  value = default_project$project_dir),
-        textInput("images_dir_pc", "Source images folder",
-                  value = default_project$images_dir),
-        selectInput("pc_quality", "Detail (densification quality)",
-                    choices = c("Ultra"  = "ultra",
-                                "High"   = "high",
-                                "Medium (ODM default)" = "medium",
-                                "Low"    = "low",
-                                "Lowest" = "lowest"),
-                    selected = "medium"),
-        div(class = "small text-muted mb-2",
-            "Each step up produces a denser cloud and costs roughly 4x the ",
-            "time. Start at Medium; go higher only once the flow works."),
-        sliderInput("pc_filter_stage0", "Outlier filter (std. dev.)",
-                    min = 0, max = 6, value = 2.5, step = 0.5),
-        checkboxInput("pc_rectify_stage0",
-                      "Rectify ground points (better DTM)", value = FALSE),
-        actionButton("run_stage0", "1. Build the point cloud",
-                     class = "btn-primary w-100"),
-        div(class = "small text-muted mt-1 mb-2",
-            "Aligns the images and densifies, then stops. Nothing else is ",
-            "generated yet."),
-        actionButton("goto_cloud_editor", "2. Inspect and clean it in 3D",
-                     class = "btn-outline-secondary w-100"),
-        div(class = "small text-muted mt-1 mb-2",
-            "Opens the 3D tab, where box / lasso / polygon select and the ",
-            "delete button live."),
-        actionButton("run_stage0_rebuild", "3. Build DSM, DTM and orthomosaic",
-                     class = "btn-outline-primary w-100"),
-        div(class = "small text-muted mt-1",
-            "Resumes at odm_meshing from the cloud as it stands now, reusing ",
-            "the alignment and densification.")
-      ),
+    "Process",
+    div(
+      class = "mx-auto p-2",
+      style = "max-width: 860px;",
       div(
-        class = "p-2",
-        h5("Stage 0 - reconstruct, clean, then derive"),
-        p(class = "text-muted",
-          "The orthomosaic, the DSM and the DTM are all derived from the ",
-          "point cloud. Cleaning it here fixes all three at once, instead of ",
-          "patching the DSM afterwards."),
-        tags$pre(class = "small",
-"raw images
-  -> opensfm         alignment
-  -> openmvs         densification   <- 'Detail' sets this
-  -> odm_filterpoints  STOP: inspect and clean here
-  -> odm_meshing -> mvs_texturing -> odm_orthophoto
-  -> odm_dem           DSM and DTM"),
-        hr(),
-        h6("Current point cloud"),
-        verbatimTextOutput("stage0_cloud_status"),
-        h6("What this will run"),
-        verbatimTextOutput("stage0_command")
-      )
-    )
-  ),
-  nav_panel(
-    "Processing Engine",
-    layout_sidebar(
-      sidebar = sidebar(
-        width = 380,
-        # Project setup: must come first. These mirror the inputs in GIS
-        # Workspace; both panels stay in sync via observers below.
-        textInput("project_dir_pe", "Project root", value = default_project$project_dir),
-        textInput("images_dir_pe", "Source images folder",
+        class = "mb-3",
+        h4(class = "mb-1", "Process — from drone photos to maps"),
+        p(class = "text-muted mb-0",
+          "Work down the four steps in order. Each one turns your photos a ",
+          "little further into the maps you'll model biomass from. You can stop ",
+          "after any step and pick up later.")
+      ),
+
+      # Step 1 -----------------------------------------------------------------
+      process_step(
+        1, "Point to your project",
+        "Tell the app where your drone photos are and which camera took them.",
+        textInput("project_dir_pe", "Project folder",
+                  value = default_project$project_dir),
+        textInput("images_dir_pe", "Drone photos folder",
                   value = default_project$images_dir,
                   placeholder = "Folder containing the drone JPGs / TIFFs"),
-        # Auto-detected ODM project picker: scans <project>/outputs/ for
-        # any <subdir>/<name>/odm_orthophoto/odm_orthophoto.tif and lets
-        # the user point the app at whichever one they want (handy after
-        # multiple ODM runs in the same project root).
         uiOutput("odm_project_picker_ui"),
-        div(class = "sidebar-note small text-muted",
-            "Project root + source images appear in every tab. ODM outputs (orthomosaic, DEMs, point cloud) are derived from this picker."),
         selectInput(
-          "processing_engine",
-          "Engine",
-          choices = c(
-            "ODM Docker (local)" = "odm_docker",
-            "WebODM REST (remote)" = "webodm"
-          ),
-          selected = "odm_docker"
-        ),
-        conditionalPanel(
-          "input.processing_engine == 'webodm'",
-          textInput("webodm_url", "WebODM URL", value = "http://localhost:8000",
-                    placeholder = "e.g. http://localhost:8000 or https://webodm.example.org"),
-          textInput("webodm_user", "WebODM username"),
-          passwordInput("webodm_pass", "WebODM password"),
-          numericInput("webodm_poll_seconds", "Status poll interval (s)",
-                       value = 60, min = 15, max = 600, step = 15),
-          div(class = "sidebar-note small text-muted",
-              "WebODM runs the same opendronemap/odm engine remotely. Set up an instance at https://github.com/WebODM/WebODM or use the cloud service at https://webodm.net/.")
-        ),
-        selectInput(
-          "camera_type",
-          "Camera type",
+          "camera_type", "Camera type",
           choices = c(
             "Multispectral (MicaSense / Sequoia)" = "multispectral",
-            "RGB (Sony / DJI / Phantom / generic)" = "rgb"
-          ),
-          selected = "multispectral"
-        ),
+            "RGB (Sony / DJI / Phantom / generic)" = "rgb"),
+          selected = "multispectral"),
         uiOutput("camera_detected_note"),
         uiOutput("geoscan_detected_note"),
+        div(class = "small text-muted mt-2",
+            "The project folder and photos carry across every tab.")
+      ),
+
+      # Step 2 -----------------------------------------------------------------
+      process_step(
+        2, "Build the point cloud",
+        paste0("Turn the overlapping photos into a dense 3-D cloud of points. ",
+               "This is the long step; pick a detail level and start it."),
         selectInput(
-          "processing_preset",
-          "Processing preset",
-          choices = c(
-            "Scientific canopy model (recommended)",
-            "Orthomosaic only",
-            "Full 3D deliverables",
-            "Custom"
-          ),
-          selected = "Scientific canopy model (recommended)"
-        ),
-        numericInput("resolution", "Orthophoto resolution (cm)", value = 5, min = 1, max = 30, step = 0.5),
-        checkboxInput("build_dsm", "Generate DSM", value = TRUE),
-        checkboxInput("build_dtm", "Generate DTM", value = TRUE),
-        # The outlier filter and ground-rectify controls used to live here as a
-        # second, independent copy of the Point Cloud tab's inputs, so the two
-        # drifted apart silently. They are point-cloud reconstruction settings,
-        # so they now live only on the Point Cloud tab (alongside the detail
-        # level), and this run reads those values. See the note below.
-        numericInput("pc_sample",
-                     "Thin to one point per N metres (0 = keep all)",
-                     value = 0, min = 0, step = 0.01),
-        checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
-        checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
-        checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
-        checkboxInput("tiles", "Export 2D web map tiles", value = FALSE),
-        checkboxInput("three_d_tiles", "Export 3D tiles", value = FALSE),
-        checkboxInput("gltf", "Export glTF model", value = FALSE),
-        actionButton("refresh_command", "Build command", class = "btn-primary"),
-        actionButton("run_odm", "Run ODM", class = "btn-outline-danger"),
-        div(class = "sidebar-note", "Reconstruction always runs dense: the DSM, DTM and orthomosaic are all derived from the point cloud, and a sparse one yields jagged surfaces. The Point Cloud tab owns the reconstruction settings — detail level, the outlier filter (std. dev.) and ground-point rectify — and this run uses those values; set them there, and clean the cloud there before the products are built. RGB camera mode skips the radiometric-calibration flag (it only applies to MicaSense-style sun + reflectance sensors).")
+          "pc_quality", "Detail level",
+          choices = c("Ultra" = "ultra", "High" = "high",
+                      "Medium (recommended)" = "medium",
+                      "Low" = "low", "Lowest" = "lowest"),
+          selected = "medium"),
+        div(class = "small text-muted mb-3",
+            "Each step up gives a denser cloud and costs about 4x the time. ",
+            "Start at Medium; go higher only once the whole flow works."),
+        actionButton("run_stage0", "Build the point cloud",
+                     class = "btn-primary btn-lg w-100"),
+        div(class = "mt-3",
+            tags$strong(class = "small", "Current point cloud"),
+            verbatimTextOutput("stage0_cloud_status"))
       ),
-      panel_intro_card(
-        "Processing Engine",
-        "First step for a fresh project: pick the camera type, the preset, and click 'Run ODM'. Drives OpenDroneMap inside Docker for both MicaSense multispectral and generic RGB flights. If you already have orthomosaics from WebODM, Pix4Dmapper or Metashape, skip this panel and load the existing GeoTIFFs from GIS Workspace.",
-        vignette = "external-engines"
+
+      # Step 3 -----------------------------------------------------------------
+      process_step(
+        3, "Clean the cloud in 3-D (optional)",
+        paste0("Optional. Open the 3-D editor to brush away spikes and stray ",
+               "points, then click “Back to Process”. Skip this to ",
+               "build straight from the raw cloud."),
+        actionButton("goto_cloud_editor", "Open the 3-D editor to clean",
+                     class = "btn-outline-secondary btn-lg w-100"),
+        accent = "#6c757d"
       ),
-      card(card_header("Processing workflow"), uiOutput("processing_workflow")),
-      card(card_header("What this preset creates"), tableOutput("preset_outputs")),
-      card(card_header("ODM Docker command"), verbatimTextOutput("odm_command")),
-      card(card_header("Processing guidance"), textOutput("engine_note")),
-      card(card_header("ODM run progress"),
-           textInput("odm_log_path", "Log file (live)",
-                     value = "/tmp/dronebior_logs/odm.log",
-                     placeholder = "Auto-filled when you click Run ODM"),
-           uiOutput("odm_progress_ui")),
-      card(card_header("Product status"), tableOutput("processing_products"))
+
+      # Step 4 -----------------------------------------------------------------
+      process_step(
+        4, "Build the maps",
+        paste0("Turn the cloud into the ground model (DTM), surface model ",
+               "(DSM) and orthomosaic. Runs in the background — the app ",
+               "stays usable while it works."),
+        actionButton("run_stage0_rebuild", "Build DSM, DTM & orthomosaic",
+                     class = "btn-primary btn-lg w-100"),
+        div(class = "alert alert-light border mt-3 mb-0 small",
+            tags$strong("Next: "),
+            "once the maps are built, open ",
+            tags$strong("Field Models → 2 - Covariates"),
+            " and press ", tags$em("Compute & export all covariates"),
+            " to write every covariate to a ", tags$code("covariates/"),
+            " folder for biomass modelling."),
+        div(class = "mt-3",
+            tags$strong(class = "small", "Products on disk"),
+            tableOutput("processing_products"))
+      ),
+
+      # Advanced ---------------------------------------------------------------
+      accordion(
+        open = FALSE,
+        class = "mt-2",
+        accordion_panel(
+          "Advanced — reconstruction tuning & one-shot full run",
+          div(class = "small text-muted mb-3",
+              "Most users can ignore this. It holds the fine-tuning knobs for ",
+              "the steps above and a power-user option to run the entire ",
+              "reconstruction in a single pass."),
+          tags$strong(class = "small",
+                      "Point-cloud reconstruction tuning (affects step 2)"),
+          sliderInput("pc_filter_stage0", "Outlier filter (std. dev.)",
+                      min = 0, max = 6, value = 2.5, step = 0.5),
+          checkboxInput("pc_rectify_stage0",
+                        "Rectify ground points (better DTM)", value = FALSE),
+          div(class = "small text-muted mb-1", "What step 2 will run:"),
+          verbatimTextOutput("stage0_command"),
+          hr(),
+          tags$strong(class = "small",
+                      "One-shot full run — replaces steps 2–4"),
+          div(class = "small text-muted mb-2",
+              "Rebuilds the point cloud AND the maps from scratch under the ",
+              "same project, in one long run. Use this instead of steps ",
+              "2–4, not in addition to them."),
+          selectInput(
+            "processing_engine", "Engine",
+            choices = c("ODM Docker (local)" = "odm_docker",
+                        "WebODM REST (remote)" = "webodm"),
+            selected = "odm_docker"),
+          conditionalPanel(
+            "input.processing_engine == 'webodm'",
+            textInput("webodm_url", "WebODM URL", value = "http://localhost:8000",
+                      placeholder = "e.g. http://localhost:8000 or https://webodm.example.org"),
+            textInput("webodm_user", "WebODM username"),
+            passwordInput("webodm_pass", "WebODM password"),
+            numericInput("webodm_poll_seconds", "Status poll interval (s)",
+                         value = 60, min = 15, max = 600, step = 15),
+            div(class = "sidebar-note small text-muted",
+                "WebODM runs the same opendronemap/odm engine remotely. Set up an instance at https://github.com/WebODM/WebODM or use the cloud service at https://webodm.net/.")),
+          selectInput(
+            "processing_preset", "Processing preset",
+            choices = c("Scientific canopy model (recommended)",
+                        "Orthomosaic only", "Full 3D deliverables", "Custom"),
+            selected = "Scientific canopy model (recommended)"),
+          numericInput("resolution", "Orthophoto resolution (cm)",
+                       value = 5, min = 1, max = 30, step = 0.5),
+          checkboxInput("build_dsm", "Generate DSM", value = TRUE),
+          checkboxInput("build_dtm", "Generate DTM", value = TRUE),
+          numericInput("pc_sample",
+                       "Thin to one point per N metres (0 = keep all)",
+                       value = 0, min = 0, step = 0.01),
+          checkboxInput("pc_las", "Export LAS point cloud", value = TRUE),
+          checkboxInput("pc_copc", "Export COPC point cloud", value = FALSE),
+          checkboxInput("pc_csv", "Export CSV point cloud", value = FALSE),
+          checkboxInput("tiles", "Export 2D web map tiles", value = FALSE),
+          checkboxInput("three_d_tiles", "Export 3D tiles", value = FALSE),
+          checkboxInput("gltf", "Export glTF model", value = FALSE),
+          div(class = "sidebar-note small text-muted",
+              "Reconstruction always runs dense: the DSM, DTM and orthomosaic ",
+              "are all derived from the point cloud. RGB camera mode skips the ",
+              "radiometric-calibration flag (it applies only to MicaSense-style ",
+              "reflectance sensors)."),
+          div(class = "d-flex gap-2 my-2",
+              actionButton("refresh_command", "Build command",
+                           class = "btn-outline-secondary"),
+              actionButton("run_odm", "Run full ODM pipeline",
+                           class = "btn-outline-danger")),
+          card(card_header("What this preset creates"),
+               tableOutput("preset_outputs")),
+          card(card_header("ODM command"), verbatimTextOutput("odm_command")),
+          card(card_header("Processing workflow"),
+               uiOutput("processing_workflow")),
+          card(card_header("Processing guidance"), textOutput("engine_note")),
+          card(card_header("ODM run progress"),
+               textInput("odm_log_path", "Log file (live)",
+                         value = "/tmp/dronebior_logs/odm.log",
+                         placeholder = "Auto-filled when you click Run"),
+               uiOutput("odm_progress_ui"))
+        )
+      )
     )
   ),
   nav_panel(
@@ -3717,13 +3753,13 @@ ui <- page_navbar(
                          class = "btn-outline-secondary w-100")
           ),
           accordion_panel(
-            "Point Cloud step 2 - clean the cloud",
+            "Clean the point cloud",
             div(class = "small text-muted mb-2",
-                "This is step 2 of the Point Cloud tab's flow. Auto-despike to ",
+                "This is step 3 of the Process flow. Auto-despike to ",
                 "knock down the reconstruction spikes, and/or select stragglers ",
                 "with box / lasso / polygon and delete them, then use the button ",
-                "below to build the products from the cloud you cleaned - the ",
-                "reconstruction is reused, not redone."),
+                "below to go back and build the maps from the cloud you cleaned - ",
+                "the reconstruction is reused, not redone."),
             textOutput("cloud_edit_status"),
             tags$div(
               class = "mt-2",
@@ -3748,7 +3784,7 @@ ui <- page_navbar(
                          class = "btn-outline-secondary w-100 mt-2"),
             hr(class = "my-2"),
             actionButton("back_to_point_cloud",
-                         "← Back to Point Cloud (build products)",
+                         "← Back to Process (build the maps)",
                          class = "btn-primary w-100"),
             div(class = "small text-muted mt-2",
                 "Edits are written to the working cloud; the untouched ",
@@ -4582,7 +4618,7 @@ ui <- page_navbar(
              verbatimTextOutput("report_status")),
         card(card_header("Run manifest"),
              div(class = "small text-muted mb-2",
-                 paste0("Every Processing Engine launch and every ",
+                 paste0("Every Process-tab run and every ",
                         "workflow execution appends a row here. ",
                         "Open with the button in the sidebar.")),
              tableOutput("runs_manifest_table")),
@@ -5097,8 +5133,8 @@ server <- function(input, output, session) {
   # The recommended next step: first step that is reachable but not done.
   workflow_next_step <- reactive({
     c_ <- workflow_completion()
-    if (!isTRUE(c_$process)) return(list(label = "Run Processing Engine",
-                                          tab = "Processing Engine"))
+    if (!isTRUE(c_$process)) return(list(label = "Process your flight",
+                                          tab = "Process"))
     if (!isTRUE(c_$gis))      return(list(label = "Open in GIS Workspace",
                                           tab = "GIS Workspace"))
     if (!isTRUE(c_$spectral)) return(list(label = "Compute spectral indices",
@@ -5207,7 +5243,7 @@ server <- function(input, output, session) {
     c_ <- tryCatch(workflow_completion(), error = function(e) NULL)
     if (is.null(c_)) return()
     done_tabs <- c(
-      if (isTRUE(c_$process))  "Processing Engine",
+      if (isTRUE(c_$process))  "Process",
       if (isTRUE(c_$gis))      "GIS Workspace",
       if (isTRUE(c_$spectral)) "Spectral Analytics",
       if (isTRUE(c_$modeling)) "3D Modeling",
@@ -9758,27 +9794,11 @@ server <- function(input, output, session) {
   # --- Stage 0: reconstruct to the point cloud, clean it, then derive ------
   stage0_tick <- reactiveVal(0L)
 
-  # Keep the stage-0 path inputs in step with the other tabs.
-  observeEvent(input$project_dir_pc, {
-    if (!identical(input$project_dir_pc, input$project_dir)) {
-      updateTextInput(session, "project_dir", value = input$project_dir_pc)
-    }
-  }, ignoreInit = TRUE)
-  observeEvent(input$images_dir_pc, {
-    if (!identical(input$images_dir_pc, input$images_dir)) {
-      updateTextInput(session, "images_dir", value = input$images_dir_pc)
-    }
-  }, ignoreInit = TRUE)
-  observeEvent(input$project_dir, {
-    if (!identical(input$project_dir_pc, input$project_dir)) {
-      updateTextInput(session, "project_dir_pc", value = input$project_dir)
-    }
-  }, ignoreInit = TRUE)
-  observeEvent(input$images_dir, {
-    if (!identical(input$images_dir_pc, input$images_dir)) {
-      updateTextInput(session, "images_dir_pc", value = input$images_dir)
-    }
-  }, ignoreInit = TRUE)
+  # The Process tab's project-root / photos fields are project_dir_pe /
+  # images_dir_pe; the observer block near the GIS canonical inputs keeps those
+  # in sync with input$project_dir / input$images_dir (which project() reads).
+  # The old Point Cloud tab had a second mirror (project_dir_pc / images_dir_pc)
+  # with its own sync observers; both are gone now that the two tabs are merged.
 
   stage0_ply <- reactive({
     stage0_tick()
@@ -9792,7 +9812,7 @@ server <- function(input, output, session) {
     if (is.na(ply)) return("No project selected yet.")
     if (!file.exists(ply)) {
       return(paste0("Not built yet.\n", ply,
-                    "\n\nRun step 1 to produce it."))
+                    "\n\nRun step 2 to produce it."))
     }
     h <- tryCatch(parse_ply_header(ply), error = function(e) NULL)
     if (is.null(h)) return(paste0("Present but unreadable as a binary PLY:\n", ply))
@@ -9831,7 +9851,7 @@ server <- function(input, output, session) {
     ply <- stage0_ply()
     if (is.na(ply) || !file.exists(ply)) {
       showNotification(
-        "Build the point cloud first (step 1); there is nothing to inspect yet.",
+        "Build the point cloud first (step 2); there is nothing to inspect yet.",
         type = "warning", duration = 8)
       return()
     }
@@ -9839,20 +9859,20 @@ server <- function(input, output, session) {
     # The 3D viewer and its select tools are heavy, shared infrastructure that
     # lives on the 3D Modeling tab, so cleaning happens there - but land the
     # user directly on the cleaning panel and give them a one-click way back,
-    # so it reads as step 2 of the Point Cloud flow rather than a dead-end.
+    # so it reads as step 3 of the Process flow rather than a dead-end.
     updateNavbarPage(session, "main_nav", selected = "3D Modeling")
     bslib::accordion_panel_open("modeling_sidebar",
-                                "Point Cloud step 2 - clean the cloud")
+                                "Clean the point cloud")
     showNotification(
       paste0("Select the bad points (box / lasso / polygon) and delete them, ",
-             "then click “Back to Point Cloud” to build the products."),
+             "then click “Back to Process” to build the maps."),
       type = "message", duration = 12)
   })
 
   observeEvent(input$back_to_point_cloud, {
-    updateNavbarPage(session, "main_nav", selected = "Point Cloud")
+    updateNavbarPage(session, "main_nav", selected = "Process")
     showNotification(
-      "Back on the Point Cloud tab. Run step 3 to build DSM, DTM and orthomosaic from the cleaned cloud.",
+      "Back on Process. Run step 4 - Build the maps - to derive the DSM, DTM and orthomosaic from the cleaned cloud.",
       type = "message", duration = 10)
   })
 
@@ -9899,7 +9919,7 @@ server <- function(input, output, session) {
   observeEvent(input$run_stage0_rebuild, {
     ply <- stage0_ply()
     if (is.na(ply) || !file.exists(ply)) {
-      showNotification("There is no point cloud yet; run step 1 first.",
+      showNotification("There is no point cloud yet; run step 2 first.",
                        type = "warning", duration = 8)
       return()
     }
@@ -10123,7 +10143,7 @@ server <- function(input, output, session) {
       updateTextInput(session, "ply_path", value = p)
       refresh_3d_scene()
       showNotification(
-        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Point Cloud” to build the products from the cleaned cloud.",
+        sprintf("Deleted %s points; %s remain. Press Load to refresh the view, or click “Back to Process” to build the maps from the cleaned cloud.",
                 format(length(ids), big.mark = ","), format(n, big.mark = ",")),
         type = "message", duration = 12)
     })
@@ -10157,7 +10177,7 @@ server <- function(input, output, session) {
           type = "message", duration = 10)
       } else {
         showNotification(
-          sprintf("Despiked: removed %s spike points (%.1f%%); %s remain. Press Load to refresh the view, then “Back to Point Cloud” to build the products.",
+          sprintf("Despiked: removed %s spike points (%.1f%%); %s remain. Press Load to refresh the view, then “Back to Process” to build the maps.",
                   format(res$n_removed, big.mark = ","),
                   100 * res$n_removed / res$n_before,
                   format(res$n_after, big.mark = ",")),
@@ -11875,7 +11895,7 @@ server <- function(input, output, session) {
     s <- scene_sources_state()
     have <- sum(unlist(s))
     total <- length(s)
-    if (have == 0) return("No sources yet - run Processing Engine or point the project to existing products.")
+    if (have == 0) return("No sources yet - run the Process tab or point the project to existing products.")
     if (have == total) return("All scene sources are ready.")
     paste0(have, " of ", total, " scene sources ready.")
   })
@@ -13277,15 +13297,15 @@ server <- function(input, output, session) {
       # be produced (DEMs not built yet, or a mid-write on OneDrive), do NOT
       # abort the whole extraction -- drop just the CHM-dependent covariates and
       # extract the rest. Blocking everything was the "the model won't run"
-      # dead-end the user hit; build the products (step 3) to create the CHM.
+      # dead-end the user hit; build the maps (step 4) to create the CHM.
       chm_cov <- selected[grepl("_x_CHM$", selected) | selected == "CHM_m"]
       if (length(chm_cov) && is.null(aux$chm)) {
         selected <- setdiff(selected, chm_cov)
         observer_need(
           length(selected) > 0,
-          "The only ticked covariates need a canopy height model (CHM), which is not available yet. Build the products (step 3) to create it, or also tick spectral covariates.")
+          "The only ticked covariates need a canopy height model (CHM), which is not available yet. Build the maps (step 4 on the Process tab) to create it, or also tick spectral covariates.")
         showNotification(
-          sprintf("No CHM available yet, so %d canopy-height covariate(s) were skipped (%s). Build DSM/DTM/orthomosaic (step 3) to create the CHM, then re-extract. Extracting the rest now.",
+          sprintf("No CHM available yet, so %d canopy-height covariate(s) were skipped (%s). Build DSM/DTM/orthomosaic (step 4 on the Process tab) to create the CHM, then re-extract. Extracting the rest now.",
                   length(chm_cov), paste(chm_cov, collapse = ", ")),
           type = "warning", duration = 12)
         aux <- field_aux_rasters(selected)
@@ -14140,7 +14160,7 @@ server <- function(input, output, session) {
                    error = function(e) data.frame())
     if (nrow(df) == 0) {
       return(data.frame(
-        info = "No runs recorded yet. Launch the Processing Engine or click Run analysis workflow to add the first entry.",
+        info = "No runs recorded yet. Launch the Process tab or click Run analysis workflow to add the first entry.",
         stringsAsFactors = FALSE,
         check.names = FALSE
       ))
