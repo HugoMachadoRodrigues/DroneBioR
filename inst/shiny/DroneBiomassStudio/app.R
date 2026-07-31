@@ -5528,6 +5528,7 @@ server <- function(input, output, session) {
   # that would otherwise show when the killed worker's promise rejects.
   csf_running            <- reactiveVal(FALSE)
   csf_cancelled          <- reactiveVal(FALSE)
+  stage0_rebuild_running <- reactiveVal(FALSE)
   outputs_refresh_token  <- reactiveVal(0L)
   panel_coefficients <- reactiveVal(data.frame(
     band = c("Blue", "Green", "Red", "RedEdge", "NIR"),
@@ -9877,6 +9878,11 @@ server <- function(input, output, session) {
     })
   })
 
+  # Build products from the current cloud. This resumes ODM at odm_meshing and
+  # runs docker for minutes; on the single R thread that froze the whole UI with
+  # no feedback (the click looked dead). Mirror the CSF handler: run it in a
+  # background worker, show an immediate banner + persistent notification, and
+  # report on completion. A synchronous fallback keeps it working without future.
   observeEvent(input$run_stage0_rebuild, {
     ply <- stage0_ply()
     if (is.na(ply) || !file.exists(ply)) {
@@ -9884,20 +9890,81 @@ server <- function(input, output, session) {
                        type = "warning", duration = 8)
       return()
     }
-    with_error_toast("Build products from the cloud", {
-      p <- project()
-      res <- rebuild_from_edited_cloud(
-        p,
-        build_dsm   = TRUE,
-        build_dtm   = TRUE,
-        camera_type = input$camera_type %||% "multispectral"
-      )
-      stage0_tick(isolate(stage0_tick()) + 1L)
+    if (isTRUE(stage0_rebuild_running())) {
       showNotification(
-        "Products rebuilt from the current point cloud.",
-        type = "message", duration = 10)
-      invisible(res)
-    })
+        "A product rebuild is already running in the background. Wait for it to finish.",
+        type = "warning", duration = 6)
+      return()
+    }
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      showNotification("No project is configured.", type = "warning",
+                       duration = 6)
+      return()
+    }
+    cam <- input$camera_type %||% "multispectral"
+
+    finish_rebuild <- function(res = NULL, err = NULL) {
+      stage0_rebuild_running(FALSE)
+      shiny::removeNotification("stage0_rebuild_progress")
+      gis_task_stop(session)
+      if (!is.null(err)) {
+        showNotification(
+          paste("Build products from the cloud:", conditionMessage(err)),
+          type = "error", duration = 14, id = "stage0_rebuild_result")
+        return(invisible(NULL))
+      }
+      stage0_tick(isolate(stage0_tick()) + 1L)
+      outputs_refresh_token(isolate(outputs_refresh_token()) + 1L)
+      showNotification(
+        "Products rebuilt from the current point cloud: DSM, DTM and orthomosaic are ready.",
+        type = "message", duration = 12, id = "stage0_rebuild_result")
+    }
+
+    p_snapshot <- p
+    dronebior_pkg_path <- tryCatch(find.package("DroneBioR"),
+                                   error = function(e) NA_character_)
+
+    if (isTRUE(.dronebior_async_available)) {
+      stage0_rebuild_running(TRUE)
+      gis_task_start(session,
+                     name   = "ODM rebuild (odm_meshing -> DEMs / orthophoto)",
+                     detail = basename(p_snapshot$odm_project_dir))
+      showNotification(
+        "Building DSM, DTM and orthomosaic in a background worker (resumes at odm_meshing). The UI stays responsive; this goes away when it finishes - it can take several minutes.",
+        type = "message", duration = NULL, closeButton = FALSE,
+        id = "stage0_rebuild_progress")
+      fut <- promises::future_promise({
+        if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+          if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+              !dir.exists(dronebior_pkg_path) ||
+              !requireNamespace("pkgload", quietly = TRUE)) {
+            stop("DroneBioR could not be loaded in the background worker.",
+                 call. = FALSE)
+          }
+          pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
+                            attach = FALSE, helpers = FALSE)
+        }
+        DroneBioR::rebuild_from_edited_cloud(
+          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam)
+      }, seed = TRUE,
+         globals = list(p_snapshot = p_snapshot, cam = cam,
+                        dronebior_pkg_path = dronebior_pkg_path))
+      promises::then(fut,
+                     onFulfilled = function(res) finish_rebuild(res = res),
+                     onRejected  = function(err) finish_rebuild(err = err))
+      invisible(NULL)
+    } else {
+      showNotification(
+        "Building DSM, DTM and orthomosaic (resumes at odm_meshing). This can take several minutes and the UI will be busy.",
+        type = "message", duration = NULL, closeButton = FALSE,
+        id = "stage0_rebuild_progress")
+      res <- tryCatch(
+        rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                                  camera_type = cam),
+        error = function(e) { finish_rebuild(err = e); NULL })
+      if (!is.null(res)) finish_rebuild(res = res)
+    }
   })
 
   observeEvent(input$clear_point_selection, {

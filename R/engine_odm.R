@@ -404,6 +404,18 @@ run_odm_project <- function(project,
   if (!nzchar(Sys.which("docker"))) {
     stop("Docker was not found. Install/start Docker or run an external engine first.", call. = FALSE)
   }
+  # The CLI existing does not mean the daemon is up. A stopped Docker Desktop
+  # otherwise fails deep in the run as a cryptic "exit status 1"; check here so
+  # the message names the real fix.
+  daemon_ok <- tryCatch(
+    identical(system2("docker", c("info", "--format", "{{.ServerVersion}}"),
+                      stdout = FALSE, stderr = FALSE), 0L),
+    error = function(e) FALSE
+  )
+  if (!isTRUE(daemon_ok)) {
+    stop("Docker is installed but its daemon is not responding. Start Docker ",
+         "Desktop (or the Docker service) and try again.", call. = FALSE)
+  }
 
   # Heal any orphan OpenSfM state from a previous interrupted run
   # before invoking docker — see clean_incomplete_odm_state() for the
