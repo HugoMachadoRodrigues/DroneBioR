@@ -4,6 +4,26 @@
 
 ### 3D point cloud
 
+- **“Build DSM, DTM and orthomosaic” (Stage 0, step 3) no longer looks
+  dead.** It reruns ODM from `odm_meshing` — a docker job of several
+  minutes — on the single R thread, with no feedback emitted before the
+  block, so the click froze the whole UI silently (the only sign was the
+  generic heartbeat banner after 2.5 s). It now runs in a background
+  worker like the CSF refinement: an immediate “Building… in a
+  background worker” notification and a live banner, a running-flag that
+  blocks double-clicks, and a success/error toast plus a product-status
+  refresh on completion. A synchronous fallback keeps it working where
+  `future`/`promises` are unavailable.
+
+- **A stopped Docker daemon now gives a clear message.**
+  [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
+  only checked that the `docker` CLI exists, so a stopped Docker Desktop
+  failed deep in the run as a cryptic “exit status 1”. It now probes the
+  daemon (`docker info`) up front and stops with “Docker is installed
+  but its daemon is not responding. Start Docker Desktop…”.
+
+### 3D point cloud
+
 - **Deleting / despiking points now actually leaves the viewer.** The 3D
   `point_cloud` reactive is `bindCache()`d on the cloud file *paths*,
   which do not change when an in-place edit (delete / despike / restore)
