@@ -258,3 +258,16 @@ test_that("Extract enables on a staged file, not a silent all-three gate", {
   expect_true(grepl(
     '(?s)field_staged_path.{0,200}?id = "field_extract"', src, perl = TRUE))
 })
+
+test_that("the 3D point-cloud cache is keyed on file content, not just the path", {
+  # point_cloud is bindCache()d on the cloud PATHS. An in-place edit (despike /
+  # delete / restore) rewrites the same path, so without a content fingerprint
+  # in the key the cache keeps serving the pre-edit cloud and the deleted points
+  # never leave the viewer. The (size, mtime) fingerprint must be in the key.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_true(grepl(
+    '(?s)bindCache\\(.{0,400}?cloud_source_fingerprint\\(\\)', src, perl = TRUE))
+})
