@@ -92,6 +92,7 @@ reference:
       - compute_spectral_indices
       - compute_biomass_proxy
       - compute_biomass_proxies
+      - export_all_covariates
 
   - title: "Classification"
     contents:

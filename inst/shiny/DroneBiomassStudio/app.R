@@ -4314,7 +4314,17 @@ ui <- page_navbar(
                 actionLink("field_cov_all", "All"),
                 actionLink("field_cov_none", "None")),
             actionButton("field_cov_refresh", "Refresh available layers",
-                         class = "btn-outline-secondary w-100")
+                         class = "btn-outline-secondary w-100"),
+            hr(class = "my-2"),
+            div(class = "small text-muted mb-1",
+                "Write EVERY covariate (all bands, indices, biomass proxies and ",
+                "CHM/DSM/DTM) as GeoTIFFs to a ", tags$code("covariates/"),
+                " folder in the project, at full resolution, to reuse later."),
+            actionButton("field_export_covariates",
+                         "Compute & export all covariates",
+                         class = "btn-outline-primary w-100"),
+            div(class = "small text-muted mt-1",
+                textOutput("field_export_covariates_status", inline = TRUE))
           ),
           accordion_panel(
             "3 - Extraction window",
@@ -5367,8 +5377,11 @@ server <- function(input, output, session) {
   })
 
   overlay_choices <- c(
-    # Headline composite + the four canonical raster products
-    "RGB Orthomosaic", "DSM", "DTM", "CHM",
+    # Headline composite + the canonical terrain products. CHM is deliberately
+    # NOT offered here: it is just another covariate (canopy height), so it
+    # lives with the covariates (Field Models + the covariate export), not as a
+    # GIS map layer the user has to think about.
+    "RGB Orthomosaic", "DSM", "DTM",
     # Multispectral vegetation indices (need NIR; some also need RedEdge)
     "NDVI", "NDRE", "EVI", "SAVI", "OSAVI", "MSAVI2", "NDWI",
     "GNDVI", "CIrededge", "GCI", "RVI", "DVI", "WDRVI", "TVI",
@@ -13112,6 +13125,122 @@ server <- function(input, output, session) {
   extracted_field <- reactiveVal(NULL)
   field_points_used <- reactiveVal(NULL)
   field_extract_elapsed <- reactiveVal(NA_real_)
+  covariate_export_running <- reactiveVal(FALSE)
+  covariate_export_status  <- reactiveVal(
+    "Builds every covariate to a covariates/ folder once a mosaic is loaded.")
+
+  output$field_export_covariates_status <- renderText(covariate_export_status())
+
+  # Compute and write EVERY covariate to <project>/covariates/, in a background
+  # worker (docker/CSF pattern) so the full-resolution stack does not freeze the
+  # UI. The worker re-reads the DEMs from disk and receives the in-memory
+  # reflectance / custom index packed with terra::wrap().
+  observeEvent(input$field_export_covariates, {
+    if (isTRUE(covariate_export_running())) {
+      showNotification("A covariate export is already running.", type = "warning",
+                       duration = 5)
+      return()
+    }
+    refl <- tryCatch(reflectance(), error = function(e) NULL)
+    if (is.null(refl)) {
+      showNotification("Load a mosaic in Spectral Analytics first — covariates are computed from it.",
+                       type = "warning", duration = 8)
+      return()
+    }
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      showNotification("No project is configured.", type = "warning", duration = 6)
+      return()
+    }
+    out_dir <- file.path(p$project_dir, "covariates")
+    paths <- odm_product_paths(p)
+    dem_path <- function(key) {
+      v <- unname(paths[[key]])
+      if (length(v) == 1L && !is.na(v) && file.exists(v)) v else NA_character_
+    }
+    chm_p <- dem_path("chm"); dsm_p <- dem_path("dsm"); dtm_p <- dem_path("dtm")
+    # If the CHM tif is not on disk yet, try to build it so the *_x_CHM proxies
+    # are exported too (the user wants ALL covariates).
+    if (is.na(chm_p)) {
+      chm_p <- tryCatch({
+        b <- build_chm_raster(p, force = FALSE)
+        if (!is.null(b) && file.exists(b)) b else NA_character_
+      }, error = function(e) NA_character_)
+    }
+    refl_w <- terra::wrap(refl)
+    custom_w <- tryCatch({
+      ci <- custom_index_raster(); if (is.null(ci)) NULL else terra::wrap(ci)
+    }, error = function(e) NULL)
+    dronebior_pkg_path <- tryCatch(find.package("DroneBioR"),
+                                   error = function(e) NA_character_)
+
+    finish_export <- function(res = NULL, err = NULL) {
+      covariate_export_running(FALSE)
+      shiny::removeNotification("cov_export_progress")
+      gis_task_stop(session)
+      if (!is.null(err)) {
+        covariate_export_status(paste("Export failed:", conditionMessage(err)))
+        showNotification(paste("Compute & export covariates:", conditionMessage(err)),
+                         type = "error", duration = 14, id = "cov_export_result")
+        return(invisible(NULL))
+      }
+      covariate_export_status(sprintf("%d covariates written to %s",
+                                      length(res), out_dir))
+      showNotification(
+        sprintf("Exported %d covariates to %s.", length(res), out_dir),
+        type = "message", duration = 12, id = "cov_export_result")
+    }
+
+    run_export <- function() {
+      r_refl <- terra::unwrap(refl_w)
+      rd <- function(pth) if (!is.na(pth)) terra::rast(pth) else NULL
+      r_custom <- if (!is.null(custom_w)) terra::unwrap(custom_w) else NULL
+      DroneBioR::export_all_covariates(
+        r_refl, out_dir, chm = rd(chm_p), dsm = rd(dsm_p), dtm = rd(dtm_p),
+        custom_index = r_custom)
+    }
+
+    covariate_export_running(TRUE)
+    covariate_export_status("Computing and exporting all covariates…")
+    gis_task_start(session, name = "Computing & exporting all covariates",
+                   detail = basename(out_dir))
+    showNotification(
+      "Computing every covariate at full resolution and writing them to the covariates/ folder in a background worker. The UI stays responsive; this can take a few minutes.",
+      type = "message", duration = NULL, closeButton = FALSE,
+      id = "cov_export_progress")
+
+    if (isTRUE(.dronebior_async_available)) {
+      fut <- promises::future_promise({
+        if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+          if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+              !dir.exists(dronebior_pkg_path) ||
+              !requireNamespace("pkgload", quietly = TRUE)) {
+            stop("DroneBioR could not be loaded in the background worker.",
+                 call. = FALSE)
+          }
+          pkgload::load_all(dronebior_pkg_path, quiet = TRUE, attach = FALSE,
+                            helpers = FALSE)
+        }
+        r_refl <- terra::unwrap(refl_w)
+        rd <- function(pth) if (!is.na(pth)) terra::rast(pth) else NULL
+        r_custom <- if (!is.null(custom_w)) terra::unwrap(custom_w) else NULL
+        DroneBioR::export_all_covariates(
+          r_refl, out_dir, chm = rd(chm_p), dsm = rd(dsm_p), dtm = rd(dtm_p),
+          custom_index = r_custom)
+      }, seed = TRUE,
+         globals = list(refl_w = refl_w, custom_w = custom_w, out_dir = out_dir,
+                        chm_p = chm_p, dsm_p = dsm_p, dtm_p = dtm_p,
+                        dronebior_pkg_path = dronebior_pkg_path))
+      promises::then(fut,
+                     onFulfilled = function(res) finish_export(res = res),
+                     onRejected  = function(err) finish_export(err = err))
+      invisible(NULL)
+    } else {
+      res <- tryCatch(run_export(),
+                      error = function(e) { finish_export(err = e); NULL })
+      if (!is.null(res)) finish_export(res = res)
+    }
+  })
 
   field_aux_rasters <- function(selected) {
     needs_chm <- ("CHM_m" %in% selected) || any(grepl("_x_CHM$", selected))
@@ -13144,22 +13273,22 @@ server <- function(input, output, session) {
       window <- as.integer(input$field_window %||% 3)
       fun <- input$field_window_fun %||% "mean"
       aux <- field_aux_rasters(selected)
-      if (any(grepl("_x_CHM$", selected) | selected == "CHM_m") && is.null(aux$chm)) {
-        # Name the reason: "no CHM" is ambiguous between "no DEMs discovered"
-        # and "DEMs are there but the subtraction failed", and the fix differs.
-        s <- tryCatch(field_cov_sources(), error = function(e) NULL)
-        why <- if (is.null(s)) {
-          "no products are loaded"
-        } else if (!isTRUE(s$has_dsm) || !isTRUE(s$has_dtm)) {
-          paste0("the DEMs it needs are missing (DSM: ",
-                 if (isTRUE(s$has_dsm)) "found" else "not found",
-                 ", DTM: ", if (isTRUE(s$has_dtm)) "found" else "not found", ")")
-        } else {
-          "the DSM and DTM are present but the CHM could not be built from them"
-        }
-        stop("A canopy-height covariate is ticked but ", why,
-             ". Build a CHM in 3D Modeling, or untick the covariate.",
-             call. = FALSE)
+      # A canopy-height covariate needs a CHM. If one is ticked but no CHM could
+      # be produced (DEMs not built yet, or a mid-write on OneDrive), do NOT
+      # abort the whole extraction -- drop just the CHM-dependent covariates and
+      # extract the rest. Blocking everything was the "the model won't run"
+      # dead-end the user hit; build the products (step 3) to create the CHM.
+      chm_cov <- selected[grepl("_x_CHM$", selected) | selected == "CHM_m"]
+      if (length(chm_cov) && is.null(aux$chm)) {
+        selected <- setdiff(selected, chm_cov)
+        observer_need(
+          length(selected) > 0,
+          "The only ticked covariates need a canopy height model (CHM), which is not available yet. Build the products (step 3) to create it, or also tick spectral covariates.")
+        showNotification(
+          sprintf("No CHM available yet, so %d canopy-height covariate(s) were skipped (%s). Build DSM/DTM/orthomosaic (step 3) to create the CHM, then re-extract. Extracting the rest now.",
+                  length(chm_cov), paste(chm_cov, collapse = ", ")),
+          type = "warning", duration = 12)
+        aux <- field_aux_rasters(selected)
       }
       started <- Sys.time()
       # with_gis_task (the top banner), NOT withProgress: the app
