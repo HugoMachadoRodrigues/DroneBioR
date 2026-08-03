@@ -42,6 +42,22 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="dronebior-development-version">DroneBioR (development version)<a class="anchor" aria-label="anchor" href="#dronebior-development-version"></a></h2>
 <div class="section level3">
+<h3 id="exports-tab-development-version">Exports tab<a class="anchor" aria-label="anchor" href="#exports-tab-development-version"></a></h3>
+<ul><li>
+<strong>Collapsed to a single “Generate report” button.</strong> The tab’s Deliverables checkboxes and Destination/format card never actually drove anything (no observer read them), and every covariate GeoTIFF is already exported at Process step 4. The one genuinely unique deliverable — the self-contained HTML report — now sits behind one button that refreshes the summary CSVs + provenance row and renders the report in a background worker. A note points to where the other maps are exported (GIS Workspace for the application map, Field Models for the fitted biomass prediction).</li>
+</ul></div>
+<div class="section level3">
+<h3 id="time-series-tab-development-version">Time Series tab<a class="anchor" aria-label="anchor" href="#time-series-tab-development-version"></a></h3>
+<ul><li>
+<strong>“Add current project as flight” works again.</strong> It called <code><a href="../reference/register_flight.html">register_flight()</a></code> with a <code>flight_date=</code> argument that does not exist, so every click errored and no flight was ever logged. It now passes <code>date=</code> — and records the project’s ODM sub-project so the metric reads the same products.</li>
+<li>
+<strong>NDVI / biomass-proxy metrics resolve the multispectral orthomosaic correctly</strong> (via <code><a href="../reference/odm_product_paths.html">odm_product_paths()</a></code>), so DJI Mavic 3M’s 7-band <code>odm_orthophoto_dji.tif</code> is used instead of the RGB-only file (which returned <code>NA</code>). The CHM metric already tracked the CSF-refined <code>chm.tif</code>.</li>
+<li>
+<strong>The flight list refreshes after register / remove / clear</strong>, and each row shows its date again.</li>
+<li>
+<code><a href="../reference/register_flight.html">register_flight()</a></code> / <code><a href="../reference/list_flights.html">list_flights()</a></code> gained <code>odm_dataset_subdir</code> / <code>odm_project_name</code> columns (back-filled on older registries) so a flight can be rebuilt with its real ODM sub-project rather than the <code>micasense</code> default. <code><a href="../reference/dronebio_project.html">dronebio_project()</a></code> now also carries <code>odm_dataset_subdir</code> in its object.</li>
+</ul></div>
+<div class="section level3">
 <h3 id="process-tab-development-version">Process tab<a class="anchor" aria-label="anchor" href="#process-tab-development-version"></a></h3>
 <ul><li><p><strong>Step 4 is now a single button that does everything.</strong> “Build maps &amp; export all covariates” rebuilds the DSM, DTM, orthomosaic and CHM from the cleaned cloud, then computes and exports every covariate to a <code>covariates/</code> folder — one click, one background run. The separate covariate button and the reconstruction “Advanced” section (one-shot Run ODM, engine/preset/resolution and export toggles) were removed; the numbered steps already cover the flow, so the tab is just steps 1–4 now.</p></li>
 <li><p><strong>The CHM is CSF-refined by default.</strong> Building the maps now runs the Cloth Simulation Filter on the point cloud to refine the ground (DTM) under dense canopy, at the DSM’s native resolution and keeping the original as <code>dtm_raw.tif</code>, then rebuilds the canopy height model from it with the usual spike-cleaning. Falls back to the plain DSM − DTM CHM when lidR or a georeferenced cloud is unavailable. The standalone “Build CHM” / CSF buttons were removed from GIS Workspace (the whole “Project actions” card is gone).</p></li>

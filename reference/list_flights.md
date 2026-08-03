@@ -24,6 +24,7 @@ A data frame with columns `flight_id`, `date`, `project_dir`, `notes`.
 ``` r
 reg <- tempfile(fileext = ".csv")
 list_flights(reg)  # empty registry
-#> [1] flight_id   date        project_dir notes      
+#> [1] flight_id          date               project_dir        notes             
+#> [5] odm_dataset_subdir odm_project_name  
 #> <0 rows> (or 0-length row.names)
 ```

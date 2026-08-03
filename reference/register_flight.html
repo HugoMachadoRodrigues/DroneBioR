@@ -56,7 +56,9 @@ calls with the same date and project_dir are idempotent.</p>
 <span>  <span class="va">date</span>,</span>
 <span>  <span class="va">project_dir</span>,</span>
 <span>  notes <span class="op">=</span> <span class="st">""</span>,</span>
-<span>  registry_path <span class="op">=</span> <span class="fu"><a href="default_flight_registry.html">default_flight_registry</a></span><span class="op">(</span><span class="op">)</span></span>
+<span>  registry_path <span class="op">=</span> <span class="fu"><a href="default_flight_registry.html">default_flight_registry</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  odm_dataset_subdir <span class="op">=</span> <span class="cn">NA_character_</span>,</span>
+<span>  odm_project_name <span class="op">=</span> <span class="cn">NA_character_</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -81,6 +83,15 @@ calls with the same date and project_dir are idempotent.</p>
 <dd><p>Path to the registry CSV. Defaults to
 <code><a href="default_flight_registry.html">default_flight_registry()</a></code>.</p></dd>
 
+
+<dt id="arg-odm-dataset-subdir-odm-project-name">odm_dataset_subdir, odm_project_name<a class="anchor" aria-label="anchor" href="#arg-odm-dataset-subdir-odm-project-name"></a></dt>
+<dd><p>Optional ODM sub-project
+coordinates for this flight (as passed to <code><a href="dronebio_project.html">dronebio_project()</a></code>).
+Recorded so the flight can later be rebuilt with the exact ODM run that
+produced its products, rather than the <code>micasense</code> default. When left
+<code>NA</code>, <code><a href="flight_time_series.html">flight_time_series()</a></code> falls back to
+the <code><a href="dronebio_project.html">dronebio_project()</a></code> defaults.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
@@ -96,8 +107,10 @@ calls with the same date and project_dir are idempotent.</p>
 <span class="r-in"><span><span class="fu">register_flight</span><span class="op">(</span>date <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Sys.time.html" class="external-link">Sys.Date</a></span><span class="op">(</span><span class="op">)</span>, project_dir <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/tempfile.html" class="external-link">tempdir</a></span><span class="op">(</span><span class="op">)</span>,</span></span>
 <span class="r-in"><span>                registry_path <span class="op">=</span> <span class="va">reg</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="list_flights.html">list_flights</a></span><span class="op">(</span><span class="va">reg</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>           flight_id       date     project_dir notes</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1 20260731-7cd25eee 2026-07-31 /tmp/RtmpIBkBSq    NA</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>           flight_id       date     project_dir notes odm_dataset_subdir</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 20260803-539e8c2d 2026-08-03 /tmp/RtmpqLEWU5    NA                 NA</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   odm_project_name</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1               NA</span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

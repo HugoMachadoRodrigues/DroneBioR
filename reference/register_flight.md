@@ -11,7 +11,9 @@ register_flight(
   date,
   project_dir,
   notes = "",
-  registry_path = default_flight_registry()
+  registry_path = default_flight_registry(),
+  odm_dataset_subdir = NA_character_,
+  odm_project_name = NA_character_
 )
 ```
 
@@ -35,6 +37,18 @@ register_flight(
   Path to the registry CSV. Defaults to
   [`default_flight_registry()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/default_flight_registry.md).
 
+- odm_dataset_subdir, odm_project_name:
+
+  Optional ODM sub-project coordinates for this flight (as passed to
+  [`dronebio_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/dronebio_project.md)).
+  Recorded so the flight can later be rebuilt with the exact ODM run
+  that produced its products, rather than the `micasense` default. When
+  left `NA`,
+  [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_time_series.md)
+  falls back to the
+  [`dronebio_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/dronebio_project.md)
+  defaults.
+
 ## Value
 
 Invisibly returns the updated registry data frame.
@@ -49,6 +63,8 @@ reg <- tempfile(fileext = ".csv")
 register_flight(date = Sys.Date(), project_dir = tempdir(),
                 registry_path = reg)
 list_flights(reg)
-#>           flight_id       date     project_dir notes
-#> 1 20260731-7cd25eee 2026-07-31 /tmp/RtmpIBkBSq    NA
+#>           flight_id       date     project_dir notes odm_dataset_subdir
+#> 1 20260803-539e8c2d 2026-08-03 /tmp/RtmpqLEWU5    NA                 NA
+#>   odm_project_name
+#> 1               NA
 ```
