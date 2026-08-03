@@ -1,5 +1,33 @@
 # DroneBioR (development version)
 
+## Exports tab
+
+* **Collapsed to a single "Generate report" button.** The tab's Deliverables
+  checkboxes and Destination/format card never actually drove anything (no
+  observer read them), and every covariate GeoTIFF is already exported at
+  Process step 4. The one genuinely unique deliverable — the self-contained HTML
+  report — now sits behind one button that refreshes the summary CSVs +
+  provenance row and renders the report in a background worker. A note points to
+  where the other maps are exported (GIS Workspace for the application map,
+  Field Models for the fitted biomass prediction).
+
+## Time Series tab
+
+* **"Add current project as flight" works again.** It called `register_flight()`
+  with a `flight_date=` argument that does not exist, so every click errored and
+  no flight was ever logged. It now passes `date=` — and records the project's
+  ODM sub-project so the metric reads the same products.
+* **NDVI / biomass-proxy metrics resolve the multispectral orthomosaic
+  correctly** (via `odm_product_paths()`), so DJI Mavic 3M's 7-band
+  `odm_orthophoto_dji.tif` is used instead of the RGB-only file (which returned
+  `NA`). The CHM metric already tracked the CSF-refined `chm.tif`.
+* **The flight list refreshes after register / remove / clear**, and each row
+  shows its date again.
+* `register_flight()` / `list_flights()` gained `odm_dataset_subdir` /
+  `odm_project_name` columns (back-filled on older registries) so a flight can be
+  rebuilt with its real ODM sub-project rather than the `micasense` default.
+  `dronebio_project()` now also carries `odm_dataset_subdir` in its object.
+
 ## Process tab
 
 * **Step 4 is now a single button that does everything.** "Build maps & export

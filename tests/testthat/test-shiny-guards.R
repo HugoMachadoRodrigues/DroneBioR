@@ -307,3 +307,32 @@ test_that("the Stage-0 product rebuild runs in the background, not a UI-freezing
     '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,4500}?future_promise',
     src, perl = TRUE))
 })
+
+test_that("register_flight is called with the real parameter names", {
+  # register_flight()'s parameter is `date`, not `flight_date`, and it has no
+  # `...`; a call using flight_date= threw "unused argument" on every click of
+  # "Add current project as flight", so no flight was ever logged. Guard the id.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_false(grepl("flight_date\\s*=", src))
+})
+
+test_that("the Exports tab has no dead deliverables / destination UI", {
+  # The Deliverables checkboxGroup and Destination+format card were never read
+  # by any observer (run_workflow ignored them). They were removed in favour of
+  # one Generate-report button; make sure the dead ids do not creep back.
+  app <- system.file("shiny", "DroneBiomassStudio", "app.R",
+                     package = "DroneBioR")
+  skip_if(!nzchar(app) || !file.exists(app), "app.R not installed")
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  for (dead in c("export_deliverables", "export_destination",
+                 "export_raster_format", "export_resolution_cm",
+                 "export_record_run")) {
+    expect_false(grepl(dead, src, fixed = TRUE),
+                 info = paste("dead Export input reintroduced:", dead))
+  }
+  # The one replacement action exists.
+  expect_true(grepl('actionButton\\("generate_report"', src))
+})

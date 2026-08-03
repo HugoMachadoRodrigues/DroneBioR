@@ -24,6 +24,10 @@ dronebio_project <- function(project_dir = getwd(),
     project_dir = project_dir,
     images_dir = file.path(project_dir, images_subdir),
     output_dir = file.path(project_dir, output_subdir),
+    # Keep the sub-project coordinates that locate this ODM run, so callers
+    # (e.g. the Time Series registry) can rebuild the exact same project later
+    # instead of assuming the micasense default.
+    odm_dataset_subdir = odm_dataset_subdir,
     odm_dataset_dir = odm_dataset_dir,
     odm_project_name = odm_project_name,
     odm_project_dir = odm_project_dir,
