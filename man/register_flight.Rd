@@ -8,7 +8,9 @@ register_flight(
   date,
   project_dir,
   notes = "",
-  registry_path = default_flight_registry()
+  registry_path = default_flight_registry(),
+  odm_dataset_subdir = NA_character_,
+  odm_project_name = NA_character_
 )
 }
 \arguments{
@@ -21,6 +23,13 @@ register_flight(
 
 \item{registry_path}{Path to the registry CSV. Defaults to
 \code{\link[=default_flight_registry]{default_flight_registry()}}.}
+
+\item{odm_dataset_subdir, odm_project_name}{Optional ODM sub-project
+coordinates for this flight (as passed to \code{\link[=dronebio_project]{dronebio_project()}}).
+Recorded so the flight can later be rebuilt with the exact ODM run that
+produced its products, rather than the \code{micasense} default. When left
+\code{NA}, \code{\link[=flight_time_series]{flight_time_series()}} falls back to
+the \code{dronebio_project()} defaults.}
 }
 \value{
 Invisibly returns the updated registry data frame.

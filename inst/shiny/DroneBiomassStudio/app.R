@@ -4453,26 +4453,18 @@ ui <- page_navbar(
     layout_sidebar(
       sidebar = sidebar(
         width = 320,
-        # Export Center sidebar: keeps the two main actions plus the
-        # optional report-CSV input. Detailed export choices (which
-        # rasters, which destination, format / resolution) live in
-        # the Export Center card in the main area.
-        actionButton("run_workflow", "Run analysis workflow",
-                     class = "btn-primary w-100"),
-        actionButton("render_report", "Render HTML report",
-                     class = "btn-outline-secondary w-100"),
-        checkboxInput("report_rerun_workflow",
-                      "Re-run workflow before rendering report",
-                      value = FALSE),
-        div(class = "small text-muted",
-            style = "margin-top:-4px; margin-bottom:6px;",
-            "Off (default) reuses the products already on disk under ",
-            "the output folder; the report opens in seconds. Tick ",
-            "this only when you want the report to recompute the ",
-            "workflow from the orthomosaic again (minutes on 5 cm/px ",
-            "data)."),
+        div(class = "small text-muted mb-2",
+            "One click refreshes the summary products (index + reflectance ",
+            "CSVs, recorded in the run manifest) and renders a self-contained ",
+            "HTML report."),
+        actionButton("generate_report", "Generate report",
+                     class = "btn-primary btn-lg w-100"),
         fileInput("report_field_csv",
                   "Field CSV for report (optional)", accept = ".csv"),
+        div(class = "small text-muted",
+            style = "margin-top:-4px; margin-bottom:6px;",
+            "Supply a field CSV to add the baseline biomass-model section to ",
+            "the report."),
         actionButton("open_output_folder", "Open output folder",
                      class = "btn-outline-secondary w-100"),
         actionButton("open_manifest", "Open run manifest",
@@ -4481,63 +4473,17 @@ ui <- page_navbar(
       div(
         class = "main-scroll",
         panel_intro_card(
-          "Export Center",
-          "Pick the deliverables you want, the destination folder and the formats, then click Run. Every export is recorded in dronebio_runs.csv alongside the engine, preset, resolution and image count - making it possible to retrace which products on disk came from which run.",
+          "Report",
+          "One button refreshes the summary products (index + reflectance summary CSVs, recorded in dronebio_runs.csv) and renders a self-contained HTML report: the ODM product inventory, per-index histograms, the CHM, and - when you supply a field CSV - the baseline biomass model. Every covariate GeoTIFF is already exported at Process step 4. The other map deliverables live where they are produced: the classified application map on GIS Workspace, and the fitted biomass prediction map on Field Models.",
           vignette = "dronebior-overview"
         ),
-        card(
-          card_header("Deliverables"),
-          div(class = "p-2",
-            div(class = "small text-muted mb-2",
-                "Tick what you want to write. Each item maps to one or more files in the output folder."),
-            checkboxGroupInput(
-              "export_deliverables", NULL,
-              choices  = c(
-                "Reflectance bands (GeoTIFF)" = "reflectance",
-                "Vegetation indices (GeoTIFF, all 22)" = "indices",
-                "Biomass proxies (GeoTIFF)" = "biomass",
-                "Index summary CSV" = "index_csv",
-                "Reflectance summary CSV" = "refl_csv",
-                "Application map (GeoTIFF + GPKG + CSV)" = "appmap",
-                "Tree / ROI metrics CSV" = "tree_csv",
-                "HTML report (self-contained)" = "html_report"
-              ),
-              selected = c("reflectance", "indices", "biomass",
-                           "index_csv", "refl_csv")
-            )
-          )
-        ),
-        card(
-          card_header("Destination + format"),
-          div(class = "p-2",
-            textInput("export_destination",
-                      "Output folder",
-                      value = default_project$output_dir),
-            selectInput("export_raster_format",
-                        "Raster format",
-                        choices = c("Cloud-optimized GeoTIFF (COG)" = "COG",
-                                    "GeoTIFF (deflate)" = "GTiff",
-                                    "GeoTIFF (LZW)" = "GTiff_LZW"),
-                        selected = "COG"),
-            numericInput("export_resolution_cm",
-                         "Target resolution (cm/px, 0 = native)",
-                         value = 0, min = 0, max = 100, step = 1),
-            checkboxInput("export_record_run",
-                          "Record this export in dronebio_runs.csv",
-                          value = TRUE)
-          )
-        ),
-        card(card_header("Workflow status"),
-             verbatimTextOutput("workflow_status")),
-        card(card_header("Output files"),
-             verbatimTextOutput("workflow_outputs")),
         card(card_header("Report"),
              verbatimTextOutput("report_status")),
         card(card_header("Run manifest"),
              div(class = "small text-muted mb-2",
-                 paste0("Every Process-tab run and every ",
-                        "workflow execution appends a row here. ",
-                        "Open with the button in the sidebar.")),
+                 paste0("Every Process-tab run and every report generation ",
+                        "appends a row here. Open with the button in the ",
+                        "sidebar.")),
              tableOutput("runs_manifest_table")),
         div(
           class = "gis-cta-row",
@@ -5062,7 +5008,7 @@ server <- function(input, output, session) {
                                           tab = "Spectral Analytics"))
     if (!isTRUE(c_$field))    return(list(label = "Fit field biomass model",
                                           tab = "Field Models"))
-    if (!isTRUE(c_$export))   return(list(label = "Export deliverables",
+    if (!isTRUE(c_$export))   return(list(label = "Generate report",
                                           tab = "Exports"))
     list(label = "Log this flight to Time Series", tab = "Time Series")
   })
@@ -14181,7 +14127,7 @@ server <- function(input, output, session) {
                    error = function(e) data.frame())
     if (nrow(df) == 0) {
       return(data.frame(
-        info = "No runs recorded yet. Launch the Process tab or click Run analysis workflow to add the first entry.",
+        info = "No runs recorded yet. Launch the Process tab or generate a report to add the first entry.",
         stringsAsFactors = FALSE,
         check.names = FALSE
       ))
@@ -14220,8 +14166,14 @@ server <- function(input, output, session) {
   })
 
   # ---- Time Series Flight Manager ---------------------------------
+  # Bumped by register / remove / clear / refresh so every reader below
+  # (the manager list, the remove-button wiring, the plot) re-renders after
+  # the registry CSV changes.
+  ts_refresh_trigger <- reactiveVal(0L)
+
   # Renders the registered-flights table with a Remove button per row.
   output$ts_flight_manager <- renderUI({
+    ts_refresh_trigger()  # re-render when the registry is mutated
     path <- input$ts_registry_path %||% ""
     if (!nzchar(path) || !file.exists(path)) {
       return(div(class = "small text-muted",
@@ -14238,7 +14190,7 @@ server <- function(input, output, session) {
       div(class = "d-flex justify-content-between align-items-center py-1",
           style = "border-bottom: 1px dashed #e2e8f0;",
           div(div(style = "font-weight: 600;",
-                  paste0(r$flight_date, " - ",
+                  paste0(r$date %||% "", " - ",
                          basename(r$project_dir %||% ""))),
               div(class = "small text-muted",
                   r$notes %||% "")),
@@ -14265,12 +14217,18 @@ server <- function(input, output, session) {
     }
     tryCatch({
       register_flight(
-        flight_date = format(Sys.Date(), "%Y-%m-%d"),
+        date = format(Sys.Date(), "%Y-%m-%d"),
         project_dir = p$project_dir,
         registry_path = path,
         notes = sprintf("Added from Drone Biomass Studio (%s)",
-                        format(Sys.time(), "%Y-%m-%dT%H:%M"))
+                        format(Sys.time(), "%Y-%m-%dT%H:%M")),
+        # Record the current project's ODM sub-project so the metric reads the
+        # SAME products ts_add_current just validated (the registry otherwise
+        # stores only project_dir and rebuilds with the micasense default).
+        odm_dataset_subdir = p$odm_dataset_subdir,
+        odm_project_name   = p$odm_project_name
       )
+      ts_refresh_trigger(isolate(ts_refresh_trigger()) + 1L)
       showNotification("Current project logged as a new flight.",
                        type = "message", duration = 4)
     }, error = function(e) {
@@ -14279,8 +14237,11 @@ server <- function(input, output, session) {
     })
   })
 
-  # Watch any remove button via lapply on the rendered rows.
+  # Watch any remove button via lapply on the rendered rows. Re-runs when the
+  # registry changes (ts_refresh_trigger) so the per-row observers are rewired
+  # to the current row set after a register / remove / clear.
   observe({
+    ts_refresh_trigger()
     path <- input$ts_registry_path %||% ""
     if (!nzchar(path) || !file.exists(path)) return()
     df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE),
@@ -14295,6 +14256,7 @@ server <- function(input, output, session) {
           if (is.null(rows) || idx > nrow(rows)) return()
           rows <- rows[-idx, , drop = FALSE]
           utils::write.csv(rows, path, row.names = FALSE)
+          ts_refresh_trigger(isolate(ts_refresh_trigger()) + 1L)
           showNotification("Flight removed from registry.",
                            type = "message", duration = 3)
         }, ignoreInit = TRUE, once = TRUE)
@@ -14309,124 +14271,107 @@ server <- function(input, output, session) {
     updateNavbarPage(session, "main_nav", selected = "Exports")
   })
 
-  workflow <- eventReactive(input$run_workflow, {
-    # Snapshot inputs as plain values: the future runs in a worker R session
-    # that has no Shiny reactive context.
-    project_dir <- input$project_dir
-    images_dir  <- input$images_dir
-    output_dir  <- input$output_dir
-    ortho       <- input$orthomosaic
-    use_alpha   <- input$use_alpha
-
-    run_workflow_safely <- function() {
-      DroneBioR::configure_proj_database(verbose = FALSE)
-      proj <- DroneBioR::dronebio_project(project_dir)
-      proj$images_dir <- images_dir
-      proj$output_dir <- output_dir
-      result <- DroneBioR::run_dronebio_workflow(
-        project     = proj,
-        orthomosaic = ortho,
-        output_dir  = output_dir,
-        use_alpha   = use_alpha
-      )
-      # Return only what the renders need; terra::SpatRaster cannot be
-      # serialized cheaply across processes, and the renders do not look
-      # at the rasters themselves, only at the written paths.
-      list(
-        status       = "Analysis completed.",
-        output_paths = result$output_paths
-      )
-    }
-
-    if (isTRUE(.dronebior_async_available)) {
-      showNotification(
-        "R analysis started in a background process. Switch panels - this notification will go away when it finishes.",
-        type     = "message",
-        duration = 6
-      )
-      # `future_promise` returns a promise that downstream renders chain on.
-      promises::future_promise({
-        suppressWarnings(run_workflow_safely())
-      })
-    } else {
-      with_error_toast("Run DroneBioR workflow", {
-        withProgress(message = "Running R analysis", value = 0.1, {
-          result <- run_workflow_safely()
-          incProgress(1)
-          result
-        })
-      })
-    }
-  })
-
-  # The renders accept either a resolved value (sync fallback) or a promise
-  # (async path). `as_workflow_promise()` normalises them so the rest of
-  # the render is identical regardless of mode.
-  as_workflow_promise <- function(value) {
-    if (isTRUE(.dronebior_async_available)) {
-      if (inherits(value, "promise")) return(value)
-      return(promises::promise_resolve(value))
-    }
-    # Without promises installed we just pass the value through as-is.
-    value
-  }
-
-  output$workflow_status <- renderText({
-    result <- workflow()
-    if (.dronebior_async_available) {
-      promises::then(
-        as_workflow_promise(result),
-        onFulfilled = function(r) r$status,
-        onRejected  = function(e) paste("Workflow failed:", conditionMessage(e))
-      )
-    } else {
-      req(result)
-      result$status
-    }
-  })
-
-  output$workflow_outputs <- renderText({
-    result <- workflow()
-    if (.dronebior_async_available) {
-      promises::then(
-        as_workflow_promise(result),
-        onFulfilled = function(r) paste(r$output_paths, collapse = "\n"),
-        onRejected  = function(e) ""
-      )
-    } else {
-      req(result)
-      paste(result$output_paths, collapse = "\n")
-    }
-  })
-
-  # Report rendering. Uses the bundled biomass_report.Rmd template via
-  # render_dronebio_report(). Caches the last produced path so the
-  # "Report" card can show it after a successful render.
+  # Export Center: ONE button refreshes the summary products (index /
+  # reflectance summary CSVs + a provenance row in dronebio_runs.csv) and
+  # renders the self-contained HTML report, in a background worker so the slow
+  # rmarkdown render + workflow recompute never freeze the UI. Every per-layer
+  # covariate GeoTIFF is already produced at Process step 4; this tab is the
+  # report + provenance.
   report_output_path <- reactiveVal(NULL)
-  observeEvent(input$render_report, {
-    with_error_toast("Render report", {
-      out <- file.path(input$project_dir, "DroneBioR_report.html")
-      field_csv <- if (!is.null(input$report_field_csv)) input$report_field_csv$datapath else NULL
-      render_dronebio_report(
-        project        = project(),
-        output_file    = out,
-        field_csv      = field_csv,
-        use_alpha      = isTRUE(input$use_alpha),
-        rerun_workflow = isTRUE(input$report_rerun_workflow)
-      )
+  report_running <- reactiveVal(FALSE)
+
+  observeEvent(input$generate_report, {
+    if (isTRUE(report_running())) {
+      showNotification("A report is already being generated.", type = "warning",
+                       duration = 5)
+      return()
+    }
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) {
+      showNotification("No project is configured.", type = "warning", duration = 6)
+      return()
+    }
+    out <- file.path(p$project_dir, "DroneBioR_report.html")
+    field_csv <- if (!is.null(input$report_field_csv))
+      input$report_field_csv$datapath else NULL
+    ortho     <- input$orthomosaic
+    use_alpha <- isTRUE(input$use_alpha)
+    out_dir   <- p$output_dir
+    p_snapshot <- p
+    dronebior_pkg_path <- tryCatch(find.package("DroneBioR"),
+                                   error = function(e) NA_character_)
+
+    finish_report <- function(res = NULL, err = NULL) {
+      report_running(FALSE)
+      shiny::removeNotification("report_progress")
+      gis_task_stop(session)
+      # Refresh the run-manifest table now that a row was appended.
+      outputs_refresh_token(isolate(outputs_refresh_token()) + 1L)
+      if (!is.null(err)) {
+        showNotification(paste("Generate report:", conditionMessage(err)),
+                         type = "error", duration = 14, id = "report_result")
+        return(invisible(NULL))
+      }
       report_output_path(out)
-      showNotification(
-        paste("Report saved to:", out),
-        type     = "message",
-        duration = 8
-      )
-    })
+      showNotification(paste("Report saved to:", out), type = "message",
+                       duration = 10, id = "report_result")
+    }
+
+    run_report <- function() {
+      configure_proj_database(verbose = FALSE)
+      run_dronebio_workflow(project = p_snapshot, orthomosaic = ortho,
+                            output_dir = out_dir, use_alpha = use_alpha)
+      render_dronebio_report(project = p_snapshot, output_file = out,
+                             field_csv = field_csv, use_alpha = use_alpha,
+                             rerun_workflow = FALSE)
+      out
+    }
+
+    report_running(TRUE)
+    gis_task_start(session, name = "Generating report",
+                   detail = basename(p_snapshot$project_dir))
+    showNotification(
+      "Refreshing the summary products and rendering the HTML report in a background worker. The UI stays responsive; this can take a few minutes.",
+      type = "message", duration = NULL, closeButton = FALSE, id = "report_progress")
+
+    if (isTRUE(.dronebior_async_available)) {
+      fut <- promises::future_promise({
+        if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+          if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+              !dir.exists(dronebior_pkg_path) ||
+              !requireNamespace("pkgload", quietly = TRUE)) {
+            stop("DroneBioR could not be loaded in the background worker.",
+                 call. = FALSE)
+          }
+          pkgload::load_all(dronebior_pkg_path, quiet = TRUE, attach = FALSE,
+                            helpers = FALSE)
+        }
+        DroneBioR::configure_proj_database(verbose = FALSE)
+        DroneBioR::run_dronebio_workflow(project = p_snapshot, orthomosaic = ortho,
+                                         output_dir = out_dir, use_alpha = use_alpha)
+        DroneBioR::render_dronebio_report(project = p_snapshot, output_file = out,
+                                          field_csv = field_csv, use_alpha = use_alpha,
+                                          rerun_workflow = FALSE)
+        out
+      }, seed = TRUE,
+         globals = list(p_snapshot = p_snapshot, ortho = ortho, out_dir = out_dir,
+                        use_alpha = use_alpha, out = out, field_csv = field_csv,
+                        dronebior_pkg_path = dronebior_pkg_path))
+      promises::then(fut,
+                     onFulfilled = function(res) finish_report(res = res),
+                     onRejected  = function(err) finish_report(err = err))
+      invisible(NULL)
+    } else {
+      res <- tryCatch(run_report(),
+                      error = function(e) { finish_report(err = e); NULL })
+      if (!is.null(res)) finish_report(res = res)
+    }
   })
 
   output$report_status <- renderText({
     path <- report_output_path()
     if (is.null(path)) {
-      return("No report rendered yet. Click 'Render HTML report' to produce one.")
+      return("No report yet. Click 'Generate report' to refresh the summary products and render the HTML report.")
     }
     if (!file.exists(path)) {
       return("Report file not found at expected path.")
@@ -14438,9 +14383,8 @@ server <- function(input, output, session) {
     )
   })
 
-  # Time-series panel: registry CRUD + metric plot.
-  ts_refresh_trigger <- reactiveVal(0L)
-
+  # Time-series panel: registry CRUD + metric plot. (ts_refresh_trigger is
+  # defined up in the Flight Manager section so the manager can depend on it.)
   observeEvent(input$ts_register, {
     with_error_toast("Register flight", {
       observer_need(nzchar(input$ts_flight_project_dir),
@@ -14469,11 +14413,6 @@ server <- function(input, output, session) {
   observeEvent(input$ts_refresh, {
     ts_refresh_trigger(ts_refresh_trigger() + 1L)
   })
-
-  output$ts_flights_table <- renderTable({
-    ts_refresh_trigger()
-    list_flights(input$ts_registry_path)
-  }, digits = 2)
 
   output$ts_plot <- renderPlot({
     ts_refresh_trigger()

@@ -18,10 +18,12 @@ ensure_flight_registry <- function(registry_path) {
   if (file.exists(registry_path)) return(invisible(registry_path))
   dir.create(dirname(registry_path), recursive = TRUE, showWarnings = FALSE)
   empty <- data.frame(
-    flight_id   = character(),
-    date        = character(),
-    project_dir = character(),
-    notes       = character(),
+    flight_id          = character(),
+    date               = character(),
+    project_dir        = character(),
+    notes              = character(),
+    odm_dataset_subdir = character(),
+    odm_project_name   = character(),
     stringsAsFactors = FALSE
   )
   utils::write.csv(empty, registry_path, row.names = FALSE)
@@ -53,7 +55,9 @@ ensure_flight_registry <- function(registry_path) {
 register_flight <- function(date,
                             project_dir,
                             notes = "",
-                            registry_path = default_flight_registry()) {
+                            registry_path = default_flight_registry(),
+                            odm_dataset_subdir = NA_character_,
+                            odm_project_name = NA_character_) {
   ensure_flight_registry(registry_path)
   # base::as.Date.character() throws on unparseable input rather than returning
   # NA; we wrap it so callers see a uniform "Could not parse date" message.
@@ -78,13 +82,17 @@ register_flight <- function(date,
     return(invisible(current))
   }
   new_row <- data.frame(
-    flight_id   = flight_id,
-    date        = format(date_parsed, "%Y-%m-%d"),
-    project_dir = project_dir,
-    notes       = as.character(notes %||% ""),
+    flight_id          = flight_id,
+    date               = format(date_parsed, "%Y-%m-%d"),
+    project_dir        = project_dir,
+    notes              = as.character(notes %||% ""),
+    odm_dataset_subdir = as.character(odm_dataset_subdir %||% NA_character_),
+    odm_project_name   = as.character(odm_project_name %||% NA_character_),
     stringsAsFactors = FALSE
   )
-  updated <- rbind(current, new_row)
+  # `current` comes from list_flights(), which backfills the two ODM-layout
+  # columns, so it and new_row share a schema and rbind lines up by name.
+  updated <- rbind(current[names(new_row)], new_row)
   utils::write.csv(updated, registry_path, row.names = FALSE)
   invisible(updated)
 }
@@ -119,14 +127,22 @@ rlang_compatible_hash <- function(x) {
 list_flights <- function(registry_path = default_flight_registry()) {
   if (!file.exists(registry_path)) {
     return(data.frame(
-      flight_id   = character(),
-      date        = character(),
-      project_dir = character(),
-      notes       = character(),
+      flight_id          = character(),
+      date               = character(),
+      project_dir        = character(),
+      notes              = character(),
+      odm_dataset_subdir = character(),
+      odm_project_name   = character(),
       stringsAsFactors = FALSE
     ))
   }
-  utils::read.csv(registry_path, stringsAsFactors = FALSE)
+  df <- utils::read.csv(registry_path, stringsAsFactors = FALSE)
+  # Backfill the ODM-layout columns on registries written before they existed,
+  # so callers see a stable schema and flight_time_series can rebuild each
+  # flight's project with the right sub-project (not just the micasense default).
+  if (is.null(df$odm_dataset_subdir)) df$odm_dataset_subdir <- NA_character_
+  if (is.null(df$odm_project_name))   df$odm_project_name   <- NA_character_
+  df
 }
 
 #' Compute a time series of a custom flight summary
@@ -171,7 +187,20 @@ flight_time_series <- function(summary_fn,
     ))
   }
   values <- vapply(seq_len(nrow(flights)), function(i) {
-    proj <- dronebio_project(flights$project_dir[i])
+    # Rebuild each flight with its stored ODM sub-project when the registry
+    # recorded one (DJI / Sony / a picker-selected project), else the
+    # dronebio_project() defaults. Without this every non-"micasense" flight
+    # resolved to a product-less path and silently plotted NA.
+    subdir <- flights$odm_dataset_subdir[i]
+    name   <- flights$odm_project_name[i]
+    proj <- if (!is.null(subdir) && !is.na(subdir) && nzchar(subdir) &&
+                !is.null(name) && !is.na(name) && nzchar(name)) {
+      dronebio_project(flights$project_dir[i],
+                       odm_dataset_subdir = subdir,
+                       odm_project_name   = name)
+    } else {
+      dronebio_project(flights$project_dir[i])
+    }
     tryCatch(as.numeric(summary_fn(proj))[[1]],
              error = function(e) NA_real_)
   }, numeric(1))
@@ -254,7 +283,10 @@ cached_flight_metric <- function(metric, source_path, compute) {
 #' }
 #' @export
 flight_ndvi_mean <- function(project) {
-  ortho_path <- project$odm_orthomosaic
+  # Resolve via odm_product_paths so a DJI Mavic 3M flight uses its 7-band
+  # odm_orthophoto_dji.tif (project$odm_orthomosaic points at the RGB-only
+  # odm_orthophoto.tif, which has no NIR and would return NA).
+  ortho_path <- unname(odm_product_paths(project)[["orthomosaic"]])
   if (!file.exists(ortho_path)) return(NA_real_)
   cached_flight_metric("ndvi_mean", ortho_path, function() {
     # NDVI-only path: read just the Red + NIR bands, scale them, and
@@ -279,7 +311,8 @@ flight_ndvi_mean <- function(project) {
 #' @rdname flight_summary_helpers
 #' @export
 flight_biomass_proxy_mean <- function(project) {
-  ortho_path <- project$odm_orthomosaic
+  # See flight_ndvi_mean: resolve via odm_product_paths for DJI 7-band orthos.
+  ortho_path <- unname(odm_product_paths(project)[["orthomosaic"]])
   if (!file.exists(ortho_path)) return(NA_real_)
   cached_flight_metric("biomass_proxy_mean", ortho_path, function() {
     ortho <- read_multispectral_orthomosaic(ortho_path)
