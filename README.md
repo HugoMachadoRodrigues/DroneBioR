@@ -8,7 +8,7 @@
 [![R >= 4.1](https://img.shields.io/badge/R-%3E%3D%204.1-276DC3.svg)](https://cran.r-project.org/)
 <!-- badges: end -->
 
-**DroneBioR** is a research-oriented R package and Shiny app (Drone Biomass
+**DroneBioR** is a research-oriented R package and web application (Drone Biomass
 Studio) for drone biomass analysis with MicaSense multispectral imagery.
 It delegates the heavy photogrammetry work (SfM, MVS, mesh, texturing) to
 external engines — **OpenDroneMap**, **WebODM**, **Pix4Dmapper** or
@@ -27,11 +27,11 @@ Engine outputs (orthomosaic, DSM, DTM, dense point cloud, textured mesh)
   -> field sample extraction + baseline biomass model
   -> time-series tracking across flights
   -> HTML report (RMarkdown template)
-  -> Drone Biomass Studio: 7-panel Shiny app for interactive
+  -> Drone Biomass Studio: 7-panel web app for interactive
      GIS + 3D modeling + spectral + survey + reporting
 ```
 
-### What's in the Shiny app
+### What's in the web application
 
 * **GIS Workspace** — basemap + index overlays with COG-style tiling
   (smooth pan/zoom on big orthomosaics), distance / area / CHM-volume
@@ -110,7 +110,7 @@ example(compute_spectral_indices)
 run_drone_biomass_studio(project_dir = "/path/to/Drone_Biomass")
 ```
 
-Drone Biomass Studio is a Shiny app for previewing orthomosaics, indices,
+Drone Biomass Studio is a web application for previewing orthomosaics, indices,
 the CHM, and point-cloud ROIs interactively.
 
 ## Documentation

@@ -212,7 +212,7 @@ reference:
       - quick_outputs_check
       - is_cloud_sync_path
 
-  - title: "Shiny app"
+  - title: "Web application"
     contents:
       - run_drone_biomass_studio
       - with_error_toast

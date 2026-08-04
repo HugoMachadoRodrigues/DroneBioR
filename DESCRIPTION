@@ -15,7 +15,7 @@ Description: A reproducible R workflow for drone-based biomass research using
     radiometric scaling to reflectance, vegetation indices (NDVI, NDRE, EVI,
     SAVI, NDWI, GNDVI, CIrededge, MSAVI2 and VARI), canopy height models,
     point-cloud region-of-interest analysis, individual tree candidate
-    detection, field sample extraction, baseline biomass models and a Shiny
+    detection, field sample extraction, baseline biomass models and a web
     application for interactive exploration. The package targets academic
     and research use.
 License: AGPL (>= 3)
