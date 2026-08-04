@@ -136,6 +136,7 @@ S3method(print, dronebio_plate_meter)
 S3method(print, dronebio_biomass_model)
 S3method(predict, dronebio_field_model)
 S3method(print, dronebio_field_model)
+S3method(print, dronebio_survey_volume)
 
 importFrom(parallel, detectCores)
 importFrom(grDevices, chull)
