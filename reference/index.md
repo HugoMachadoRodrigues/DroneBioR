@@ -384,7 +384,7 @@ and check what actually landed on disk.
 - [`is_cloud_sync_path()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/is_cloud_sync_path.md)
   : Detect whether a path lives inside a cloud-sync provider folder
 
-## Shiny app
+## Web application
 
 - [`run_drone_biomass_studio()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_drone_biomass_studio.md)
   : Start Drone Biomass Studio
