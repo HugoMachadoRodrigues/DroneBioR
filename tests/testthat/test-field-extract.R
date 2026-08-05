@@ -237,3 +237,51 @@ test_that("a field-file column named like a covariate never shadows the extracte
   expect_equal(sum(names(tab) == "Red"), 1L)
   expect_equal(unname(tab$Red), c(0.5, 0.5))
 })
+
+# ---- metric windows --------------------------------------------------------
+
+test_that("window_from_metres converts to the nearest odd pixel count", {
+  r <- terra::rast(nrows = 100, ncols = 100, xmin = 0, xmax = 5.7587,
+                   ymin = 0, ymax = 5.7587)
+  expect_equal(window_from_metres(r, 0.52)$window, 9L)
+  expect_equal(window_from_metres(r, 0.17)$window, 3L)
+  expect_equal(window_from_metres(r, 0.06)$window, 1L)
+  w <- window_from_metres(r, 0.52)
+  expect_equal(w$window_m_actual, 9 * min(terra::res(r)))
+  expect_equal(w$resolution, min(terra::res(r)))
+})
+
+test_that("window_from_metres refuses what it cannot deliver", {
+  r <- terra::rast(nrows = 100, ncols = 100, xmin = 0, xmax = 5.7587,
+                   ymin = 0, ymax = 5.7587)
+  expect_error(window_from_metres(r, 5), "Supported windows")
+  expect_error(window_from_metres(r, 0), "positive number")
+  expect_error(window_from_metres(r, -1), "positive number")
+  expect_error(window_from_metres(data.frame(a = 1), 0.5), "SpatRaster")
+})
+
+test_that("window_m and the equivalent pixel window give the same extraction", {
+  set.seed(3)
+  r <- terra::rast(nrows = 200, ncols = 200, xmin = 0, xmax = 11.5174,
+                   ymin = 0, ymax = 11.5174, nlyr = 5)
+  terra::values(r) <- runif(200 * 200 * 5)
+  names(r) <- c("Blue", "Green", "Red", "RedEdge", "NIR")
+  pts <- data.frame(x = runif(10, 1, 10), y = runif(10, 1, 10))
+  a <- extract_field_covariates(pts, r, "NDVI", window = 9L)
+  b <- extract_field_covariates(pts, r, "NDVI", window_m = 0.52)
+  expect_equal(a$NDVI, b$NDVI)
+  expect_equal(attr(a, "window_px"), attr(b, "window_px"))
+  expect_equal(attr(b, "window_px"), 9L)
+  expect_equal(attr(b, "window_m"), 9 * min(terra::res(r)))
+})
+
+test_that("an out-of-range window_m is reported, not silently truncated", {
+  set.seed(4)
+  r <- terra::rast(nrows = 50, ncols = 50, xmin = 0, xmax = 2.88,
+                   ymin = 0, ymax = 2.88, nlyr = 5)
+  terra::values(r) <- runif(50 * 50 * 5)
+  names(r) <- c("Blue", "Green", "Red", "RedEdge", "NIR")
+  pts <- data.frame(x = runif(5, 0.5, 2), y = runif(5, 0.5, 2))
+  expect_error(extract_field_covariates(pts, r, "NDVI", window_m = 99),
+               "Supported windows")
+})

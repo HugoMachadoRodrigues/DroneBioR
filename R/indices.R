@@ -368,8 +368,14 @@ export_all_covariates <- function(reflectance, out_dir,
     add(names(custom_index)[[1L]] %||% "Custom_Index", custom_index[[1L]])
   }
 
+  # Carry the radiometric state of the source reflectance onto every exported
+  # covariate, so a raster read back from disk still says what was done to it.
+  src_level <- radiometric_level(reflectance)
+  src_scale <- .radiometric_scale_factor(reflectance)
   safe <- function(nm) gsub("[^A-Za-z0-9._-]+", "_", nm)
   write_one <- function(r, dst) {
+    r <- tryCatch(set_radiometric_level(r, src_level, scale_factor = src_scale),
+                  error = function(e) r)
     tryCatch({
       terra::writeRaster(r, dst, overwrite = TRUE, filetype = "COG",
                          gdal = c("COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"))

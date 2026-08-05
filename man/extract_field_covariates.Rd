@@ -9,6 +9,7 @@ extract_field_covariates(
   reflectance,
   selected,
   window = 1L,
+  window_m = NULL,
   fun = "mean",
   custom_index = NULL,
   chm = NULL,
@@ -26,6 +27,12 @@ POINT layer).}
 \code{\link[=field_covariate_catalogue]{field_covariate_catalogue()}}).}
 
 \item{window}{Odd window size (see \code{\link[=window_cells]{window_cells()}}).}
+
+\item{window_m}{Support in metres instead of pixels. A window in pixels
+spans a different area at every ground sampling distance, so a quadrat
+size is better stated in metres and converted per survey: this rounds to
+the nearest odd pixel count for \code{reflectance} and errors when the request
+falls outside the supported range. See \code{\link[=window_from_metres]{window_from_metres()}}.}
 
 \item{fun}{Aggregation: \code{"mean"}, \code{"median"}, \code{"max"}, \code{"min"}, \code{"sd"}.}
 

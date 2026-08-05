@@ -190,7 +190,12 @@ normalize_covariate_names <- function(x, warn = TRUE) {
 #' @param reflectance Reflectance `SpatRaster`.
 #' @param covariates Covariate ids to supply, in order (`model$predictors`).
 #' @param max_cells Approximate cell budget for the aggregated grid.
-#' @param window Extraction window the model was trained with.
+#' @param window Extraction window in pixels the model was trained with.
+#'   Ignored when `window_m` is supplied.
+#' @param window_m The same support expressed in metres, converted to the
+#'   nearest odd pixel count for `reflectance`. Prefer this when the
+#'   calibration table was extracted with `window_m`, so the prediction stack
+#'   matches the support the model saw. See [window_from_metres()].
 #' @param custom_index Optional custom index `SpatRaster`.
 #' @param chm,dsm,dtm Optional terrain `SpatRaster`s.
 #' @return A `SpatRaster` whose `names()` are exactly `covariates`, in order,
@@ -202,11 +207,15 @@ normalize_covariate_names <- function(x, warn = TRUE) {
 #' names(stack)
 #' @export
 build_prediction_stack <- function(reflectance, covariates, max_cells = 1e6,
-                                   window = 1L, custom_index = NULL,
+                                   window = 1L, window_m = NULL,
+                                   custom_index = NULL,
                                    chm = NULL, dsm = NULL, dtm = NULL) {
   if (!inherits(reflectance, "SpatRaster")) {
     stop("`reflectance` must be a terra SpatRaster.", call. = FALSE)
   }
+  # A prediction stack must be aggregated to the same support the model was
+  # calibrated on, so this accepts the metric form too.
+  window <- .resolve_window(window, window_m, reflectance)
   covariates <- as.character(covariates)
   if (length(covariates) == 0L) {
     stop("`covariates` must name at least one layer.", call. = FALSE)

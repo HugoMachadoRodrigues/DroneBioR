@@ -19,6 +19,64 @@
 # footprint at 5.7 cm GSD.
 .allowed_windows <- seq(1L, 21L, by = 2L)
 
+# A window in pixels means different things at different ground sampling
+# distances: 3 x 3 spans about 17 cm at 5.8 cm GSD but about 1.5 m at 50 cm.
+# resolve_window() lets a caller state the support it actually wants in metres
+# and converts to the nearest odd pixel count for the raster in hand.
+#' @noRd
+.resolve_window <- function(window, window_m, reference) {
+  if (is.null(window_m)) return(as.integer(window))
+  if (length(window_m) != 1L || !is.finite(suppressWarnings(as.numeric(window_m))) ||
+      as.numeric(window_m) <= 0) {
+    stop("`window_m` must be a single positive number of metres.", call. = FALSE)
+  }
+  res <- tryCatch(min(terra::res(reference)), error = function(e) NA_real_)
+  if (!is.finite(res) || res <= 0) {
+    stop("Could not read the resolution of the reference raster, so `window_m` ",
+         "cannot be converted to pixels. Pass `window` in pixels instead.",
+         call. = FALSE)
+  }
+  n <- as.numeric(window_m) / res
+  # round to the nearest odd integer: a window has to be centred on the pixel
+  # holding the sample, so an even count has no centre.
+  px <- max(1L, as.integer(round((n - 1) / 2)) * 2L + 1L)
+  if (!(px %in% .allowed_windows)) {
+    stop("`window_m` = ", window_m, " m is ", round(n, 1), " pixels at a ",
+         signif(res, 3), " m resolution, which rounds to ", px,
+         ". Supported windows are ", paste(.allowed_windows, collapse = ", "),
+         " pixels, i.e. up to ", signif(21 * res, 3), " m here.", call. = FALSE)
+  }
+  attr(px, "window_m_requested") <- as.numeric(window_m)
+  attr(px, "window_m_actual")    <- px * res
+  as.integer(px)
+}
+
+#' Convert a metric window to the nearest odd pixel window
+#'
+#' A window expressed in pixels changes physical meaning with the ground
+#' sampling distance, so a quadrat-matched support has to be restated for every
+#' survey. This converts metres to the nearest odd pixel count for a given
+#' raster, and reports the metric support that count actually spans.
+#'
+#' @param reference A `terra::SpatRaster` whose resolution defines the
+#'   conversion.
+#' @param window_m Desired support in metres (the side of the square).
+#' @return A list with `window` (odd pixel count), `window_m_actual` (what that
+#'   count spans) and `resolution`.
+#' @examples
+#' r <- terra::rast(nrows = 100, ncols = 100, xmin = 0, xmax = 5.76, ymin = 0, ymax = 5.76)
+#' window_from_metres(r, 0.52)
+#' @export
+window_from_metres <- function(reference, window_m) {
+  if (!inherits(reference, "SpatRaster")) {
+    stop("`reference` must be a terra SpatRaster.", call. = FALSE)
+  }
+  px  <- .resolve_window(1L, window_m, reference)
+  res <- min(terra::res(reference))
+  list(window = as.integer(px), window_m_actual = as.integer(px) * res,
+       resolution = res)
+}
+
 # Coordinates from whatever the caller has: an sf layer, a SpatVector, or a
 # plain table with x/y columns.
 .points_xy <- function(points) {
@@ -373,7 +431,13 @@ covariate_frame_from_pixels <- function(band_values, selected,
 #' @param reflectance Reflectance `SpatRaster` defining the grid.
 #' @param selected Covariate ids to extract, in order (see
 #'   [field_covariate_catalogue()]).
-#' @param window Odd window size (see [window_cells()]).
+#' @param window Odd window size in pixels (see [window_cells()]). Ignored
+#'   when `window_m` is supplied.
+#' @param window_m Support in metres instead of pixels. A window in pixels
+#'   spans a different area at every ground sampling distance, so a quadrat
+#'   size is better stated in metres and converted per survey: this rounds to
+#'   the nearest odd pixel count for `reflectance` and errors when the request
+#'   falls outside the supported range. See [window_from_metres()].
 #' @param fun Aggregation: `"mean"`, `"median"`, `"max"`, `"min"`, `"sd"`.
 #' @param custom_index Optional single-layer `SpatRaster` with a user index.
 #' @param chm,dsm,dtm Optional terrain `SpatRaster`s.
@@ -381,7 +445,7 @@ covariate_frame_from_pixels <- function(band_values, selected,
 #'   every original attribute, then one numeric column per `selected` id in
 #'   that order, then `.n_valid_px`, `.window_px`, `.window_valid_frac` and
 #'   `.in_extent`. Out-of-extent points keep their row with all-`NA`
-#'   covariates. Carries `window_px`, `window_fun`, `crs` and
+#'   covariates. Carries `window_px`, `window_m`, `window_fun`, `crs` and
 #'   `reference_geom` attributes describing the training grid.
 #' @examples
 #' ortho <- system.file("extdata", "micasense_subset.tif", package = "DroneBioR")
@@ -394,12 +458,13 @@ covariate_frame_from_pixels <- function(band_values, selected,
 #' head(tab[, c("sample_id", "NDVI", "NDRE", ".n_valid_px")])
 #' @export
 extract_field_covariates <- function(points, reflectance, selected,
-                                     window = 1L, fun = "mean",
+                                     window = 1L, window_m = NULL, fun = "mean",
                                      custom_index = NULL, chm = NULL,
                                      dsm = NULL, dtm = NULL) {
   if (!inherits(reflectance, "SpatRaster")) {
     stop("`reflectance` must be a terra SpatRaster.", call. = FALSE)
   }
+  window <- .resolve_window(window, window_m, reflectance)
   fun <- match.arg(fun, c("mean", "median", "max", "min", "sd"))
   selected <- as.character(selected)
   if (length(selected) == 0L) {
@@ -496,6 +561,11 @@ extract_field_covariates <- function(points, reflectance, selected,
   rownames(out) <- NULL
 
   attr(out, "window_px") <- window
+  # the metric support the pixel window actually spans on this raster, so a
+  # table always states its own footprint in ground units
+  attr(out, "window_m") <- tryCatch(
+    as.integer(window) * min(terra::res(reflectance)),
+    error = function(e) NA_real_)
   attr(out, "window_fun") <- fun
   attr(out, "crs") <- crs_str
   attr(out, "reference_geom") <- list(
