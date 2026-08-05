@@ -511,3 +511,110 @@ test_that("print.dronebio_field_model reports the metric definitions", {
   expect_true(any(grepl("RPIQ", txt, fixed = TRUE)))
   expect_true(any(grepl("CV (10-fold)", txt, fixed = TRUE)))
 })
+
+# ---- spatial blocking in field_train_split() -------------------------------
+
+make_blocking_frame <- function(n = 300, seed = 1) {
+  set.seed(seed)
+  data.frame(biomass_kgha = runif(n, 500, 4000),
+             x = runif(n, 0, 250),
+             y = runif(n, 0, 250))
+}
+
+test_that("blocking defaults to random and keeps the previous behaviour", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  a <- field_train_split(d, holdout = 0.25, folds = 10, seed = 42L)
+  b <- field_train_split(d, holdout = 0.25, folds = 10, seed = 42L,
+                         blocking = "random")
+  expect_identical(a$train_idx, b$train_idx)
+  expect_identical(a$folds, b$folds)
+  expect_identical(a$blocking, "random")
+  expect_null(a$block_id)
+})
+
+test_that("spatial blocking never splits a block across train and test", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  s <- field_train_split(d, holdout = 0.25, folds = 10, blocking = "spatial")
+  expect_identical(s$blocking, "spatial")
+  expect_length(s$block_id, nrow(d))
+  expect_gt(s$n_blocks, 10L)
+  shared <- intersect(unique(s$block_id[s$train_idx]),
+                      unique(s$block_id[s$test_idx]))
+  expect_length(shared, 0L)
+})
+
+test_that("spatial blocking never splits a block across a CV fold", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  s <- field_train_split(d, holdout = 0.25, folds = 10, blocking = "spatial")
+  g <- s$block_id[s$train_idx]
+  for (i in seq_along(s$folds)) {
+    expect_length(intersect(unique(g[s$folds[[i]]]),
+                            unique(g[s$folds_out[[i]]])), 0L)
+  }
+})
+
+test_that("spatial blocking lands near the requested holdout share", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame(n = 400, seed = 7)
+  for (h in c(0.2, 0.25, 0.3)) {
+    s <- field_train_split(d, holdout = h, folds = 5, blocking = "spatial")
+    expect_equal(length(s$test_idx) / nrow(d), h, tolerance = 0.1)
+    expect_gt(length(s$train_idx), 0L)
+  }
+})
+
+test_that("spatial blocking is reproducible from the seed", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  a <- field_train_split(d, holdout = 0.25, folds = 10, seed = 99L, blocking = "spatial")
+  b <- field_train_split(d, holdout = 0.25, folds = 10, seed = 99L, blocking = "spatial")
+  expect_identical(a$train_idx, b$train_idx)
+  expect_identical(a$folds, b$folds)
+  expect_identical(a$block_id, b$block_id)
+})
+
+test_that("block_size controls how many blocks are formed", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  coarse <- field_train_split(d, holdout = 0.25, folds = 5,
+                              blocking = "spatial", block_size = 100)
+  fine   <- field_train_split(d, holdout = 0.25, folds = 5,
+                              blocking = "spatial", block_size = 25)
+  expect_lt(coarse$n_blocks, fine$n_blocks)
+  expect_equal(coarse$block_size, 100)
+})
+
+test_that("holdout = 0 with spatial blocking keeps every row for training", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  s <- field_train_split(d, holdout = 0, folds = 5, blocking = "spatial")
+  expect_identical(s$train_idx, seq_len(nrow(d)))
+  expect_length(s$test_idx, 0L)
+})
+
+test_that("spatial blocking reports what is missing rather than failing opaquely", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  expect_error(field_train_split(d[, c("biomass_kgha", "x")], blocking = "spatial"),
+               "coordinate column", fixed = FALSE)
+  d2 <- d; d2$y[3] <- NA_real_
+  expect_error(field_train_split(d2, blocking = "spatial"), "non-finite")
+  d3 <- data.frame(biomass_kgha = runif(20, 1, 2), x = 5, y = 5)
+  expect_error(field_train_split(d3, blocking = "spatial"), "one position")
+  expect_error(field_train_split(d, blocking = "spatial", block_size = -1),
+               "positive number")
+})
+
+test_that("custom coordinate column names are honoured", {
+  skip_if_not_installed("caret")
+  d <- make_blocking_frame()
+  names(d)[names(d) == "x"] <- "easting"
+  names(d)[names(d) == "y"] <- "northing"
+  s <- field_train_split(d, holdout = 0.25, folds = 5, blocking = "spatial",
+                         coords = c("easting", "northing"))
+  expect_identical(s$blocking, "spatial")
+  expect_gt(s$n_blocks, 5L)
+})

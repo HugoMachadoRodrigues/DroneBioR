@@ -158,24 +158,52 @@ caret_model_available <- function(method,
 #' the leaderboard a fair comparison and the whole sweep reproducible from
 #' the seed shown in the sidebar.
 #'
+#' Samples drawn from a single flight are spatially autocorrelated, so a random
+#' partition can place neighbouring quadrats on both sides of the split and
+#' return an optimistic score. Set `blocking = "spatial"` to lay a regular grid
+#' over the sample coordinates and keep whole blocks together: the hold-out
+#' withholds entire blocks, and the cross-validation folds are grouped by block
+#' as well, so no block is ever split between fitting and scoring.
+#'
 #' @param data Extraction table with the response column.
 #' @param response Response column name.
 #' @param holdout Fraction held out as an independent test set (0 to 0.5).
 #'   `0` disables the holdout.
 #' @param folds Number of cross-validation folds (requirement: k = 10).
 #' @param seed Random seed.
+#' @param blocking How the partition and the folds are formed. `"random"`
+#'   (default) reproduces the previous behaviour. `"spatial"` groups samples
+#'   into square blocks and assigns whole blocks, which is the appropriate
+#'   choice when the samples come from one flight.
+#' @param coords Length-2 character vector naming the coordinate columns used
+#'   for spatial blocking. Ignored when `blocking = "random"`.
+#' @param block_size Side length of a block, in the units of `coords`. When
+#'   `NULL` (default) a size is chosen so that roughly `5 * folds` blocks are
+#'   occupied, which keeps the folds balanced without making blocks so small
+#'   that neighbouring samples still straddle them.
 #' @return A list with `train_idx`, `test_idx`, `folds` (in-fold row
 #'   positions **within the training block**), `folds_out`, `holdout`,
-#'   `folds_k` and `seed`.
+#'   `folds_k` and `seed`. When `blocking = "spatial"` it also carries
+#'   `blocking`, `block_id` (one block label per row of `data`), `block_size`
+#'   and `n_blocks`.
 #' @examples
 #' if (requireNamespace("caret", quietly = TRUE)) {
 #'   d <- data.frame(biomass_kgha = runif(60, 500, 4000))
 #'   split <- field_train_split(d, holdout = 0.25, folds = 10)
 #'   length(split$train_idx)
+#'
+#'   # spatially blocked: neighbouring samples stay on the same side
+#'   d$x <- runif(60, 0, 100)
+#'   d$y <- runif(60, 0, 100)
+#'   sp <- field_train_split(d, holdout = 0.25, folds = 5,
+#'                           blocking = "spatial")
+#'   sp$n_blocks
 #' }
 #' @export
 field_train_split <- function(data, response = "biomass_kgha", holdout = 0.25,
-                              folds = 10L, seed = 42L) {
+                              folds = 10L, seed = 42L,
+                              blocking = c("random", "spatial"),
+                              coords = c("x", "y"), block_size = NULL) {
   .require_caret()
   if (!response %in% names(data)) {
     stop("Response column '", response, "' is not in the extraction table.",
@@ -194,20 +222,44 @@ field_train_split <- function(data, response = "biomass_kgha", holdout = 0.25,
   }
   folds_k <- as.integer(folds)
   if (folds_k < 2L) stop("`folds` must be at least 2.", call. = FALSE)
+  blocking <- match.arg(blocking)
+
+  block_id <- NULL
+  if (identical(blocking, "spatial")) {
+    block <- .spatial_blocks(data, coords, folds_k, block_size)
+    block_id   <- block$id
+    block_size <- block$size
+  }
 
   set.seed(seed)
-  train_idx <- if (holdout > 0) {
-    as.integer(caret::createDataPartition(y, p = 1 - holdout, list = FALSE)[, 1L])
+  if (is.null(block_id)) {
+    train_idx <- if (holdout > 0) {
+      as.integer(caret::createDataPartition(y, p = 1 - holdout, list = FALSE)[, 1L])
+    } else {
+      seq_len(n)
+    }
   } else {
-    seq_len(n)
+    train_idx <- .block_holdout(block_id, holdout)
   }
   test_idx <- setdiff(seq_len(n), train_idx)
 
   folds_k <- min(folds_k, length(train_idx))
-  in_fold <- caret::createFolds(y[train_idx], k = folds_k, returnTrain = TRUE)
+  if (is.null(block_id)) {
+    in_fold <- caret::createFolds(y[train_idx], k = folds_k, returnTrain = TRUE)
+  } else {
+    g <- block_id[train_idx]
+    folds_k <- min(folds_k, length(unique(g)))
+    if (folds_k < 2L) {
+      stop("Spatial blocking left only ", length(unique(g)), " block(s) in the ",
+           "training set, so cross-validation folds cannot be formed. Use a ",
+           "smaller `block_size`, a smaller `holdout`, or blocking = \"random\".",
+           call. = FALSE)
+    }
+    in_fold <- caret::groupKFold(g, k = folds_k)
+  }
   out_fold <- lapply(in_fold, function(i) setdiff(seq_along(train_idx), i))
 
-  list(
+  out <- list(
     train_idx = train_idx,
     test_idx  = as.integer(test_idx),
     folds     = in_fold,
@@ -216,6 +268,91 @@ field_train_split <- function(data, response = "biomass_kgha", holdout = 0.25,
     folds_k   = folds_k,
     seed      = as.integer(seed)
   )
+  if (!is.null(block_id)) {
+    out$blocking   <- "spatial"
+    out$block_id   <- block_id
+    out$block_size <- block_size
+    out$n_blocks   <- length(unique(block_id))
+  } else {
+    out$blocking <- "random"
+  }
+  out
+}
+
+# Lay a regular square grid over the sample coordinates and label each row with
+# the block it falls in. `block_size` defaults to whatever makes roughly
+# 5 * folds blocks occupied: enough blocks to fill the folds, large enough that
+# neighbouring samples are not routinely split across a boundary.
+#' @noRd
+.spatial_blocks <- function(data, coords, folds_k, block_size = NULL) {
+  if (length(coords) != 2L) {
+    stop("`coords` must name exactly two columns.", call. = FALSE)
+  }
+  miss <- setdiff(coords, names(data))
+  if (length(miss)) {
+    stop("Spatial blocking needs the coordinate column(s) ",
+         paste(sprintf("'%s'", miss), collapse = " and "),
+         ", which are not in the extraction table. Extraction tables built by ",
+         "extract_field_covariates() carry 'x' and 'y'; pass `coords` if yours ",
+         "are named differently.", call. = FALSE)
+  }
+  xy <- data.frame(x = as.numeric(data[[coords[[1L]]]]),
+                   y = as.numeric(data[[coords[[2L]]]]))
+  if (any(!is.finite(xy$x)) || any(!is.finite(xy$y))) {
+    stop("The coordinate columns hold ",
+         sum(!is.finite(xy$x) | !is.finite(xy$y)),
+         " non-finite value(s); spatial blocking needs a position for every ",
+         "sample.", call. = FALSE)
+  }
+  span <- max(diff(range(xy$x)), diff(range(xy$y)))
+  if (!is.finite(span) || span <= 0) {
+    stop("All samples share one position, so they cannot be blocked spatially.",
+         call. = FALSE)
+  }
+  if (is.null(block_size)) {
+    # a k x k grid gives k^2 blocks; solve k^2 ~= 5 * folds_k
+    k <- max(2L, ceiling(sqrt(5 * folds_k)))
+    block_size <- span / k
+  }
+  block_size <- as.numeric(block_size)
+  if (!is.finite(block_size) || block_size <= 0) {
+    stop("`block_size` must be a positive number.", call. = FALSE)
+  }
+  ix <- floor((xy$x - min(xy$x)) / block_size)
+  iy <- floor((xy$y - min(xy$y)) / block_size)
+  list(id = paste(ix, iy, sep = "_"), size = block_size)
+}
+
+# Withhold whole blocks until the held-out share is as close to `holdout` as a
+# whole number of blocks allows. Blocks are visited in random order, and the
+# loop stops before it would empty the training set.
+#' @noRd
+.block_holdout <- function(block_id, holdout) {
+  n <- length(block_id)
+  if (holdout <= 0) return(seq_len(n))
+  blocks <- unique(block_id)
+  if (length(blocks) < 2L) {
+    stop("Spatial blocking produced a single block, so nothing can be held ",
+         "out. Use a smaller `block_size`.", call. = FALSE)
+  }
+  target <- holdout * n
+  ord    <- sample(blocks)
+  held   <- character(0)
+  size   <- 0L
+  for (b in ord) {
+    nb <- sum(block_id == b)
+    if (size > 0 && abs(size + nb - target) > abs(size - target)) break
+    if (size + nb >= n) break
+    held <- c(held, b)
+    size <- size + nb
+    if (size >= target) break
+  }
+  train <- which(!block_id %in% held)
+  if (!length(train) || length(train) == n) {
+    stop("Spatial blocking could not form a hold-out at holdout = ", holdout,
+         ". Use a smaller `block_size` or blocking = \"random\".", call. = FALSE)
+  }
+  as.integer(train)
 }
 
 # caret's defaultSummary plus RPIQ, so the ratio of performance to
