@@ -3,7 +3,7 @@
 #  reproduce_manuscript.R
 #
 #  Rodrigues, H.M. & Golmohammadi, G. "DroneBioR: A Reproducible R Package
-#  for Drone-Based Biomass Workflows from Multispectral Imagery", Drones.
+#  for Processing Drone Imagery into Biomass Covariates and Models", Drones.
 #
 #  This script walks through Section 3 of the paper in the order the paper
 #  presents it. Read it top to bottom: every number quoted in Section 3 is
