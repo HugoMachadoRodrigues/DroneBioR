@@ -107,12 +107,22 @@
 <code class="sourceCode R"><span><span class="co"># install.packages("remotes")</span></span>
 <span><span class="fu">remotes</span><span class="fu">::</span><span class="fu">install_github</span><span class="op">(</span><span class="st">"HugoMachadoRodrigues/DroneBioR"</span><span class="op">)</span></span></code></pre></div>
 <p>System requirements: <strong>GDAL ≥ 3.0</strong>, <strong>PROJ ≥ 6.0</strong>, <strong>GEOS ≥ 3.8</strong> (installed automatically with <code>terra</code> and <code>sf</code> on most platforms). Docker is optional — only needed if you want DroneBioR to drive OpenDroneMap directly.</p>
+<div class="section level3">
+<h3 id="point-cloud-features-need-lidr-which-is-no-longer-on-cran">Point-cloud features need lidR, which is no longer on CRAN<a class="anchor" aria-label="anchor" href="#point-cloud-features-need-lidr-which-is-no-longer-on-cran"></a>
+</h3>
+<p><code>lidR</code> and its dependency <code>rlas</code> were <strong>removed from CRAN on 9 June 2026</strong> (<code>rlas</code> for uncorrected ASAN issues, <code>lidR</code> as a dependent), so <code>install.packages("lidR")</code> will not find them. They are published on the maintainer’s r-universe:</p>
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"lidR"</span>, repos <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"https://r-lidar.r-universe.dev"</span>,</span>
+<span>                                   <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"repos"</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p>DroneBioR declares that repository in <code>Additional_repositories</code>, so <code>remotes::install_github(..., dependencies = TRUE)</code> resolves it for you.</p>
+<p>This affects only the point-cloud path — CSF ground refinement, the rebuilt DTM and CHM, and point-cloud metrics. Everything else (reading products, radiometric scaling, vegetation indices, windowed field extraction, model fitting and prediction) works without <code>lidR</code>, and the functions that do need it say so with the install command above rather than failing deep in the call.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="quick-start">Quick start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
 <p>Bring an orthomosaic from any of the four supported engines and run the end-to-end scientific workflow:</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://github.com/HugoMachadoRodrigues/DroneBioR" class="external-link">DroneBioR</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">project</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/dronebio_project.html">dronebio_project</a></span><span class="op">(</span>project_dir <span class="op">=</span> <span class="st">"/path/to/Drone_Biomass"</span><span class="op">)</span></span>
@@ -127,20 +137,20 @@
 <span><span class="co">#&gt; [6] "biomass_proxy" "alpha" "reflectance_summary" "index_summary"</span></span>
 <span><span class="co">#&gt; [10] "output_paths"</span></span></code></pre></div>
 <p>For a baseline biomass model from field samples:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">field</span>   <span class="op">&lt;-</span> <span class="fu"><a href="reference/read_field_data.html">read_field_data</a></span><span class="op">(</span><span class="st">"data/field_samples.csv"</span><span class="op">)</span></span>
 <span><span class="va">joined</span>  <span class="op">&lt;-</span> <span class="fu"><a href="reference/extract_field_spectral_data.html">extract_field_spectral_data</a></span><span class="op">(</span><span class="va">field</span>, <span class="va">result</span><span class="op">$</span><span class="va">indices</span><span class="op">)</span></span>
 <span><span class="va">model</span>   <span class="op">&lt;-</span> <span class="fu"><a href="reference/fit_biomass_lm.html">fit_biomass_lm</a></span><span class="op">(</span><span class="va">joined</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">model</span><span class="op">)</span></span></code></pre></div>
 <p>Try it without any data of your own — every exported function has a runnable <code>@examples</code> block that uses the bundled fixtures in <code>inst/extdata/</code>:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="op">?</span><span class="va">compute_spectral_indices</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/example.html" class="external-link">example</a></span><span class="op">(</span><span class="va">compute_spectral_indices</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="interactive-exploration">Interactive exploration<a class="anchor" aria-label="anchor" href="#interactive-exploration"></a>
 </h2>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/run_drone_biomass_studio.html">run_drone_biomass_studio</a></span><span class="op">(</span>project_dir <span class="op">=</span> <span class="st">"/path/to/Drone_Biomass"</span><span class="op">)</span></span></code></pre></div>
 <p>Drone Biomass Studio is a web application for previewing orthomosaics, indices, the CHM, and point-cloud ROIs interactively.</p>
 </div>

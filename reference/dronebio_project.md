@@ -45,7 +45,7 @@ A list with normalized project paths.
 ``` r
 project <- dronebio_project(project_dir = tempdir())
 project$project_dir
-#> [1] "/tmp/RtmplA9N2y"
+#> [1] "/tmp/Rtmpocds2z"
 project$odm_orthomosaic
-#> [1] "/tmp/RtmplA9N2y/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif"
+#> [1] "/tmp/Rtmpocds2z/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif"
 ```

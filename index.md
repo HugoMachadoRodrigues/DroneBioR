@@ -63,6 +63,29 @@ System requirements: **GDAL ≥ 3.0**, **PROJ ≥ 6.0**, **GEOS ≥ 3.8**
 Docker is optional — only needed if you want DroneBioR to drive
 OpenDroneMap directly.
 
+### Point-cloud features need lidR, which is no longer on CRAN
+
+`lidR` and its dependency `rlas` were **removed from CRAN on 9 June
+2026** (`rlas` for uncorrected ASAN issues, `lidR` as a dependent), so
+`install.packages("lidR")` will not find them. They are published on the
+maintainer’s r-universe:
+
+``` r
+
+install.packages("lidR", repos = c("https://r-lidar.r-universe.dev",
+                                   getOption("repos")))
+```
+
+DroneBioR declares that repository in `Additional_repositories`, so
+`remotes::install_github(..., dependencies = TRUE)` resolves it for you.
+
+This affects only the point-cloud path — CSF ground refinement, the
+rebuilt DTM and CHM, and point-cloud metrics. Everything else (reading
+products, radiometric scaling, vegetation indices, windowed field
+extraction, model fitting and prediction) works without `lidR`, and the
+functions that do need it say so with the install command above rather
+than failing deep in the call.
+
 ## Quick start
 
 Bring an orthomosaic from any of the four supported engines and run the
