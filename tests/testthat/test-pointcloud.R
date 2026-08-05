@@ -369,13 +369,23 @@ test_that("despike_point_cloud accepts a matrix as well as a data frame", {
   df <- data.frame(x = runif(n, 0, 10), y = runif(n, 0, 10), z = rnorm(n, 0, 0.05))
   df$z[1:5] <- df$z[1:5] + 12          # obvious floaters
 
-  keep_df  <- despike_point_cloud(df,            methods = "sor")
-  keep_mat <- despike_point_cloud(as.matrix(df), methods = "sor")
+  # The SOR pass needs RANN or FNN; without them it warns and skips, so run the
+  # calls quietly and only assert that it FLAGGED something when a kNN backend
+  # is present. The input-handling assertions below hold either way -- they are
+  # what this test exists for.
+  knn_available <- requireNamespace("RANN", quietly = TRUE) ||
+                   requireNamespace("FNN",  quietly = TRUE)
+
+  keep_df  <- suppressWarnings(despike_point_cloud(df,            methods = "sor"))
+  keep_mat <- suppressWarnings(despike_point_cloud(as.matrix(df), methods = "sor"))
 
   expect_length(keep_df,  n)
   expect_length(keep_mat, n)
   expect_identical(keep_df, keep_mat)   # same answer either way
-  expect_true(sum(!keep_mat) > 0)       # and it actually flagged the floaters
+
+  if (knn_available) {
+    expect_true(sum(!keep_mat) > 0)     # and it actually flagged the floaters
+  }
 })
 
 test_that("despike_point_cloud still rejects input without x/y/z", {
