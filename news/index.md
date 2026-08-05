@@ -1,6 +1,6 @@
 # Changelog
 
-## DroneBioR (development version)
+## DroneBioR 0.5.0
 
 ### Exports tab
 
