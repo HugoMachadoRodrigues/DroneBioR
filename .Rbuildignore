@@ -25,3 +25,4 @@
 ^inst/shiny/DroneBiomassStudio/rsconnect$
 ^.*backup.*\.tar\.gz$
 ^\.dronebior_studio\.json$
+^inst/manuscript/manuscript_repro$
