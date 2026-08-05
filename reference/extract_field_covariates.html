@@ -60,6 +60,7 @@ never computed from block means during training.</p>
 <span>  <span class="va">reflectance</span>,</span>
 <span>  <span class="va">selected</span>,</span>
 <span>  window <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  window_m <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  fun <span class="op">=</span> <span class="st">"mean"</span>,</span>
 <span>  custom_index <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  chm <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -88,6 +89,14 @@ POINT layer).</p></dd>
 
 <dt id="arg-window">window<a class="anchor" aria-label="anchor" href="#arg-window"></a></dt>
 <dd><p>Odd window size (see <code><a href="window_cells.html">window_cells()</a></code>).</p></dd>
+
+
+<dt id="arg-window-m">window_m<a class="anchor" aria-label="anchor" href="#arg-window-m"></a></dt>
+<dd><p>Support in metres instead of pixels. A window in pixels
+spans a different area at every ground sampling distance, so a quadrat
+size is better stated in metres and converted per survey: this rounds to
+the nearest odd pixel count for <code>reflectance</code> and errors when the request
+falls outside the supported range. See <code><a href="window_from_metres.html">window_from_metres()</a></code>.</p></dd>
 
 
 <dt id="arg-fun">fun<a class="anchor" aria-label="anchor" href="#arg-fun"></a></dt>

@@ -13,6 +13,7 @@ extract_field_covariates(
   reflectance,
   selected,
   window = 1L,
+  window_m = NULL,
   fun = "mean",
   custom_index = NULL,
   chm = NULL,
@@ -42,6 +43,15 @@ extract_field_covariates(
 
   Odd window size (see
   [`window_cells()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_cells.md)).
+
+- window_m:
+
+  Support in metres instead of pixels. A window in pixels spans a
+  different area at every ground sampling distance, so a quadrat size is
+  better stated in metres and converted per survey: this rounds to the
+  nearest odd pixel count for `reflectance` and errors when the request
+  falls outside the supported range. See
+  [`window_from_metres()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_from_metres.md).
 
 - fun:
 

@@ -13,6 +13,7 @@ build_prediction_stack(
   covariates,
   max_cells = 1e+06,
   window = 1L,
+  window_m = NULL,
   custom_index = NULL,
   chm = NULL,
   dsm = NULL,
@@ -37,6 +38,14 @@ build_prediction_stack(
 - window:
 
   Extraction window the model was trained with.
+
+- window_m:
+
+  The same support expressed in metres, converted to the nearest odd
+  pixel count for `reflectance`. Prefer this when the calibration table
+  was extracted with `window_m`, so the prediction stack matches the
+  support the model saw. See
+  [`window_from_metres()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_from_metres.md).
 
 - custom_index:
 

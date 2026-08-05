@@ -329,6 +329,10 @@ DroneBioR raster products to disk.
 - [`scale_to_reflectance()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/scale_to_reflectance.md)
   : Scale raster values to reflectance-like 0-1 values
 
+- [`set_radiometric_level()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/set_radiometric_level.md)
+  [`radiometric_level()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/set_radiometric_level.md)
+  : Record or read the radiometric state of a raster
+
 - [`summarize_spatraster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/summarize_spatraster.md)
   : Summarize a SpatRaster by layer
 
@@ -386,6 +390,8 @@ each sample.
   : Canonicalise covariate / layer names
 - [`window_cells()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_cells.md)
   : Cell numbers of the n x n window around each field point
+- [`window_from_metres()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/window_from_metres.md)
+  : Convert a metric window to the nearest odd pixel window
 - [`extract_window_values()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/extract_window_values.md)
   : Aggregate raster values over pre-computed window cells
 - [`synthesize_pixel_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/synthesize_pixel_raster.md)

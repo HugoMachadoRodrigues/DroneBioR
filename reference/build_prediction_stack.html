@@ -60,6 +60,7 @@ the support the model was trained on.</p>
 <span>  <span class="va">covariates</span>,</span>
 <span>  max_cells <span class="op">=</span> <span class="fl">1e+06</span>,</span>
 <span>  window <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  window_m <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  custom_index <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  chm <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  dsm <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -85,6 +86,13 @@ the support the model was trained on.</p>
 
 <dt id="arg-window">window<a class="anchor" aria-label="anchor" href="#arg-window"></a></dt>
 <dd><p>Extraction window the model was trained with.</p></dd>
+
+
+<dt id="arg-window-m">window_m<a class="anchor" aria-label="anchor" href="#arg-window-m"></a></dt>
+<dd><p>The same support expressed in metres, converted to the
+nearest odd pixel count for <code>reflectance</code>. Prefer this when the
+calibration table was extracted with <code>window_m</code>, so the prediction stack
+matches the support the model saw. See <code><a href="window_from_metres.html">window_from_metres()</a></code>.</p></dd>
 
 
 <dt id="arg-custom-index">custom_index<a class="anchor" aria-label="anchor" href="#arg-custom-index"></a></dt>

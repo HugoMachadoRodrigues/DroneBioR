@@ -125,6 +125,7 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/run_webodm_project.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/save_field_model_bundle.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/scale_to_reflectance.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/set_radiometric_level.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/stack_dji_mavic_3m_ortho.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/stage_uploaded_vector.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/summarize_odm_products.html</loc></url>
@@ -138,6 +139,7 @@
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/webodm_submit_task.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/webodm_task_status.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/window_cells.html</loc></url>
+<url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/window_from_metres.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/with_error_toast.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_djim3m_geo_txt.html</loc></url>
 <url><loc>https://hugomachadorodrigues.github.io/DroneBioR/reference/write_dronebio_rasters.html</loc></url>
