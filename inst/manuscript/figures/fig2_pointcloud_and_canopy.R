@@ -71,17 +71,19 @@ plot(ch_p, col=adjustcolor(colorRampPalette(c("#d9c88c","#9fbe5e","#4d8f3f","#1c
 ch_3d <- aggregate(chm, max(1, round(1.0/min(res(chm)))), "mean", na.rm=TRUE)
 as_grid <- function(r){ m <- as.matrix(r, wide=TRUE); m[!is.finite(m)] <- NA
                         t(m)[, nrow(r):1, drop=FALSE] }
-Zc <- as_grid(ch_3d); Zc[is.na(Zc)] <- 0
+# leave no-data as NA: persp() skips those facets, so no plane is drawn
+# under the footprint
+Zc <- as_grid(ch_3d)
 xm <- seq(0, ncol(ch_3d)*min(res(ch_3d)), length.out=nrow(Zc))
 ym <- seq(0, nrow(ch_3d)*min(res(ch_3d)), length.out=ncol(Zc))
 facet <- function(M)(M[-1,-1,drop=FALSE]+M[-1,-ncol(M),drop=FALSE]+
                      M[-nrow(M),-1,drop=FALSE]+M[-nrow(M),-ncol(M),drop=FALSE])/4
 fz <- facet(Zc)
 pal <- colorRampPalette(c("#cbb87e","#a8c169","#5d9a45","#20642a"))(200)
-fcol <- pal[cut(as.numeric(fz), 200, labels=FALSE)]; fcol[is.na(fcol)] <- "#efefef"
+fcol <- pal[cut(as.numeric(fz), 200, labels=FALSE)]
 dim(fcol) <- dim(fz)
 par(mar=c(0.2,0.2,3.0,0.2))
 persp(xm, ym, Zc*1.6, theta=30, phi=38, expand=1, border=NA, col=fcol, shade=0.5,
-      ltheta=-50, lphi=45, box=FALSE, scale=FALSE, r=5,
+      ltheta=-50, lphi=45, box=FALSE, scale=FALSE, r=2.4,
       main="(e) The same canopy height model as a surface (1 m cells, 1.6x vertical)")
 dev.off(); cat("wrote", OUT, "\n")
