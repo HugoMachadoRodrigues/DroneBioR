@@ -55,10 +55,9 @@ plot(zx$X[!zf], zx$Z[!zf], pch=19, cex=0.16, col=GR, ylim=zl,
 
 # (d) canopy height in plan view, hillshaded; (e) the same model in 3-D
 chm <- rast(file.path(COV,"CHM.tif"))
-# 0.30 m cells, then a 3x3 median: isolated single-cell spikes go, crowns
-# (tens of cells across) stay. Display only; the analysis rasters are untouched.
-ch_p <- focal(aggregate(chm, max(1, round(0.30/min(res(chm)))), "mean", na.rm=TRUE),
-              3, "median", na.rm=TRUE)
+# 0.30 m cells. No display filter is applied: build_chm_raster() despikes the
+# product itself, so what is drawn here is the raster the analysis uses.
+ch_p <- aggregate(chm, max(1, round(0.30/min(res(chm)))), "mean", na.rm=TRUE)
 par(mar=c(0.4,0.4,3.0,0.4))
 slp <- terrain(ch_p, "slope", unit="radians"); asp <- terrain(ch_p, "aspect", unit="radians")
 plot(shade(slp, asp, angle=35, direction=315), col=grey(0:100/100), legend=FALSE,
@@ -69,8 +68,7 @@ plot(ch_p, col=adjustcolor(colorRampPalette(c("#d9c88c","#9fbe5e","#4d8f3f","#1c
 
 # 1 m cells for the surface render: at finer spacing every crown-to-gap step
 # becomes a near-vertical facet and persp() draws it as a spike.
-ch_3d <- focal(aggregate(chm, max(1, round(1.0/min(res(chm)))), "mean", na.rm=TRUE),
-               3, "mean", na.rm=TRUE)
+ch_3d <- aggregate(chm, max(1, round(1.0/min(res(chm)))), "mean", na.rm=TRUE)
 as_grid <- function(r){ m <- as.matrix(r, wide=TRUE); m[!is.finite(m)] <- NA
                         t(m)[, nrow(r):1, drop=FALSE] }
 Zc <- as_grid(ch_3d); Zc[is.na(Zc)] <- 0
