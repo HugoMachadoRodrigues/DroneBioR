@@ -76,6 +76,40 @@ classify_ground_vegetation <- function(ndvi,
 
 #' Classify ground points in a LAS file using lidR's CSF algorithm
 #'
+# lidR and its dependency rlas were removed from CRAN on 2026-06-09 (rlas for
+# uncorrected ASAN issues, lidR as a dependent), so install.packages("lidR")
+# no longer works. They are published on the maintainer's r-universe. Say that
+# once, here, rather than leaving a user to discover it from a CRAN 404.
+#' @noRd
+.lidr_install_hint <- function() {
+  paste0(
+    'install.packages("lidR", repos = c("https://r-lidar.r-universe.dev", ',
+    'getOption("repos")))'
+  )
+}
+
+# Stop with an actionable message when a package the CSF path needs is absent.
+#' @noRd
+.require_csf_stack <- function(what = c("lidR", "RCSF")) {
+  what <- match.arg(what, several.ok = TRUE)
+  if ("lidR" %in% what && !requireNamespace("lidR", quietly = TRUE)) {
+    stop("The 'lidR' package is required for the cloth-simulation filter, and ",
+         "it is not installed. lidR and its dependency 'rlas' were removed ",
+         "from CRAN on 2026-06-09, so install.packages(\"lidR\") will not find ",
+         "them; install from the maintainer's r-universe instead:\n  ",
+         .lidr_install_hint(), call. = FALSE)
+  }
+  # lidR's csf() delegates to RCSF, a separate package that is still on CRAN.
+  # Without it lidR fails deep in the call with a terse "Package 'RCSF'
+  # needed", so name it up front.
+  if ("RCSF" %in% what && !requireNamespace("RCSF", quietly = TRUE)) {
+    stop("The 'RCSF' package is required for the cloth-simulation filter ",
+         "(it is what lidR's csf() delegates to) and it is not installed. ",
+         "It is on CRAN:\n  install.packages(\"RCSF\")", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 #' Bridge to `lidR::classify_ground()` with the Cloth Simulation Filter
 #' (Zhang et al., 2016). Returns a `lidR::LAS` object whose `Classification`
 #' attribute marks ground points as 2 and the rest as 1.
@@ -108,24 +142,7 @@ classify_ground_csf <- function(las_path,
                                 cloth_resolution = 0.5,
                                 rigidness        = 1L,
                                 ...) {
-  if (!requireNamespace("lidR", quietly = TRUE)) {
-    stop(
-      "The 'lidR' package is required for CSF ground classification. ",
-      "Install it with install.packages('lidR').",
-      call. = FALSE
-    )
-  }
-  # lidR's csf() delegates to RCSF, a separate package. Without it lidR fails
-  # deep in the call with a terse "Package 'RCSF' needed". Say so up front, and
-  # name both packages, since CSF needs the pair.
-  if (!requireNamespace("RCSF", quietly = TRUE)) {
-    stop(
-      "The 'RCSF' package is required for CSF ground classification ",
-      "(it powers lidR's cloth-simulation filter). ",
-      "Install it with install.packages('RCSF').",
-      call. = FALSE
-    )
-  }
+  .require_csf_stack()
   if (!file.exists(las_path)) {
     stop("LAS file not found: ", las_path, call. = FALSE)
   }
@@ -199,10 +216,7 @@ improve_dtm_csf <- function(project,
                             rebuild_chm      = TRUE,
                             dtm_filename     = "dtm_csf.tif",
                             chm_filename     = "chm_csf.tif") {
-  if (!requireNamespace("lidR", quietly = TRUE)) {
-    stop("The 'lidR' package is required. install.packages('lidR').",
-         call. = FALSE)
-  }
+  .require_csf_stack()
 
   paths <- odm_product_paths(project)
   candidates <- character()

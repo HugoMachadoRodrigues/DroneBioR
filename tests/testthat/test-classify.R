@@ -80,3 +80,49 @@ test_that("improve_dtm_csf defaults to non-destructive output filenames", {
   expect_equal(eval(args$dtm_filename), "dtm_csf.tif")
   expect_equal(eval(args$chm_filename), "chm_csf.tif")
 })
+
+# ---- the CSF stack is not on CRAN any more ---------------------------------
+
+test_that("a missing lidR is reported with an install command that works", {
+  testthat::local_mocked_bindings(
+    requireNamespace = function(package, ...) {
+      if (identical(package, "lidR")) return(FALSE)
+      TRUE
+    },
+    .package = "base"
+  )
+  err <- tryCatch(DroneBioR:::.require_csf_stack(), error = function(e) conditionMessage(e))
+  expect_match(err, "lidR", fixed = TRUE)
+  # the actionable part: CRAN no longer has it, and the r-universe does
+  expect_match(err, "removed", fixed = TRUE)
+  expect_match(err, "r-lidar.r-universe.dev", fixed = TRUE)
+  # the old advice would send the user to a 404
+  expect_false(grepl('install.packages("lidR")\\s*$', err))
+})
+
+test_that("a missing RCSF is named separately and points at CRAN", {
+  testthat::local_mocked_bindings(
+    requireNamespace = function(package, ...) {
+      if (identical(package, "RCSF")) return(FALSE)
+      TRUE
+    },
+    .package = "base"
+  )
+  err <- tryCatch(DroneBioR:::.require_csf_stack(), error = function(e) conditionMessage(e))
+  expect_match(err, "RCSF", fixed = TRUE)
+  expect_match(err, "install.packages(\"RCSF\")", fixed = TRUE)
+  expect_false(grepl("r-universe", err))
+})
+
+test_that("the CSF stack check passes when both packages are present", {
+  skip_if_not_installed("lidR")
+  skip_if_not_installed("RCSF")
+  expect_true(DroneBioR:::.require_csf_stack())
+})
+
+test_that("DESCRIPTION declares the repository lidR now lives in", {
+  d <- read.dcf(system.file("DESCRIPTION", package = "DroneBioR"))
+  skip_if(!"Additional_repositories" %in% colnames(d),
+          "Additional_repositories not present in the installed DESCRIPTION")
+  expect_match(d[1, "Additional_repositories"], "r-lidar.r-universe.dev")
+})

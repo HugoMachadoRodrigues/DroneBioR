@@ -18,6 +18,13 @@ if (.dronebior_async_available) {
 }
 
 default_project_dir <- getOption("dronebior.project_dir", getwd())
+
+# lidR and rlas were removed from CRAN on 2026-06-09; the install command that
+# still works points at the maintainer's r-universe.
+HINT_LIDR <- paste0(
+  'install.packages("lidR", repos = c("https://r-lidar.r-universe.dev", ',
+  'getOption("repos")))'
+)
 # run_drone_biomass_studio() always sets that option, but a bare
 # shiny::runApp(<app dir>) leaves getwd() pointing at the app's own folder
 # inside the package. Scaffolding a project there writes outputs/ and imagens/
@@ -6205,9 +6212,11 @@ server <- function(input, output, session) {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
     if (!requireNamespace("lidR", quietly = TRUE)) {
-      showNotification(paste("lidR is not installed. Install it from R:",
-                              "install.packages('lidR')"),
-                       type = "error", duration = 12)
+      # lidR left CRAN on 2026-06-09; install.packages("lidR") finds nothing.
+      showNotification(paste0("lidR is not installed, and it is no longer on ",
+                              "CRAN. Install it from the maintainer's ",
+                              "r-universe:  ", HINT_LIDR),
+                       type = "error", duration = 20)
       return()
     }
     if (isTRUE(csf_running())) {
@@ -6312,7 +6321,7 @@ server <- function(input, output, session) {
         }
         if (!requireNamespace("lidR", quietly = TRUE)) {
           stop("lidR package not installed in worker. Install with ",
-               "install.packages('lidR') from R.", call. = FALSE)
+               HINT_LIDR, call. = FALSE)
         }
         DroneBioR::improve_dtm_csf(
           p_snapshot,
