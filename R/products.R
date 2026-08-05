@@ -402,6 +402,18 @@ validate_odm_outputs <- function(project) {
 #'   high percentile removes them while preserving genuine tall
 #'   features (the percentile adapts to each survey). Set to `100`
 #'   (or `NULL`) to disable and keep every pixel.
+#' @param despike Logical, default `TRUE`. Run [despike_dem()] on the
+#'   differenced canopy height model before the percentile clip, to
+#'   remove isolated needles. This catches what `outlier_percentile`
+#'   structurally cannot: a needle is a cell standing far above its own
+#'   neighbourhood, and it is usually nowhere near the tallest cell in
+#'   the survey, so no global threshold separates it from real canopy.
+#'   Set `FALSE` to keep the raw difference.
+#' @param despike_window Odd neighbourhood size in pixels for the local
+#'   median, passed to [despike_dem()]. Default `5`.
+#' @param despike_max_deviation Metres a cell may stand above its local
+#'   median before it is treated as a needle, passed to [despike_dem()].
+#'   Default `3`.
 #' @return Absolute path to the written `chm.tif`.
 #' @examples
 #' \dontrun{
@@ -409,10 +421,15 @@ validate_odm_outputs <- function(project) {
 #'   build_chm_raster(project)
 #'   # keep every pixel, no outlier clipping:
 #'   build_chm_raster(project, outlier_percentile = 100)
+#'   # the raw difference, with neither filter:
+#'   build_chm_raster(project, outlier_percentile = 100, despike = FALSE)
 #' }
 #' @export
 build_chm_raster <- function(project, force = FALSE,
-                             outlier_percentile = 99.5) {
+                             outlier_percentile = 99.5,
+                             despike = TRUE,
+                             despike_window = 5L,
+                             despike_max_deviation = 3) {
   paths <- odm_product_paths(project)
   dsm_path <- unname(paths[["dsm"]])
   dtm_path <- unname(paths[["dtm"]])
@@ -441,6 +458,19 @@ build_chm_raster <- function(project, force = FALSE,
   }
   chm <- dsm - dtm
   chm <- terra::clamp(chm, lower = 0, upper = Inf, values = TRUE)
+
+  # Remove isolated needles before the percentile clip. The two filters catch
+  # different things and the order matters. A needle is a cell standing far
+  # above its own neighbourhood; it is usually nowhere near the tallest cell in
+  # the survey, so a global percentile cannot see it - on the demonstration
+  # survey 0.2% of cells sit more than 3 m above their local median while the
+  # tallest cells in the raster are genuine crowns. Cleaning them first also
+  # lets the percentile threshold be computed from an uncontaminated
+  # distribution, so it clips less real canopy.
+  if (isTRUE(despike)) {
+    chm <- despike_dem(chm, window = despike_window,
+                       max_deviation = despike_max_deviation, fill = "median")
+  }
 
   # Clip the extreme upper tail of physically implausible spikes. We
   # compute the cut from the cell values (na.rm) rather than a spatial
