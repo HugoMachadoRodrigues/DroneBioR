@@ -49,6 +49,12 @@ suppressWarnings(suppressMessages({
 PROJECT <- normalizePath(PROJECT, mustWork = TRUE)
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 
+# Table 5 of the manuscript was measured with terra allowed 60% of RAM before
+# it falls back to smaller blocks. Setting it here so the cost figures below
+# are produced under the same budget they were published under; lowering it
+# trades throughput for a smaller peak, it does not change any result.
+terraOptions(memfrac = 0.6)
+
 # Every random draw below is seeded from these four values. They are part of
 # the result: with them, two independent runs return bit-identical output.
 SEED_POOL      <- 20260805L  # the pool of candidate quadrat locations
