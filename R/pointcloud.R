@@ -512,6 +512,16 @@ despike_point_cloud <- function(coords,
                                 cell = 1.0, ground_q = 0.1, smooth_w = 5L,
                                 height_cap = NULL, surface_mult = 3.0) {
   methods <- match.arg(methods, c("sor", "surface"), several.ok = TRUE)
+  # A matrix is a natural way to hand over coordinates, but `[[` on a matrix
+  # returns a single ELEMENT rather than a column, so the picks below would
+  # silently yield length-1 vectors and the function would return a keep mask
+  # of the wrong length instead of failing. Normalise to a data frame first.
+  if (is.matrix(coords)) coords <- as.data.frame(coords)
+  if (!is.data.frame(coords)) {
+    coords <- tryCatch(as.data.frame(coords), error = function(e)
+      stop("`coords` must be a data frame or matrix with x/y/z columns.",
+           call. = FALSE))
+  }
   cn <- tolower(colnames(coords))
   pick <- function(axis) {
     j <- which(cn == axis)

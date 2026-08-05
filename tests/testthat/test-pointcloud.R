@@ -359,3 +359,35 @@ test_that("despike_ply rewrites a cleaned cloud and preserves layout + original"
   expect_equal(h$n_vertices, nrow(cl) - d$n_spikes)
   expect_equal(h$stride, 13L)
 })
+
+test_that("despike_point_cloud accepts a matrix as well as a data frame", {
+  # `[[` on a matrix returns one ELEMENT, not a column, so a matrix input used
+  # to yield length-1 x/y/z and therefore a keep mask of the wrong length --
+  # silently wrong rather than an error. The mask must match nrow(coords).
+  set.seed(3)
+  n <- 400
+  df <- data.frame(x = runif(n, 0, 10), y = runif(n, 0, 10), z = rnorm(n, 0, 0.05))
+  df$z[1:5] <- df$z[1:5] + 12          # obvious floaters
+
+  # The SOR pass needs RANN or FNN; without them it warns and skips, so run the
+  # calls quietly and only assert that it FLAGGED something when a kNN backend
+  # is present. The input-handling assertions below hold either way -- they are
+  # what this test exists for.
+  knn_available <- requireNamespace("RANN", quietly = TRUE) ||
+                   requireNamespace("FNN",  quietly = TRUE)
+
+  keep_df  <- suppressWarnings(despike_point_cloud(df,            methods = "sor"))
+  keep_mat <- suppressWarnings(despike_point_cloud(as.matrix(df), methods = "sor"))
+
+  expect_length(keep_df,  n)
+  expect_length(keep_mat, n)
+  expect_identical(keep_df, keep_mat)   # same answer either way
+
+  if (knn_available) {
+    expect_true(sum(!keep_mat) > 0)     # and it actually flagged the floaters
+  }
+})
+
+test_that("despike_point_cloud still rejects input without x/y/z", {
+  expect_error(despike_point_cloud(matrix(1:9, ncol = 3)), "needs an x column")
+})
