@@ -299,3 +299,53 @@ test_that("canonical_band_names survives degenerate input", {
   expect_equal(canonical_band_names(c("Red", NA)), c("Red", NA))
   expect_equal(canonical_band_names("REDEDGE"), "RedEdge")
 })
+
+# ---- radiometric provenance ------------------------------------------------
+
+test_that("scale_to_reflectance records what it did", {
+  r <- terra::rast(nrows = 8, ncols = 8)
+  terra::values(r) <- seq_len(64) * 900
+  expect_equal(radiometric_level(r), "unknown")
+  s <- scale_to_reflectance(r)
+  expect_equal(radiometric_level(s), "normalised_dn")
+})
+
+test_that("a raster already in 0-1 is tagged engine_scaled, not normalised", {
+  r <- terra::rast(nrows = 8, ncols = 8)
+  terra::values(r) <- runif(64)
+  expect_equal(radiometric_level(scale_to_reflectance(r)), "engine_scaled")
+})
+
+test_that("the level survives a GeoTIFF round trip", {
+  r <- terra::rast(nrows = 8, ncols = 8)
+  terra::values(r) <- seq_len(64) * 900
+  s <- scale_to_reflectance(r)
+  f <- tempfile(fileext = ".tif")
+  terra::writeRaster(s, f)
+  expect_equal(radiometric_level(terra::rast(f)), "normalised_dn")
+})
+
+test_that("set_radiometric_level validates its inputs", {
+  r <- terra::rast(nrows = 4, ncols = 4)
+  terra::values(r) <- seq_len(16)
+  expect_error(set_radiometric_level(r, "reflectance"), "arg")
+  expect_error(set_radiometric_level(data.frame(a = 1), "unknown"), "SpatRaster")
+  expect_error(radiometric_level(data.frame(a = 1)), "SpatRaster")
+  expect_equal(radiometric_level(set_radiometric_level(r, "panel_calibrated")),
+               "panel_calibrated")
+})
+
+test_that("exported covariates inherit the level of their source", {
+  skip_on_cran()
+  r <- terra::rast(nrows = 8, ncols = 8, nlyr = 5)
+  terra::values(r) <- runif(64 * 5) * 60000
+  names(r) <- c("Blue", "Green", "Red", "RedEdge", "NIR")
+  s <- scale_to_reflectance(r)
+  d <- file.path(tempdir(), "cov_level_test")
+  dir.create(d, showWarnings = FALSE)
+  suppressMessages(export_all_covariates(s, d))
+  f <- list.files(d, pattern = "^NDVI\\.tif$", full.names = TRUE)
+  skip_if(length(f) == 0L, "NDVI was not exported in this environment")
+  expect_equal(radiometric_level(terra::rast(f[[1L]])), "normalised_dn")
+  unlink(d, recursive = TRUE)
+})

@@ -9,6 +9,7 @@ build_prediction_stack(
   covariates,
   max_cells = 1e+06,
   window = 1L,
+  window_m = NULL,
   custom_index = NULL,
   chm = NULL,
   dsm = NULL,
@@ -23,6 +24,11 @@ build_prediction_stack(
 \item{max_cells}{Approximate cell budget for the aggregated grid.}
 
 \item{window}{Extraction window the model was trained with.}
+
+\item{window_m}{The same support expressed in metres, converted to the
+nearest odd pixel count for \code{reflectance}. Prefer this when the
+calibration table was extracted with \code{window_m}, so the prediction stack
+matches the support the model saw. See \code{\link[=window_from_metres]{window_from_metres()}}.}
 
 \item{custom_index}{Optional custom index \code{SpatRaster}.}
 

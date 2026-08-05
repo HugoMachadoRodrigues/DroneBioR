@@ -195,11 +195,96 @@ scale_to_reflectance <- function(x, scale_factor = NULL) {
       stop("Could not compute raster maximum for radiometric scaling.", call. = FALSE)
     }
     if (max_value <= 1.5) {
-      return(x)
+      # Already in 0-1: whatever produced those values is what the user has,
+      # and it was not this function. Record that rather than implying a
+      # transformation happened here.
+      return(set_radiometric_level(x, "engine_scaled", scale_factor = NA_real_))
     }
     scale_factor <- if (max_value > 10000) 65535 else 10000
   }
-  terra::clamp(x / scale_factor, lower = 0, upper = 1, values = TRUE)
+  out <- terra::clamp(x / scale_factor, lower = 0, upper = 1, values = TRUE)
+  set_radiometric_level(out, "normalised_dn", scale_factor = scale_factor)
+}
+
+# The vocabulary of radiometric states a raster can be in. The distinction
+# matters because dividing digital numbers by a constant does not produce
+# reflectance, and the three are routinely conflated.
+.RADIOMETRIC_LEVELS <- c(
+  # DroneBioR divided by a detected storage scale. Bands are comparable in
+  # magnitude and index formulas are well behaved, but the values are
+  # normalised digital numbers, not physical reflectance.
+  "normalised_dn",
+  # The raster arrived in 0-1 already. Whatever the engine applied (for
+  # example OpenDroneMap's --radiometric-calibration) is what the values
+  # carry; DroneBioR did not transform them.
+  "engine_scaled",
+  # Tied to a known reflectance standard through panel regions or a
+  # downwelling-light sensor. Only this level is reflectance.
+  "panel_calibrated",
+  # Explicitly unknown, e.g. a raster read from disk that carries no tag.
+  "unknown"
+)
+
+#' Record or read the radiometric state of a raster
+#'
+#' Dividing digital numbers by a constant does not produce reflectance, and
+#' conflating the two is easy. These functions write the state into the
+#' raster's metadata tags, where it survives a GeoTIFF round trip, so a
+#' product can always say what was done to it.
+#'
+#' The recognised levels are `"normalised_dn"` (DroneBioR divided by a
+#' detected storage scale), `"engine_scaled"` (the raster already arrived in
+#' 0-1, carrying whatever the photogrammetry engine applied),
+#' `"panel_calibrated"` (tied to a reflectance standard through panel regions
+#' or a downwelling-light sensor, and the only level that is reflectance) and
+#' `"unknown"`.
+#'
+#' @param x A `terra::SpatRaster`.
+#' @param level One of the levels above.
+#' @param scale_factor The divisor applied, when one was. `NA` otherwise.
+#' @return `set_radiometric_level()` returns `x` with the tags set.
+#'   `radiometric_level()` returns a length-1 character, `"unknown"` when the
+#'   raster carries no tag.
+#' @examples
+#' r <- terra::rast(nrows = 4, ncols = 4)
+#' terra::values(r) <- seq_len(16) * 1000
+#' radiometric_level(scale_to_reflectance(r))
+#' @export
+set_radiometric_level <- function(x, level, scale_factor = NA_real_) {
+  if (!inherits(x, "SpatRaster")) {
+    stop("`x` must be a terra SpatRaster.", call. = FALSE)
+  }
+  level <- match.arg(level, .RADIOMETRIC_LEVELS)
+  tags <- c(DRONEBIOR_RADIOMETRIC_LEVEL = level,
+            DRONEBIOR_VERSION = as.character(utils::packageVersion("DroneBioR")))
+  if (is.finite(scale_factor)) {
+    tags[["DRONEBIOR_SCALE_FACTOR"]] <- format(scale_factor, scientific = FALSE)
+  }
+  terra::metags(x) <- tags
+  x
+}
+
+# Read back the divisor recorded by set_radiometric_level(), or NA.
+#' @noRd
+.radiometric_scale_factor <- function(x) {
+  tags <- tryCatch(terra::metags(x), error = function(e) NULL)
+  if (is.null(tags) || !nrow(tags)) return(NA_real_)
+  hit <- tags$value[tags$name == "DRONEBIOR_SCALE_FACTOR"]
+  if (!length(hit)) return(NA_real_)
+  suppressWarnings(as.numeric(hit[[1L]]))
+}
+
+#' @rdname set_radiometric_level
+#' @export
+radiometric_level <- function(x) {
+  if (!inherits(x, "SpatRaster")) {
+    stop("`x` must be a terra SpatRaster.", call. = FALSE)
+  }
+  tags <- tryCatch(terra::metags(x), error = function(e) NULL)
+  if (is.null(tags) || !nrow(tags)) return("unknown")
+  hit <- tags$value[tags$name == "DRONEBIOR_RADIOMETRIC_LEVEL"]
+  if (!length(hit) || is.na(hit[[1L]])) return("unknown")
+  as.character(hit[[1L]])
 }
 
 #' Summarize a SpatRaster by layer
