@@ -56,6 +56,8 @@ Suggests:
     shiny,
     testthat (>= 3.0.0),
     withr
+Additional_repositories:
+    https://r-lidar.r-universe.dev
 SystemRequirements: GDAL (>= 3.0), PROJ (>= 6.0), GEOS (>= 3.8); optional:
     Docker for OpenDroneMap engine; exiftool for DJI Mavic 3M EXIF
     MakerNote sanitisation; rtklib + a DJI .bin RINEX converter for the
