@@ -52,7 +52,14 @@ GeoTIFF into the project's <code>odm_dem/</code> directory, alongside the DSM.</
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">build_chm_raster</span><span class="op">(</span><span class="va">project</span>, force <span class="op">=</span> <span class="cn">FALSE</span>, outlier_percentile <span class="op">=</span> <span class="fl">99.5</span><span class="op">)</span></span></code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">build_chm_raster</span><span class="op">(</span></span>
+<span>  <span class="va">project</span>,</span>
+<span>  force <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  outlier_percentile <span class="op">=</span> <span class="fl">99.5</span>,</span>
+<span>  despike <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  despike_window <span class="op">=</span> <span class="fl">5L</span>,</span>
+<span>  despike_max_deviation <span class="op">=</span> <span class="fl">3</span></span>
+<span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -81,6 +88,27 @@ high percentile removes them while preserving genuine tall
 features (the percentile adapts to each survey). Set to <code>100</code>
 (or <code>NULL</code>) to disable and keep every pixel.</p></dd>
 
+
+<dt id="arg-despike">despike<a class="anchor" aria-label="anchor" href="#arg-despike"></a></dt>
+<dd><p>Logical, default <code>TRUE</code>. Run <code><a href="despike_dem.html">despike_dem()</a></code> on the
+differenced canopy height model before the percentile clip, to
+remove isolated needles. This catches what <code>outlier_percentile</code>
+structurally cannot: a needle is a cell standing far above its own
+neighbourhood, and it is usually nowhere near the tallest cell in
+the survey, so no global threshold separates it from real canopy.
+Set <code>FALSE</code> to keep the raw difference.</p></dd>
+
+
+<dt id="arg-despike-window">despike_window<a class="anchor" aria-label="anchor" href="#arg-despike-window"></a></dt>
+<dd><p>Odd neighbourhood size in pixels for the local
+median, passed to <code><a href="despike_dem.html">despike_dem()</a></code>. Default <code>5</code>.</p></dd>
+
+
+<dt id="arg-despike-max-deviation">despike_max_deviation<a class="anchor" aria-label="anchor" href="#arg-despike-max-deviation"></a></dt>
+<dd><p>Metres a cell may stand above its local
+median before it is treated as a needle, passed to <code><a href="despike_dem.html">despike_dem()</a></code>.
+Default <code>3</code>.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
@@ -94,6 +122,8 @@ features (the percentile adapts to each survey). Set to <code>100</code>
 <span class="r-in"><span>  <span class="fu">build_chm_raster</span><span class="op">(</span><span class="va">project</span><span class="op">)</span></span></span>
 <span class="r-in"><span>  <span class="co"># keep every pixel, no outlier clipping:</span></span></span>
 <span class="r-in"><span>  <span class="fu">build_chm_raster</span><span class="op">(</span><span class="va">project</span>, outlier_percentile <span class="op">=</span> <span class="fl">100</span><span class="op">)</span></span></span>
+<span class="r-in"><span>  <span class="co"># the raw difference, with neither filter:</span></span></span>
+<span class="r-in"><span>  <span class="fu">build_chm_raster</span><span class="op">(</span><span class="va">project</span>, outlier_percentile <span class="op">=</span> <span class="fl">100</span>, despike <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
 </code></pre></div>
     </div>

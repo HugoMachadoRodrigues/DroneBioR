@@ -7,7 +7,14 @@ GeoTIFF into the project's `odm_dem/` directory, alongside the DSM.
 ## Usage
 
 ``` r
-build_chm_raster(project, force = FALSE, outlier_percentile = 99.5)
+build_chm_raster(
+  project,
+  force = FALSE,
+  outlier_percentile = 99.5,
+  despike = TRUE,
+  despike_window = 5L,
+  despike_max_deviation = 3
+)
 ```
 
 ## Arguments
@@ -34,6 +41,30 @@ build_chm_raster(project, force = FALSE, outlier_percentile = 99.5)
   features (the percentile adapts to each survey). Set to `100` (or
   `NULL`) to disable and keep every pixel.
 
+- despike:
+
+  Logical, default `TRUE`. Run
+  [`despike_dem()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/despike_dem.md)
+  on the differenced canopy height model before the percentile clip, to
+  remove isolated needles. This catches what `outlier_percentile`
+  structurally cannot: a needle is a cell standing far above its own
+  neighbourhood, and it is usually nowhere near the tallest cell in the
+  survey, so no global threshold separates it from real canopy. Set
+  `FALSE` to keep the raw difference.
+
+- despike_window:
+
+  Odd neighbourhood size in pixels for the local median, passed to
+  [`despike_dem()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/despike_dem.md).
+  Default `5`.
+
+- despike_max_deviation:
+
+  Metres a cell may stand above its local median before it is treated as
+  a needle, passed to
+  [`despike_dem()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/despike_dem.md).
+  Default `3`.
+
 ## Value
 
 Absolute path to the written `chm.tif`.
@@ -46,5 +77,7 @@ if (FALSE) { # \dontrun{
   build_chm_raster(project)
   # keep every pixel, no outlier clipping:
   build_chm_raster(project, outlier_percentile = 100)
+  # the raw difference, with neither filter:
+  build_chm_raster(project, outlier_percentile = 100, despike = FALSE)
 } # }
 ```
