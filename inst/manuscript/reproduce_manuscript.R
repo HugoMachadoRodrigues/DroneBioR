@@ -193,6 +193,22 @@ if (run("verify")) {
         cf <- coef(lm(biomass ~ NDVI + CHM, data = d))
         coefs[[length(coefs) + 1]] <- data.frame(seed = s, gps = g, window = w,
           b0 = cf[[1]], b_ndvi = cf[[2]], b_chm = cf[[3]])
+        # Worked example: the reported cell is the linear generator, the first
+        # replicate, a 0.20 m displacement and a 9 x 9 window. Capture the
+        # positions and values actually used here rather than redrawing them,
+        # so the shipped table is the input to Table 4 and not a lookalike.
+        if (gen == "linear" && s == 1L && g == 0.20 && w == 9L) {
+          utils::write.csv(data.frame(
+            sample_id          = sprintf("SIM_%03d", which(good)),
+            x_true             = xy0[good, 1], y_true     = xy0[good, 2],
+            x_recorded         = xy[good, 1],  y_recorded = xy[good, 2],
+            ndvi_true_quadrat  = nd_t[good],   chm_true_quadrat = ch_t[good],
+            ndvi_extracted_9x9 = ne[good],     chm_extracted_9x9 = ce[good],
+            biomass_kgha       = biomass[good],
+            note = "SIMULATED FROM IMAGERY - NOT FIELD MEASURED"),
+            file.path(OUT, "verification_samples_seed01.csv"), row.names = FALSE)
+          say("  wrote verification_samples_seed01.csv (%d rows)", sum(good))
+        }
         if (g != 0.20) next
         set.seed(SEEDS$partition + s)
         idx <- createDataPartition(d$biomass, p = 0.75, list = FALSE)
