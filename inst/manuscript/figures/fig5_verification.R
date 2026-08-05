@@ -8,7 +8,7 @@ dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
 COV  <- file.path(PROJECT, "covariates")
 
 S <- readRDS("repro_full/verification.rds")
-E <- subset(S$extraction, gen=="linear" & gps==0.20); C <- subset(S$coefficients, gps==0.20); R <- S$performance
+E <- subset(S$extraction, generator=="linear" & gps==0.20); C <- subset(S$coefficients, gps==0.20); R <- S$performance
 agg <- function(d,f,by) tapply(d[[f]], d[[by]], mean)
 
 OUT <- file.path(OUTDIR, "fig5_modelling.png")
