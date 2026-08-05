@@ -42,18 +42,18 @@ validate_odm_outputs(project)
 #> 11     3D tiles tileset
 #> 12       ODM report PDF
 #>                                                                                                           path
-#> 1                    /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
-#> 2                                      /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
-#> 3                                      /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
-#> 4                                      /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_dem/chm.tif
-#> 5  /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
-#> 6       /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
-#> 7       /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
-#> 8                     /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
-#> 9             /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj
-#> 10            /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb
-#> 11                               /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/3d_tiles/tileset.json
-#> 12                               /tmp/Rtmpc1YYQq/outputs/odm_micasense_dataset/micasense/odm_report/report.pdf
+#> 1                    /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_orthophoto/odm_orthophoto.tif
+#> 2                                      /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_dem/dsm.tif
+#> 3                                      /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_dem/dtm.tif
+#> 4                                      /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_dem/chm.tif
+#> 5  /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz
+#> 6       /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.laz
+#> 7       /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las
+#> 8                     /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_filterpoints/point_cloud.ply
+#> 9             /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.obj
+#> 10            /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_texturing/odm_textured_model_geo.glb
+#> 11                               /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/3d_tiles/tileset.json
+#> 12                               /tmp/RtmpYgvIQi/outputs/odm_micasense_dataset/micasense/odm_report/report.pdf
 #>    exists size_mb dimensions extent_m  crs valid   notes
 #> 1   FALSE      NA       <NA>     <NA> <NA> FALSE missing
 #> 2   FALSE      NA       <NA>     <NA> <NA> FALSE missing
