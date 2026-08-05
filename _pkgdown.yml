@@ -84,6 +84,8 @@ reference:
       - canonical_band_names
       - default_band_map_for_layers
       - scale_to_reflectance
+      - set_radiometric_level
+      - radiometric_level
       - summarize_spatraster
       - write_dronebio_rasters
 
@@ -119,6 +121,7 @@ reference:
       - field_covariate_catalogue
       - normalize_covariate_names
       - window_cells
+      - window_from_metres
       - extract_window_values
       - synthesize_pixel_raster
       - covariate_frame_from_pixels
