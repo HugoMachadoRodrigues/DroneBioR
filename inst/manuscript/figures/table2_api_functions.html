@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ *{margin:0;padding:0;box-sizing:border-box}
+ body{font-family:"Palatino Linotype","Book Antiqua",Georgia,serif;background:#fff;color:#111}
+ .wrap{width:1120px;padding:14px}
+ table{border-collapse:collapse;width:100%;font-size:13.4px}
+ caption{caption-side:top;text-align:left;font-size:14.5px;margin-bottom:7px}
+ thead th{border-top:1.6px solid #111;border-bottom:1.1px solid #111;text-align:left;padding:6px 8px;font-weight:700}
+ tbody td{padding:4.5px 8px;vertical-align:top}
+ tbody tr:last-child td{border-bottom:1.6px solid #111}
+ tr.grp td{background:#f2f5f2;font-weight:700;font-size:12.8px;letter-spacing:.02em}
+ code{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.1px;color:#0b3d2e}
+ .arg{font-family:"SFMono-Regular",Consolas,monospace;font-size:11.9px}
+</style></head><body><div class="wrap">
+<table>
+<caption><b>Table 2.</b> Principal DroneBioR functions with their key arguments and defaults. Arguments shown are those that most affect the scientific result; each function has additional arguments documented in the reference manual. Defaults are chosen so that a standard multispectral survey needs no tuning.</caption>
+<thead><tr><th style="width:26%">Function</th><th style="width:40%">Key arguments (defaults)</th><th>What it controls</th></tr></thead>
+<tbody>
+<tr class="grp"><td colspan="3">Project and reconstruction</td></tr>
+<tr><td><code>dronebio_project()</code></td><td class="arg">project_dir, odm_dataset_subdir, odm_project_name</td><td>Locates the project and the specific engine run; every other function takes this object</td></tr>
+<tr><td><code>build_point_cloud_only()</code></td><td class="arg">pc_quality = "medium", pc_filter = 2.5, pc_rectify = FALSE</td><td>Densification detail and the outlier filter (in standard deviations) applied to the dense cloud</td></tr>
+<tr><td><code>rebuild_from_edited_cloud()</code></td><td class="arg">build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE</td><td>Derives DSM/DTM/orthomosaic from the current (optionally cleaned) cloud, reusing the alignment</td></tr>
+<tr class="grp"><td colspan="3">Radiometry and vegetation indices</td></tr>
+<tr><td><code>read_multispectral_orthomosaic()</code></td><td class="arg">band_map = NULL, use_alpha = TRUE</td><td>Band assignment (auto-detected from layer count) and alpha/no-data masking</td></tr>
+<tr><td><code>scale_to_reflectance()</code></td><td class="arg">scale_factor = NULL</td><td>Radiometric scaling to 0-1; the factor is detected from the raster statistics when not given</td></tr>
+<tr><td><code>compute_spectral_indices()</code></td><td class="arg">eps = 1e-6, strict = FALSE</td><td>Denominator guard; <code>strict</code> errors instead of skipping indices whose bands are absent</td></tr>
+<tr><td><code>compute_biomass_proxies()</code></td><td class="arg">chm = NULL</td><td>When a CHM is supplied, adds the height-weighted <code>*_x_CHM</code> biomass proxies</td></tr>
+<tr><td><code>export_all_covariates()</code></td><td class="arg">out_dir, chm, dsm, dtm, custom_index, overwrite = TRUE</td><td>Writes every band, index, proxy and terrain layer as a full-resolution GeoTIFF</td></tr>
+<tr class="grp"><td colspan="3">Terrain, canopy height and point cloud</td></tr>
+<tr><td><code>improve_dtm_csf()</code></td><td class="arg">resolution = 0.5, class_threshold = 0.5, cloth_resolution = 0.5, rigidness = 1L</td><td>Cloth Simulation Filter ground classification; cloth stiffness and the ground/non-ground threshold</td></tr>
+<tr><td><code>build_chm_raster()</code></td><td class="arg">force = FALSE, outlier_percentile = 99.5</td><td>DSM - DTM with negative clamping and upper-tail spike clipping; caches <code>chm.tif</code></td></tr>
+<tr><td><code>despike_point_cloud()</code></td><td class="arg">methods = c("sor","surface"), sor_k = 16L, sor_mult = 2, height_cap = NULL</td><td>Statistical-outlier removal (k neighbours, distance multiplier) plus height-above-surface filtering</td></tr>
+<tr><td><code>compute_survey_volumes()</code></td><td class="arg">method = c("dtm","min_z","mean_z","ground_quantile","user_plane","perimeter_tin"), ground_quantile = 0.05</td><td>Choice of base reference surface for survey-grade volume within a region of interest</td></tr>
+<tr class="grp"><td colspan="3">Field calibration and prediction</td></tr>
+<tr><td><code>read_field_points()</code></td><td class="arg">crs = NULL, x_col = NULL, y_col = NULL</td><td>Ingests CSV or vector field samples; CRS and coordinate columns are auto-detected when omitted</td></tr>
+<tr><td><code>extract_field_covariates()</code></td><td class="arg">selected, window = 1L, fun = "mean", chm, dsm, dtm</td><td>Which covariates to sample and the n x n pixel window (and summary) around each field point</td></tr>
+<tr><td><code>fit_field_caret_model()</code></td><td class="arg">response = "biomass_kgha", predictors, method = "lm", split, preprocess = NULL</td><td>caret learner and the shared cross-validation split used for fair model comparison</td></tr>
+<tr><td><code>predict_field_model_map()</code></td><td class="arg">stack, out_path = NULL, min_biomass = 0</td><td>Applies the fitted model over the flight and writes the biomass prediction surface</td></tr>
+<tr class="grp"><td colspan="3">Workflow, reporting and time series</td></tr>
+<tr><td><code>run_dronebio_workflow()</code></td><td class="arg">orthomosaic, output_dir, use_alpha = TRUE, max_memory_gb = 4</td><td>End-to-end batch run with an explicit memory cap for large orthomosaics</td></tr>
+<tr><td><code>render_dronebio_report()</code></td><td class="arg">output_file, field_csv = NULL, rerun_workflow = FALSE</td><td>Self-contained HTML report; reuses on-disk products unless a rerun is requested</td></tr>
+<tr><td><code>register_flight()</code> / <code>flight_time_series()</code></td><td class="arg">date, project_dir, odm_dataset_subdir, odm_project_name / summary_fn</td><td>Logs a flight (with its ODM sub-project) and computes a metric across flights</td></tr>
+</tbody></table>
+</div></body></html>

@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ *{margin:0;padding:0;box-sizing:border-box}
+ body{font-family:"Palatino Linotype","Book Antiqua",Georgia,serif;background:#fff;color:#111}
+ .wrap{width:1000px;padding:14px}
+ table{border-collapse:collapse;width:100%;font-size:15px}
+ caption{caption-side:top;text-align:left;font-size:15px;margin-bottom:7px}
+ caption b{font-weight:700}
+ thead th{border-top:1.6px solid #111;border-bottom:1.1px solid #111;text-align:left;padding:6px 10px;font-weight:700}
+ tbody td{padding:5px 10px;vertical-align:top}
+ tbody tr:last-child td{border-bottom:1.6px solid #111}
+ td.i{font-weight:600;white-space:nowrap}
+ td.t{color:#0b5c3b;white-space:nowrap}
+</style></head><body><div class="wrap">
+<table>
+<caption><b>Table 1.</b> Representative vegetation indices implemented in DroneBioR. Multispectral indices require near-infrared (NIR) and/or red-edge (RE) bands; RGB indices use only visible bands and therefore work with any colour camera. Indices whose required bands are absent from the orthomosaic are skipped automatically.</caption>
+<thead><tr><th>Index</th><th>Name</th><th>Bands required</th><th>Type</th></tr></thead>
+<tbody>
+<tr><td class="i">NDVI</td><td>Normalised Difference Vegetation Index</td><td>NIR, Red</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">NDRE</td><td>Normalised Difference Red-Edge</td><td>NIR, RE</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">GNDVI</td><td>Green NDVI</td><td>NIR, Green</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">EVI</td><td>Enhanced Vegetation Index</td><td>NIR, Red, Blue</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">SAVI / OSAVI / MSAVI2</td><td>(Optimised / Modified) Soil-Adjusted VI</td><td>NIR, Red</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">NDWI</td><td>Normalised Difference Water Index</td><td>NIR, Green</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">CIrededge / GCI</td><td>Chlorophyll Index (red-edge / green)</td><td>NIR, RE / Green</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">RVI / DVI / WDRVI</td><td>Ratio / Difference / Wide-range VI</td><td>NIR, Red</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">TVI / MCARI / PSRI</td><td>Triangular / chlorophyll-absorption / senescence</td><td>Green, Red, RE, NIR</td><td class="t">Multispectral</td></tr>
+<tr><td class="i">VARI</td><td>Visible Atmospherically Resistant Index</td><td>Red, Green, Blue</td><td class="t">RGB</td></tr>
+<tr><td class="i">ExG</td><td>Excess Green</td><td>Red, Green, Blue</td><td class="t">RGB</td></tr>
+<tr><td class="i">GLI</td><td>Green Leaf Index</td><td>Red, Green, Blue</td><td class="t">RGB</td></tr>
+<tr><td class="i">TGI</td><td>Triangular Greenness Index</td><td>Red, Green, Blue</td><td class="t">RGB</td></tr>
+<tr><td class="i">MGRVI / RGBVI</td><td>(Modified) Green–Red / RGB Vegetation Index</td><td>Red, Green, Blue</td><td class="t">RGB</td></tr>
+</tbody></table>
+</div></body></html>

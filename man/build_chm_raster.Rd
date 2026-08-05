@@ -4,7 +4,14 @@
 \alias{build_chm_raster}
 \title{Build a Canopy Height Model (CHM) from the DSM and DTM}
 \usage{
-build_chm_raster(project, force = FALSE, outlier_percentile = 99.5)
+build_chm_raster(
+  project,
+  force = FALSE,
+  outlier_percentile = 99.5,
+  despike = TRUE,
+  despike_window = 5L,
+  despike_max_deviation = 3
+)
 }
 \arguments{
 \item{project}{A \code{dronebio_project} object.}
@@ -23,6 +30,21 @@ downstream biomass statistics. Clipping the extreme tail at a
 high percentile removes them while preserving genuine tall
 features (the percentile adapts to each survey). Set to \code{100}
 (or \code{NULL}) to disable and keep every pixel.}
+
+\item{despike}{Logical, default \code{TRUE}. Run \code{\link[=despike_dem]{despike_dem()}} on the
+differenced canopy height model before the percentile clip, to
+remove isolated needles. This catches what \code{outlier_percentile}
+structurally cannot: a needle is a cell standing far above its own
+neighbourhood, and it is usually nowhere near the tallest cell in
+the survey, so no global threshold separates it from real canopy.
+Set \code{FALSE} to keep the raw difference.}
+
+\item{despike_window}{Odd neighbourhood size in pixels for the local
+median, passed to \code{\link[=despike_dem]{despike_dem()}}. Default \code{5}.}
+
+\item{despike_max_deviation}{Metres a cell may stand above its local
+median before it is treated as a needle, passed to \code{\link[=despike_dem]{despike_dem()}}.
+Default \code{3}.}
 }
 \value{
 Absolute path to the written \code{chm.tif}.
@@ -38,5 +60,7 @@ GeoTIFF into the project's \verb{odm_dem/} directory, alongside the DSM.
   build_chm_raster(project)
   # keep every pixel, no outlier clipping:
   build_chm_raster(project, outlier_percentile = 100)
+  # the raw difference, with neither filter:
+  build_chm_raster(project, outlier_percentile = 100, despike = FALSE)
 }
 }

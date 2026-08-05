@@ -239,11 +239,15 @@ test_that("build_chm_raster clips the upper-tail outliers above the percentile",
   expect_lt(mm[2, 1], 10)       # spikes removed -> max is the real canopy
   expect_gte(mm[1, 1], 0)
 
-  # Disabling the clip keeps the spikes (max ~200 m).
-  out2 <- build_chm_raster(p, force = TRUE,
-                           outlier_percentile = 100)
-  mm2 <- terra::minmax(terra::rast(out2))
-  expect_gt(mm2[2, 1], 150)
+  # Two independent filters run, so disabling the percentile clip alone is not
+  # enough to keep the spikes: the local despiker still catches them, because
+  # each 200 m pixel stands far above its own neighbourhood.
+  out2 <- suppressMessages(build_chm_raster(p, force = TRUE, outlier_percentile = 100))
+  expect_lt(terra::minmax(terra::rast(out2))[2, 1], 10)
+
+  # Disabling both keeps the raw difference (max ~200 m).
+  out3 <- build_chm_raster(p, force = TRUE, outlier_percentile = 100, despike = FALSE)
+  expect_gt(terra::minmax(terra::rast(out3))[2, 1], 150)
 })
 
 test_that("build_chm_raster errors when DSM or DTM missing", {
@@ -741,4 +745,63 @@ test_that("odm_product_paths prefers the DJI multispectral stack over the RGB or
   stack <- file.path(od, "odm_orthophoto_dji.tif")
   file.create(stack)
   expect_equal(unname(odm_product_paths(p)[["orthomosaic"]]), stack)
+})
+
+# ---- build_chm_raster() removes local needles -------------------------------
+
+# A needle is a cell standing far above its own neighbourhood. It is typically
+# nowhere near the tallest cell in the survey, which is exactly why a global
+# percentile clip cannot separate it from real canopy.
+make_spiky_project <- function(spike_height = 25, canopy_height = 30) {
+  root <- tempfile("chmproj"); dir.create(root, recursive = TRUE)
+  proj <- dronebio_project(project_dir = root,
+                           odm_dataset_subdir = "ds", odm_project_name = "proj")
+  d <- file.path(proj$odm_project_dir, "odm_dem")
+  dir.create(d, recursive = TRUE)
+  dtm <- terra::rast(nrows = 60, ncols = 60, xmin = 0, xmax = 60, ymin = 0, ymax = 60)
+  terra::values(dtm) <- 100                       # flat ground
+  dsm <- dtm
+  terra::values(dsm) <- 102                       # 2 m of low vegetation
+  crown  <- terra::cells(dsm, terra::ext(10, 19, 10, 19))  # a real 9 x 9 crown
+  dsm[crown] <- 100 + canopy_height
+  needle <- terra::cellFromXY(dsm, cbind(45.5, 45.5))      # one isolated cell
+  dsm[needle] <- 100 + spike_height
+  terra::writeRaster(dtm, file.path(d, "dtm.tif"))
+  terra::writeRaster(dsm, file.path(d, "dsm.tif"))
+  list(project = proj, needle = needle, crown = crown)
+}
+
+test_that("the needle goes and the taller real crown stays", {
+  p <- make_spiky_project()
+  out <- suppressMessages(
+    build_chm_raster(p$project, force = TRUE, outlier_percentile = 100))
+  chm <- terra::rast(out)
+  expect_lt(chm[p$needle][[1]], 5)                  # back down to its neighbours
+  expect_gt(stats::median(chm[p$crown][, 1]), 25)   # the contiguous crown survives
+})
+
+test_that("despike = FALSE keeps the raw difference", {
+  p <- make_spiky_project()
+  out <- suppressMessages(
+    build_chm_raster(p$project, force = TRUE,
+                     outlier_percentile = 100, despike = FALSE))
+  expect_equal(terra::rast(out)[p$needle][[1]], 25, tolerance = 1e-6)
+})
+
+test_that("a global percentile clip cannot do what the local filter does", {
+  # the needle (25 m) sits below the crown (30 m), so no percentile that keeps
+  # the crown can remove the needle - which is the whole point of the filter
+  p <- make_spiky_project(spike_height = 25, canopy_height = 30)
+  out <- suppressMessages(
+    build_chm_raster(p$project, force = TRUE,
+                     outlier_percentile = 99.5, despike = FALSE))
+  expect_gt(terra::rast(out)[p$needle][[1]], 20)
+})
+
+test_that("the despiking parameters reach despike_dem()", {
+  p <- make_spiky_project(spike_height = 25)
+  out <- suppressMessages(
+    build_chm_raster(p$project, force = TRUE,
+                     outlier_percentile = 100, despike_max_deviation = 100))
+  expect_gt(terra::rast(out)[p$needle][[1]], 20)   # tolerance above its prominence
 })

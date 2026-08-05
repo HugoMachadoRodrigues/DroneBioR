@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; background:#ffffff; color:#1f2933; }
+  .fig { width:1240px; padding:26px 28px 22px; }
+  .flow { display:flex; align-items:stretch; gap:0; }
+  .col { flex:1; display:flex; flex-direction:column; }
+  .arrow { display:flex; align-items:center; justify-content:center; width:34px; color:#6b7280; font-size:26px; font-weight:700; }
+  .stage-label { font-size:12.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:#4b5563; margin-bottom:8px; text-align:center; }
+  .card { border:1.4px solid #cbd5e1; border-radius:10px; background:#f8fafc; padding:12px 12px; flex:1; }
+  .card.acq { background:#eef4f1; border-color:#b7ccc0; }
+  .card.eng { background:#eef2f7; border-color:#c2cede; }
+  .card.sci { background:#eef4ec; border-color:#bcd3b4; }
+  .card.out { background:#f5f1ea; border-color:#dbcbb0; }
+  .card h3 { font-size:14.5px; margin-bottom:9px; color:#111827; }
+  .chip { display:block; font-size:12.8px; line-height:1.32; background:#ffffff; border:1px solid #e2e8f0; border-radius:7px; padding:6px 9px; margin:5px 0; color:#1f2933; }
+  .chip b { color:#0f5132; }
+  .sub { font-size:11.6px; color:#52606d; margin:4px 0 2px; }
+  .band { margin-top:16px; border:1.4px solid #b8c4d0; border-radius:10px; background:#f1f5f9; padding:12px 16px; }
+  .band .title { font-size:13.5px; font-weight:700; color:#0b3d2e; margin-bottom:7px; }
+  .steps { display:flex; gap:7px; flex-wrap:wrap; }
+  .step { font-size:12.6px; background:#0b6e4f; color:#fff; border-radius:6px; padding:5px 11px; font-weight:600; }
+  .repro { margin-top:9px; font-size:12px; color:#3e4c59; }
+  .repro b { color:#111827; }
+  .cap { margin-top:4px; }
+</style></head>
+<body>
+<div class="fig">
+  <div class="flow">
+    <div class="col">
+      <div class="stage-label">Acquisition</div>
+      <div class="card acq">
+        <h3>UAV multispectral survey</h3>
+        <div class="chip"><b>MicaSense RedEdge</b><br>multispectral (5–10 bands)</div>
+        <div class="chip"><b>DJI Mavic 3M</b><br>RGB + multispectral</div>
+        <div class="sub">RTK / PPK &amp; GeoScan geotags</div>
+      </div>
+    </div>
+    <div class="arrow">&#8594;</div>
+    <div class="col">
+      <div class="stage-label">Photogrammetry engine</div>
+      <div class="card eng">
+        <h3>External (interchangeable)</h3>
+        <div class="chip">OpenDroneMap · WebODM</div>
+        <div class="chip">Pix4Dmapper · Agisoft Metashape</div>
+        <div class="sub">Products ingested via one interface:</div>
+        <div class="chip">orthomosaic · DSM · DTM<br>dense point cloud · textured mesh</div>
+      </div>
+    </div>
+    <div class="arrow">&#8594;</div>
+    <div class="col" style="flex:1.35">
+      <div class="stage-label">R scientific layer &mdash; DroneBioR</div>
+      <div class="card sci">
+        <div class="chip">Alpha / no-data masking &rarr; <b>reflectance</b> scaling</div>
+        <div class="chip"><b>Vegetation indices</b> (NDVI, NDRE, EVI, SAVI, GNDVI, CIrededge, VARI, ExG, &hellip;)</div>
+        <div class="chip"><b>CSF</b> ground refinement &rarr; <b>canopy height model</b> (spike-cleaned)</div>
+        <div class="chip">Point-cloud ROI · vertical profiles · configurable volumes · tree candidates</div>
+        <div class="chip">Windowed <b>field-sample extraction</b> &rarr; baseline + <b>caret ML</b> biomass models</div>
+        <div class="chip">Multi-flight <b>time-series</b> tracking</div>
+      </div>
+    </div>
+    <div class="arrow">&#8594;</div>
+    <div class="col">
+      <div class="stage-label">Outputs</div>
+      <div class="card out">
+        <h3>Reproducible products</h3>
+        <div class="chip"><b>Covariate GeoTIFFs</b><br>(all bands, indices, proxies, CHM/DSM/DTM)</div>
+        <div class="chip"><b>Biomass prediction</b> map</div>
+        <div class="chip">Self-contained <b>HTML report</b></div>
+        <div class="chip">Time-series plot</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="band">
+    <div class="title">Drone Biomass Studio &mdash; interactive web application (same tested code paths)</div>
+    <div class="steps">
+      <span class="step">1 · Process</span>
+      <span class="step">2 · 3D Modeling</span>
+      <span class="step">3 · GIS Workspace</span>
+      <span class="step">4 · Spectral</span>
+      <span class="step">5 · Field Models</span>
+      <span class="step">6 · Exports</span>
+      <span class="step">7 · Time Series</span>
+    </div>
+    <div class="repro">
+      <b>Reproducibility &amp; provenance:</b> background workers keep the UI responsive · every run recorded in a run manifest ·
+      &gt;1,200 unit tests under Linux / macOS / Windows CI · pkgdown documentation · AGPL-3, open source.
+    </div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ *{margin:0;padding:0;box-sizing:border-box}
+ body{font-family:"Palatino Linotype","Book Antiqua",Georgia,serif;background:#fff;color:#111}
+ .wrap{width:1040px;padding:14px}
+ table{border-collapse:collapse;width:100%;font-size:14.5px}
+ caption{caption-side:top;text-align:left;font-size:15px;margin-bottom:7px}
+ caption b{font-weight:700}
+ thead th{border-top:1.6px solid #111;border-bottom:1.1px solid #111;text-align:left;padding:6px 10px;font-weight:700}
+ tbody td{padding:5px 10px;vertical-align:top}
+ tbody tr:last-child td{border-bottom:1.6px solid #111}
+ td.m{font-weight:700;white-space:nowrap}
+ code{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.8px;color:#0b3d2e}
+</style></head><body><div class="wrap">
+<table>
+<caption><b>Table 3.</b> Thematic modules of the DroneBioR public API, with representative exported functions and their purpose. The full reference is documented online.</caption>
+<thead><tr><th>Module</th><th>Representative functions</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td class="m">Project setup</td><td><code>dronebio_project</code>, <code>detect_odm_projects</code>, <code>configure_proj_database</code></td><td>Describe a project and locate engine outputs</td></tr>
+<tr><td class="m">External engines</td><td><code>run_odm_project</code>, <code>run_webodm_project</code>, <code>odm_product_paths</code>, <code>build_point_cloud_only</code></td><td>Drive or ingest photogrammetry engines</td></tr>
+<tr><td class="m">DJI Mavic 3M / PPK</td><td><code>run_odm_dji_mavic_3m</code>, <code>parse_djim3m_mrk</code>, <code>convert_geoscan_to_odm_geo</code></td><td>Reconstruct DJI multispectral flights; geolocation</td></tr>
+<tr><td class="m">Orthomosaic</td><td><code>read_multispectral_orthomosaic</code>, <code>scale_to_reflectance</code>, <code>orthomosaic_band_presence</code></td><td>Read and calibrate multispectral mosaics</td></tr>
+<tr><td class="m">Indices &amp; proxies</td><td><code>compute_spectral_indices</code>, <code>compute_biomass_proxies</code>, <code>export_all_covariates</code></td><td>Vegetation indices and biomass-proxy surfaces</td></tr>
+<tr><td class="m">Classification / CHM</td><td><code>classify_ground_csf</code>, <code>improve_dtm_csf</code>, <code>build_chm_raster</code>, <code>despike_point_cloud</code></td><td>Ground/canopy separation and canopy height models</td></tr>
+<tr><td class="m">ROI &amp; volumes</td><td><code>build_roi_polygon</code>, <code>compute_selection_metrics</code>, <code>compute_survey_volumes</code>, <code>derive_tree_candidates</code></td><td>Point-cloud metrics, survey-grade volumes, trees</td></tr>
+<tr><td class="m">Field data &amp; models</td><td><code>read_field_points</code>, <code>extract_field_covariates</code>, <code>fit_field_caret_model</code>, <code>predict_field_model_map</code></td><td>Windowed extraction, model fitting, prediction</td></tr>
+<tr><td class="m">Workflow &amp; outputs</td><td><code>run_dronebio_workflow</code>, <code>finalize_dronebio_products</code>, <code>render_dronebio_report</code></td><td>End-to-end batch run, product folder, HTML report</td></tr>
+<tr><td class="m">Time series</td><td><code>register_flight</code>, <code>flight_time_series</code>, <code>flight_chm_mean</code></td><td>Track metrics across successive flights</td></tr>
+<tr><td class="m">Web application</td><td><code>run_drone_biomass_studio</code></td><td>Launch <i>Drone Biomass Studio</i></td></tr>
+</tbody></table>
+</div></body></html>
