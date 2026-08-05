@@ -60,7 +60,10 @@ the seed shown in the sidebar.</p>
 <span>  response <span class="op">=</span> <span class="st">"biomass_kgha"</span>,</span>
 <span>  holdout <span class="op">=</span> <span class="fl">0.25</span>,</span>
 <span>  folds <span class="op">=</span> <span class="fl">10L</span>,</span>
-<span>  seed <span class="op">=</span> <span class="fl">42L</span></span>
+<span>  seed <span class="op">=</span> <span class="fl">42L</span>,</span>
+<span>  blocking <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"random"</span>, <span class="st">"spatial"</span><span class="op">)</span>,</span>
+<span>  coords <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"x"</span>, <span class="st">"y"</span><span class="op">)</span>,</span>
+<span>  block_size <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -88,12 +91,42 @@ the seed shown in the sidebar.</p>
 <dt id="arg-seed">seed<a class="anchor" aria-label="anchor" href="#arg-seed"></a></dt>
 <dd><p>Random seed.</p></dd>
 
+
+<dt id="arg-blocking">blocking<a class="anchor" aria-label="anchor" href="#arg-blocking"></a></dt>
+<dd><p>How the partition and the folds are formed. <code>"random"</code>
+(default) reproduces the previous behaviour. <code>"spatial"</code> groups samples
+into square blocks and assigns whole blocks, which is the appropriate
+choice when the samples come from one flight.</p></dd>
+
+
+<dt id="arg-coords">coords<a class="anchor" aria-label="anchor" href="#arg-coords"></a></dt>
+<dd><p>Length-2 character vector naming the coordinate columns used
+for spatial blocking. Ignored when <code>blocking = "random"</code>.</p></dd>
+
+
+<dt id="arg-block-size">block_size<a class="anchor" aria-label="anchor" href="#arg-block-size"></a></dt>
+<dd><p>Side length of a block, in the units of <code>coords</code>. When
+<code>NULL</code> (default) a size is chosen so that roughly <code>5 * folds</code> blocks are
+occupied, which keeps the folds balanced without making blocks so small
+that neighbouring samples still straddle them.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>A list with <code>train_idx</code>, <code>test_idx</code>, <code>folds</code> (in-fold row
 positions <strong>within the training block</strong>), <code>folds_out</code>, <code>holdout</code>,
-<code>folds_k</code> and <code>seed</code>.</p>
+<code>folds_k</code> and <code>seed</code>. When <code>blocking = "spatial"</code> it also carries
+<code>blocking</code>, <code>block_id</code> (one block label per row of <code>data</code>), <code>block_size</code>
+and <code>n_blocks</code>.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
+    <p>Samples drawn from a single flight are spatially autocorrelated, so a random
+partition can place neighbouring quadrats on both sides of the split and
+return an optimistic score. Set <code>blocking = "spatial"</code> to lay a regular grid
+over the sample coordinates and keep whole blocks together: the hold-out
+withholds entire blocks, and the cross-validation folds are grouped by block
+as well, so no block is ever split between fitting and scoring.</p>
     </div>
 
     <div class="section level2">
@@ -102,8 +135,15 @@ positions <strong>within the training block</strong>), <code>folds_out</code>, <
 <span class="r-in"><span>  <span class="va">d</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>biomass_kgha <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="fl">60</span>, <span class="fl">500</span>, <span class="fl">4000</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span>  <span class="va">split</span> <span class="op">&lt;-</span> <span class="fu">field_train_split</span><span class="op">(</span><span class="va">d</span>, holdout <span class="op">=</span> <span class="fl">0.25</span>, folds <span class="op">=</span> <span class="fl">10</span><span class="op">)</span></span></span>
 <span class="r-in"><span>  <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">split</span><span class="op">$</span><span class="va">train_idx</span><span class="op">)</span></span></span>
+<span class="r-in"><span></span></span>
+<span class="r-in"><span>  <span class="co"># spatially blocked: neighbouring samples stay on the same side</span></span></span>
+<span class="r-in"><span>  <span class="va">d</span><span class="op">$</span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="fl">60</span>, <span class="fl">0</span>, <span class="fl">100</span><span class="op">)</span></span></span>
+<span class="r-in"><span>  <span class="va">d</span><span class="op">$</span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="fl">60</span>, <span class="fl">0</span>, <span class="fl">100</span><span class="op">)</span></span></span>
+<span class="r-in"><span>  <span class="va">sp</span> <span class="op">&lt;-</span> <span class="fu">field_train_split</span><span class="op">(</span><span class="va">d</span>, holdout <span class="op">=</span> <span class="fl">0.25</span>, folds <span class="op">=</span> <span class="fl">5</span>,</span></span>
+<span class="r-in"><span>                          blocking <span class="op">=</span> <span class="st">"spatial"</span><span class="op">)</span></span></span>
+<span class="r-in"><span>  <span class="va">sp</span><span class="op">$</span><span class="va">n_blocks</span></span></span>
 <span class="r-in"><span><span class="op">}</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 48</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 21</span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
