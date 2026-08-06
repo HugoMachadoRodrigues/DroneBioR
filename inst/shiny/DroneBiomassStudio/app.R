@@ -3298,10 +3298,15 @@ ui <- page_navbar(
                   placeholder = "Folder containing the drone JPGs / TIFFs"),
         uiOutput("odm_project_picker_ui"),
         selectInput(
-          "camera_type", "Camera type",
+          # Detected from the folder; the user only overrides it if the guess
+          # is wrong. "DJI" used to sit in the RGB label, which was false for
+          # the Mavic 3M - a multispectral rig that also carries a colour
+          # camera - and pointed people at the path that reconstructs the
+          # colour camera alone.
+          "camera_type", "Camera type (detected from the folder)",
           choices = c(
-            "Multispectral (MicaSense / Sequoia)" = "multispectral",
-            "RGB (Sony / DJI / Phantom / generic)" = "rgb"),
+            "Multispectral (MicaSense / Sequoia / DJI Mavic 3M)" = "multispectral",
+            "RGB only (Sony / Phantom / generic colour camera)"  = "rgb"),
           selected = "multispectral"),
         uiOutput("camera_detected_note"),
         uiOutput("geoscan_detected_note"),
@@ -8447,8 +8452,14 @@ server <- function(input, output, session) {
   })
 
   output$camera_detected_note <- renderUI({
-    d <- detected_camera()
+    d   <- detected_camera()
     sel <- input$camera_type %||% "multispectral"
+    # Name the rig, not the class. "multispectral" told the user nothing they
+    # could check against the drone in their hand; "DJI Mavic 3M" does, and it
+    # is the difference between trusting the guess and second-guessing it.
+    label <- tryCatch(DroneBioR:::detect_sensor_label(input$images_dir %||% ""),
+                      error = function(e) NA_character_)
+    if (is.na(label)) label <- d
     if (is.na(d)) {
       tags$div(class = "small text-muted",
                style = "margin-top:-8px; margin-bottom:8px;",
@@ -8456,11 +8467,11 @@ server <- function(input, output, session) {
     } else if (identical(d, sel)) {
       tags$div(class = "small",
                style = "margin-top:-8px; margin-bottom:8px; color:#16a34a;",
-               sprintf("Auto-detect: %s ✓ matches selection", d))
+               sprintf("Detected: %s ✓ nothing to choose", label))
     } else {
       tags$div(class = "small",
                style = "margin-top:-8px; margin-bottom:8px; color:#d97706;",
-               sprintf("Auto-detect: %s ⚠ differs from selection (%s)", d, sel))
+               sprintf("Detected: %s ⚠ the selector says %s", label, sel))
     }
   })
 
@@ -13926,9 +13937,15 @@ server <- function(input, output, session) {
                                      "Hold-out test", "Cross-validated")
             proxy <- proxy |>
               addCircleMarkers(
+                # Black outline, split colour inside. A coloured ring on a
+                # coloured basemap is unreadable: teal and red both vanish
+                # against a viridis biomass surface, which is exactly the layer
+                # these points are meant to be read against. Black reads on any
+                # of them, and moving the split to the fill keeps the
+                # test/cross-validated distinction the colour used to carry.
                 data = df, lng = ~lng, lat = ~lat,
-                radius = 5, weight = 2, color = ~col, fillColor = ~col,
-                opacity = 0.95, fillOpacity = 0.65,
+                radius = 5, weight = 2, color = "#000000", fillColor = ~col,
+                opacity = 1, fillOpacity = 0.85,
                 group = "Field points",
                 options = pathOptions(pane = "dbFieldPointPane"),
                 popup = ~paste0(

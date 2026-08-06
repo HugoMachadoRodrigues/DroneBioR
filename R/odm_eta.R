@@ -341,14 +341,23 @@ clear_active_run_record <- function() {
 
 #' Best-effort camera-type detection from a folder of source images.
 #'
-#' Counts file extensions and returns one of `"multispectral"`, `"rgb"`
-#' or `NA_character_` when uncertain. Multispectral is inferred from
-#' MicaSense / Sequoia .tif filenames; RGB from .jpg/.jpeg.
+#' Returns one of `"multispectral"`, `"rgb"` or `NA_character_` when
+#' uncertain. A DJI Mavic 3M is recognised by its filenames; otherwise
+#' multispectral is inferred from MicaSense / Sequoia .tif filenames and RGB
+#' from .jpg/.jpeg.
 #' @noRd
 detect_camera_from_folder <- function(images_dir) {
   if (!is.character(images_dir) || !length(images_dir) || !dir.exists(images_dir)) {
     return(NA_character_)
   }
+  # Name the rig before counting extensions. A Mavic 3M carries two cameras -
+  # a 20 MP RGB and a four-band multispectral (green, red, red edge, NIR; no
+  # blue) - and writes both on every shot. Deciding by extension count made it
+  # "multispectral" only because there happen to be four TIFFs per JPG; a
+  # flight where the RGB outnumbered the MS frames would have been called RGB
+  # and reconstructed from the colour camera alone.
+  if (has_djim3m_images(images_dir)) return("multispectral")
+
   files <- list.files(images_dir, pattern = "\\.(jpe?g|tif?f)$",
                       ignore.case = TRUE, recursive = FALSE)
   if (!length(files)) return(NA_character_)
@@ -358,4 +367,22 @@ detect_camera_from_folder <- function(images_dir) {
   if (n_tif > 0 && n_tif >= n_jpg) return("multispectral")
   if (n_jpg > 0 && n_jpg > n_tif) return("rgb")
   NA_character_
+}
+
+#' Human-readable name of the rig in a folder of source images.
+#'
+#' Used by the Studio to tell the user which camera it recognised, rather than
+#' asking them to classify it themselves. Returns `NA_character_` when the
+#' folder holds no images.
+#' @noRd
+detect_sensor_label <- function(images_dir) {
+  cam <- detect_camera_from_folder(images_dir)
+  if (is.na(cam)) return(NA_character_)
+  if (isTRUE(try(has_djim3m_images(images_dir), silent = TRUE))) {
+    return("DJI Mavic 3M - multispectral (G, R, RE, NIR) + RGB camera")
+  }
+  switch(cam,
+         multispectral = "Multispectral (MicaSense / Sequoia-style band files)",
+         rgb           = "RGB only (Sony / Phantom / generic colour camera)",
+         NA_character_)
 }

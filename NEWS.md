@@ -1,5 +1,18 @@
 # DroneBioR (development version)
 
+* The Studio no longer describes a DJI as an RGB camera. The camera-type
+  selector listed "RGB (Sony / DJI / Phantom / generic)", which is false for
+  the Mavic 3M: it is a multispectral rig carrying green, red, red-edge and
+  NIR — no blue — alongside a separate 20 MP colour camera. The label pointed
+  users at the path that reconstructs the colour camera alone.
+* `detect_camera_from_folder()` recognises the Mavic 3M by name instead of
+  guessing from extension counts. It happened to answer "multispectral" only
+  because the rig writes four TIFFs per JPG; a flight with more RGB frames
+  than MS frames would have been called RGB and reconstructed accordingly.
+* The detection note names the rig — "DJI Mavic 3M — multispectral (G, R, RE,
+  NIR) + RGB camera" — rather than the class. A user can check that against
+  the drone in their hand; "multispectral" gave them nothing to verify.
+
 * `run_odm_project()` now warns when a DJI Mavic 3M flight is reconstructed
   from its RGB images alone. Letting the permissive lister through (previous
   entry) fixed the crash but replaced it with something worse: an RGB-only
