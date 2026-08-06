@@ -1,82 +1,120 @@
+#!/usr/bin/env Rscript
 # ---------------------------------------------------------------------------
-# Sensitivity analysis (reviewer points 8 and 13):
-#   A. CSF parameters -> terrain surface and the CHM derived from it
-#   B. CHM upper-tail clipping -> how many cells, and does it remove real crowns?
+# Tables 6 and 7 of the manuscript:
+#   Table 6  CSF parameters -> terrain surface, and the CHM derived from it
+#   Table 7  CHM upper-tail clipping -> how many cells, and are they crowns?
+#
+# This script does NOT recompute either analysis. It reads the results
+# reproduce_manuscript.R already wrote to sensitivity.rds and writes them into
+# the table sources, so that the number printed by the script and the number
+# printed in the table cannot disagree.
+#
+# That is not merely tidier. The two used to be computed independently, and
+# they diverged: classify_ground(csf()) does not return an identical
+# classification run to run, so an independent re-run moved the last digit of
+# every cell and shifted the cloth_resolution range between 1.34 m and 1.35 m.
+# A table transcribed from one run and prose quoted from another cannot both
+# be right.
+#
+#   DRONEBIOR_REPRO   the directory reproduce_manuscript.R wrote
+#   DRONEBIOR_FIGDIR  where the table sources live (default: alongside this file)
 # ---------------------------------------------------------------------------
-suppressMessages({library(lidR); library(terra)})
 
-# Set PROJECT to the demonstration project and OUTDIR to where the figure
-# should be written. Both are the only paths this script needs.
-PROJECT <- Sys.getenv("DRONEBIOR_PROJECT", "~/DroneBioR-projects/micasense_demo")
-OUTDIR  <- Sys.getenv("DRONEBIOR_FIGDIR",  file.path(getwd(), "figures"))
-PROJECT <- normalizePath(PROJECT, mustWork = TRUE)
-dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
-COV  <- file.path(PROJECT, "covariates")
+REPRO  <- Sys.getenv("DRONEBIOR_REPRO", file.path(getwd(), "manuscript_repro"))
+HERE   <- normalizePath(dirname(sub("^--file=", "",
+            grep("^--file=", commandArgs(FALSE), value = TRUE)[1])), mustWork = FALSE)
+HERE   <- if (is.na(HERE) || !nzchar(HERE)) getwd() else HERE
+OUTDIR <- Sys.getenv("DRONEBIOR_FIGDIR", HERE)
+REPRO  <- normalizePath(REPRO, mustWork = TRUE)
 
-LAS  <- file.path(PROJECT, "imagens/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las")
-DEM  <- file.path(PROJECT, "outputs/odm_micasense_dataset/micasense/odm_dem")
-las  <- readLAS(LAS)
-NATIVE <- min(res(rast(file.path(DEM,"dsm.tif"))))
-cat("native resolution:", round(NATIVE,4), "m\n")
-dsm  <- rast(file.path(DEM,"dsm.tif"))
-# dtm.tif was overwritten by improve_dtm_csf(); dtm_raw.tif is the engine's SMRF terrain
-smrf <- rast(file.path(DEM,"dtm_raw.tif"))
-stopifnot(file.exists(file.path(DEM,"dtm_raw.tif")))
-cat("points:", npoints(las), "\n\n")
+S <- readRDS(file.path(REPRO, "sensitivity.rds"))
+A <- S$csf; B <- S$clip; sz <- S$patch_sizes
 
-# ---- A. CSF parameter grid ------------------------------------------------
-grid <- expand.grid(cloth_resolution = c(0.25, 0.5, 1.0, 2.0),
-                    rigidness        = c(1L, 2L, 3L),
-                    class_threshold  = c(0.25, 0.5, 1.0))
-grid <- subset(grid, (rigidness == 1L & class_threshold == 0.5) |
-                     (cloth_resolution == 0.5 & class_threshold == 0.5) |
-                     (cloth_resolution == 0.5 & rigidness == 1L))
-rows <- list()
-for (i in seq_len(nrow(grid))) {
-  g <- grid[i,]
-  cl <- classify_ground(las, csf(class_threshold = g$class_threshold,
-                                 cloth_resolution = g$cloth_resolution,
-                                 rigidness = as.integer(g$rigidness)), last_returns = FALSE)
-  ng <- sum(cl@data$Classification == 2L)
-  dtm <- rasterize_terrain(cl, res = NATIVE, algorithm = tin())
-  d2  <- resample(dtm, smrf, method = "bilinear")
-  dif <- as.numeric(values(d2 - smrf)); dif <- dif[is.finite(dif)]
-  chm <- resample(dsm, d2) - d2
-  hv  <- as.numeric(values(chm)); hv <- hv[is.finite(hv)]
-  rows[[i]] <- data.frame(cloth_resolution=g$cloth_resolution, rigidness=g$rigidness,
-    class_threshold=g$class_threshold, ground_pts=ng, pct_ground=100*ng/npoints(las),
-    mean_diff_vs_smrf=mean(dif), pct_lower=100*mean(dif<0),
-    chm_mean=mean(hv), chm_p99=unname(quantile(hv,0.99)), chm_max=max(hv))
-  cat(sprintf("  cr=%.2f rig=%d ct=%.2f | ground %5.1f%% | dCSF-SMRF %6.2f m | CHM mean %5.2f max %6.2f\n",
-      g$cloth_resolution, g$rigidness, g$class_threshold, 100*ng/npoints(las),
-      mean(dif), mean(hv), max(hv)))
+# --- Table 6 ---------------------------------------------------------------
+# The published row order interleaves the default among the cloth_resolution
+# rows, so it is spelled out rather than derived from the grid order.
+ord <- list(list("cloth_resolution", 0.25, 1, 0.50), list("default", 0.50, 1, 0.50),
+            list("cloth_resolution", 1.00, 1, 0.50), list("cloth_resolution", 2.00, 1, 0.50),
+            list("rigidness",        0.50, 2, 0.50), list("rigidness",        0.50, 3, 0.50),
+            list("class_threshold",  0.50, 1, 0.25), list("class_threshold",  0.50, 1, 1.00))
+
+row6 <- function(o) {
+  r <- A[abs(A$cloth_resolution - o[[2]]) < 1e-9 & A$rigidness == o[[3]] &
+         abs(A$class_threshold - o[[4]]) < 1e-9, ]
+  lab <- if (o[[1]] == "default") "<b>default</b>" else o[[1]]
+  tr  <- if (o[[1]] == "default") '<tr style="font-weight:700">' else "<tr>"
+  sprintf(paste0('%s<td class="w">%s</td><td>%.2f</td><td>%d</td><td>%.2f</td>',
+                 '<td>%.1f</td><td>%.2f</td><td>%.1f</td><td>%.2f</td><td>%.2f</td></tr>'),
+          tr, lab, r$cloth_resolution, r$rigidness, r$class_threshold,
+          r$pct_ground, r$mean_diff, r$pct_lower, r$chm_mean, r$chm_max)
 }
-A <- do.call(rbind, rows)
 
-# ---- B. CHM upper-tail clipping -------------------------------------------
-chm_ref <- rast(file.path(PROJECT, "covariates/CHM.tif"))
-v <- as.numeric(values(chm_ref)); v <- v[is.finite(v)]
-cat("\nCHM cells:", length(v), "| max", round(max(v),2), "m\n")
-brows <- list()
-for (p in c(99.0, 99.5, 99.9, 100)) {
-  thr <- if (p >= 100) Inf else unname(quantile(v, p/100))
-  n_clip <- sum(v > thr)
-  kept <- v[v <= thr]
-  brows[[length(brows)+1]] <- data.frame(percentile=p, threshold_m=ifelse(is.finite(thr),thr,NA),
-    cells_clipped=n_clip, pct_clipped=100*n_clip/length(v),
-    mean_after=mean(kept), max_after=max(kept))
-  cat(sprintf("  P%.1f -> thr %6.2f m | clipped %6d cells (%.3f%%) | mean %.3f max %6.2f\n",
-      p, ifelse(is.finite(thr),thr,NA), n_clip, 100*n_clip/length(v), mean(kept), max(kept)))
+# --- Table 7 ---------------------------------------------------------------
+lab7 <- c("P99.0", "P99.5", "P99.9", "none")
+row7 <- function(i) {
+  r   <- B[i, ]
+  tr  <- if (lab7[i] == "P99.5") '<tr style="font-weight:700">' else "<tr>"
+  thr <- if (is.na(r$threshold_m)) "&mdash;" else sprintf("%.2f", r$threshold_m)
+  sprintf('%s<td class="w">%s</td><td>%s</td><td>%s</td><td>%.3f</td><td>%.2f</td><td>%.2f</td></tr>',
+          tr, lab7[i], thr, formatC(r$cells_clipped, format = "d", big.mark = ","),
+          r$pct_clipped, r$mean_after, r$max_after)
 }
-B <- do.call(rbind, brows)
-# are the clipped cells isolated spikes or contiguous crowns?
-thr995 <- unname(quantile(v, 0.995))
-mask <- chm_ref > thr995
-pat <- patches(mask, directions = 8, zeroAsNA = TRUE)
-sz  <- as.numeric(table(values(pat)[is.finite(values(pat))]))
-cat(sprintf("\nAbove-P99.5 cells form %d connected patches; median %d cells, 90th pct %d, max %d\n",
-    length(sz), median(sz), round(quantile(sz,0.9)), max(sz)))
-cat(sprintf("patches of 1-2 cells: %.1f%% | patches >= 20 cells: %.1f%%\n",
-    100*mean(sz<=2), 100*mean(sz>=20)))
-saveRDS(list(csf=A, clip=B, patch_sizes=sz), "sens.rds")
-cat("\nsaved\n")
+
+# --- write both bodies into their sources ----------------------------------
+patch <- function(file, body, caption_subs = list()) {
+  path <- file.path(OUTDIR, file)
+  html <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  html <- sub("(?s)(<tbody>).*?(</tbody>)", paste0("\\1", body, "\\2"), html, perl = TRUE)
+  # Captions quote figures from the same data, so they are rewritten here too.
+  # Leaving them to be edited by hand is how Table 6 came to claim a 1.34 m
+  # range above a body that showed 1.35 m.
+  for (s in caption_subs) {
+    stopifnot("caption pattern not found" = grepl(s$find, html, perl = TRUE))
+    html <- sub(s$find, s$replace, html, perl = TRUE)
+  }
+  writeLines(html, path)
+  cat("  wrote", file, "\n")
+}
+
+d_default <- A$mean_diff[abs(A$cloth_resolution - 0.5) < 1e-9 & A$rigidness == 1L &
+                         abs(A$class_threshold - 0.5) < 1e-9]
+
+patch("table6_sensitivity.html",
+      paste(vapply(ord, row6, character(1)), collapse = ""),
+      list(list(find    = "moves &Delta; across a [0-9.]+ m range",
+                replace = sprintf("moves &Delta; across a %.2f m range",
+                                  diff(range(A$mean_diff)))),
+           list(find    = "The default row is the &minus;[0-9.]+ m and [0-9.]+%",
+                replace = sprintf("The default row is the &minus;%.2f m and %.1f%%",
+                                  abs(d_default),
+                                  A$pct_lower[abs(A$cloth_resolution - 0.5) < 1e-9 &
+                                              A$rigidness == 1L &
+                                              abs(A$class_threshold - 0.5) < 1e-9]))))
+
+patch("table7_clipping.html",
+      paste(vapply(seq_len(nrow(B)), row7, character(1)), collapse = ""),
+      list(list(find    = "removes [0-9,]+ cells and lowers the maximum by [0-9.]+ m while moving the mean by [0-9.]+ m",
+                replace = sprintf("removes %s cells and lowers the maximum by %.1f m while moving the mean by %.2f m",
+                                  formatC(B$cells_clipped[2], format = "d", big.mark = ","),
+                                  B$max_after[4] - B$max_after[2],
+                                  B$mean_after[4] - B$mean_after[2])),
+           list(find    = "they form [0-9,]+ connected patches with a median of [0-9,]+ cells and a maximum of [0-9,]+, and [0-9.]+% of the patches",
+                replace = sprintf("they form %s connected patches with a median of %s cells and a maximum of %s, and %.1f%% of the patches",
+                                  formatC(length(sz), format = "d", big.mark = ","),
+                                  formatC(median(sz), format = "d", big.mark = ","),
+                                  formatC(max(sz), format = "d", big.mark = ","),
+                                  100 * mean(sz >= 20)))))
+
+# --- the figures Section 3.7 quotes in prose -------------------------------
+d <- A$mean_diff[abs(A$cloth_resolution - 0.5) < 1e-9 & A$rigidness == 1L &
+                 abs(A$class_threshold - 0.5) < 1e-9]
+cat(sprintf("\nprose values for Section 3.7:\n"))
+cat(sprintf("  cloth_resolution spans %.2f m against the %.2f m at defaults\n",
+            diff(range(A$mean_diff)), abs(d)))
+cat(sprintf("  clip P99.5: %s of %s cells, max %.2f -> %.2f m, mean %.2f -> %.2f m\n",
+            formatC(B$cells_clipped[2], format = "d", big.mark = ","),
+            formatC(round(B$cells_clipped[2] / (B$pct_clipped[2] / 100)), format = "d", big.mark = ","),
+            B$max_after[4], B$max_after[2], B$mean_after[4], B$mean_after[2]))
+cat(sprintf("  %d patches, median %d cells, max %d; %.1f%% are 1-2 cells, %.1f%% span >= 20\n",
+            length(sz), median(sz), max(sz), 100 * mean(sz <= 2), 100 * mean(sz >= 20)))
+cat("\nNow re-render with:  Rscript render_html_tables.R table6_sensitivity table7_clipping\n")

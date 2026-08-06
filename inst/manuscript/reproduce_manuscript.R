@@ -145,7 +145,10 @@ stopifnot("dtm_raw.tif is missing: CSF has not been applied to this project, so 
 
 smrf   <- rast(smrf_path)
 native <- min(res(rast(unname(paths[["dsm"]]))))   # rebuild at the DSM posting
-las    <- readLAS(unname(paths[["point_cloud_las"]]))
+# odm_product_paths() composes both names whether or not the file exists, and
+# the distributed products carry the compressed one. Take whichever is on disk.
+cloud  <- Filter(file.exists, unname(paths[c("point_cloud_las", "point_cloud_laz")]))[1]
+las    <- readLAS(cloud)
 
 # Classify ground with the cloth-simulation filter at the package defaults,
 # then turn those ground points into a terrain raster.
@@ -158,9 +161,9 @@ csf_dtm <- rasterize_terrain(ground, res = native, algorithm = tin())
 diff_m <- values(resample(csf_dtm, smrf, method = "bilinear") - smrf)
 diff_m <- diff_m[is.finite(diff_m)]
 
-cat(sprintf("  mean CSF - SMRF  : %+.2f m    (paper: -1.09)\n", mean(diff_m)))
-cat(sprintf("  cells CSF lower  : %.1f %%     (paper: 81.2)\n", 100 * mean(diff_m < 0)))
-cat(sprintf("  largest lowering : %.1f m     (paper: 13.8)\n", -min(diff_m)))
+cat(sprintf("  mean CSF - SMRF  : %+.2f m    (paper: -1.03)\n", mean(diff_m)))
+cat(sprintf("  cells CSF lower  : %.1f %%     (paper: 80.4)\n", 100 * mean(diff_m < 0)))
+cat(sprintf("  largest lowering : %.1f m     (paper: 14.4)\n", -min(diff_m)))
 writeRaster(csf_dtm, file.path(OUT, "dtm_csf.tif"), overwrite = TRUE)
 
 
@@ -453,17 +456,21 @@ chm_ref    <- rast(file.path(OUT, "covariates", "CHM.tif"))
 heights    <- values(chm_ref); heights <- heights[is.finite(heights)]
 thresholds <- quantile(heights, c(0.990, 0.995, 0.999))
 
+# The last row is the unclipped model, carried in the table rather than
+# mentioned beside it so that Table 7 is complete as saved: the table image is
+# built from this object, and a row that exists only in printed output would
+# have to be transcribed by hand.
 clipping <- data.frame(
-  percentile    = c(99.0, 99.5, 99.9),
-  threshold_m   = as.numeric(thresholds),
-  cells_clipped = sapply(thresholds, function(t) sum(heights > t)),
-  pct_clipped   = sapply(thresholds, function(t) 100 * mean(heights > t)),
-  mean_after    = sapply(thresholds, function(t) mean(heights[heights <= t])),
-  max_after     = as.numeric(thresholds))
+  percentile    = c(99.0, 99.5, 99.9, 100.0),
+  threshold_m   = c(as.numeric(thresholds), NA_real_),
+  cells_clipped = c(sapply(thresholds, function(t) sum(heights > t)), 0L),
+  pct_clipped   = c(sapply(thresholds, function(t) 100 * mean(heights > t)), 0),
+  mean_after    = c(sapply(thresholds, function(t) mean(heights[heights <= t])),
+                    mean(heights)),
+  max_after     = c(as.numeric(thresholds), max(heights)))
 
 cat("\n  -- Table 7 --\n")
 print(clipping, digits = 4, row.names = FALSE)
-cat(sprintf("  unclipped: mean %.2f m, max %.2f m\n", mean(heights), max(heights)))
 
 # patches() labels each connected group of above-threshold cells, so the
 # table of labels gives the size of every patch.
