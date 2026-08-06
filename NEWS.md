@@ -1,3 +1,14 @@
+# DroneBioR (development version)
+
+* `run_odm_project()` rejected DJI Mavic 3M flights with "Some image names do
+  not match the expected MicaSense pattern". The function already detects the
+  sensor — it labels the ETA history `dji_mavic_3m` eight lines earlier — but
+  the manifest was still chosen by `switch(camera_type, ...)`, and a DJI flight
+  is `"multispectral"`, so it reached `list_micasense_images()`. DJI names the
+  band with a letter (`_MS_NIR`), not the numeric suffix that lister requires.
+  It now takes the permissive lister whenever the sensor test says DJI, which
+  is what the Studio's own image-manifest reactive has always done.
+
 # DroneBioR 0.5.1
 
 Reproduction fixes found by an independent audit of the submission package.

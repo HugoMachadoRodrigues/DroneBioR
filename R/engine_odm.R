@@ -353,9 +353,18 @@ run_odm_project <- function(project,
     "rgb"
   }
   dir.create(project$odm_images_dir, recursive = TRUE, showWarnings = FALSE)
-  manifest <- switch(camera_type,
-                     multispectral = list_micasense_images(project$images_dir),
-                     rgb           = list_aerial_images(project$images_dir))
+  # The sensor test above already established whether this is a DJI Mavic 3M
+  # flight. Its `_MS_{G,R,RE,NIR}.TIF` names carry the band as a letter code,
+  # not the numeric suffix list_micasense_images() requires, so dispatching on
+  # camera_type alone rejects a dataset the package otherwise supports. A DJI
+  # flight is "multispectral" and must still reach the permissive lister.
+  manifest <- if (identical(sensor, "dji_mavic_3m")) {
+    list_aerial_images(project$images_dir)
+  } else {
+    switch(camera_type,
+           multispectral = list_micasense_images(project$images_dir),
+           rgb           = list_aerial_images(project$images_dir))
+  }
   copy_images_for_odm(manifest, project$odm_images_dir)
 
   if (isTRUE(force) && file.exists(project$odm_orthomosaic)) {
