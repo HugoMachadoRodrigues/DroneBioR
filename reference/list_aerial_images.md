@@ -53,9 +53,9 @@ tmp <- tempfile("aerial-"); dir.create(tmp)
 for (i in 1:3) file.create(file.path(tmp, paste0("DJI_", sprintf("%04d", i), ".JPG")))
 head(list_aerial_images(tmp))
 #>                                               file     filename capture_id
-#> 1 /tmp/RtmpIdkppc/aerial-22fb1dd5d8bf/DJI_0001.JPG DJI_0001.JPG   DJI_0001
-#> 2 /tmp/RtmpIdkppc/aerial-22fb1dd5d8bf/DJI_0002.JPG DJI_0002.JPG   DJI_0002
-#> 3 /tmp/RtmpIdkppc/aerial-22fb1dd5d8bf/DJI_0003.JPG DJI_0003.JPG   DJI_0003
+#> 1 /tmp/Rtmp8ZtxiC/aerial-2453725dfe8e/DJI_0001.JPG DJI_0001.JPG   DJI_0001
+#> 2 /tmp/Rtmp8ZtxiC/aerial-2453725dfe8e/DJI_0002.JPG DJI_0002.JPG   DJI_0002
+#> 3 /tmp/Rtmp8ZtxiC/aerial-2453725dfe8e/DJI_0003.JPG DJI_0003.JPG   DJI_0003
 #>   band_id file_size_mb
 #> 1       1            0
 #> 2       1            0
