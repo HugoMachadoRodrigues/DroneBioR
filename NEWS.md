@@ -1,5 +1,15 @@
 # DroneBioR (development version)
 
+* The Studio resolves the photos folder before deciding anything from it.
+  Every folder-level test — `has_djim3m_images()`,
+  `detect_camera_from_folder()`, the image listers — reads one directory and
+  does not descend. With the photos field pointed at the *parent* of the
+  photos, all of them saw an empty folder and answered as though the flight
+  were something else. Nothing failed: the run took hours and produced a
+  three-band orthomosaic from a multispectral flight. Images one level down
+  are now found when the choice is unambiguous, said out loud when they are,
+  and the run is refused outright when there are no images at all.
+
 * The Studio no longer describes a DJI as an RGB camera. The camera-type
   selector listed "RGB (Sony / DJI / Phantom / generic)", which is false for
   the Mavic 3M: it is a multispectral rig carrying green, red, red-edge and

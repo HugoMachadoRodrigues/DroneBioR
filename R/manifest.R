@@ -237,3 +237,56 @@ copy_images_for_odm <- function(manifest, odm_images_dir) {
 
   invisible(destination)
 }
+
+#' Find the folder that actually holds the flight images.
+#'
+#' The Studio asks for a photos folder and a project folder, and nothing stops
+#' the two being set to the same path. When that path is the parent of the
+#' photos, every folder-level test - `has_djim3m_images()`,
+#' `detect_camera_from_folder()`, the image listers - sees an empty directory
+#' and answers as though the flight were something else. Nothing errors: the
+#' run proceeds and produces the wrong product hours later.
+#'
+#' So resolve the folder before testing it. Images sitting directly in `path`
+#' win. Otherwise, if exactly one immediate subfolder holds images, that is
+#' unambiguous and is used. More than one is genuinely ambiguous and is
+#' reported rather than guessed at.
+#'
+#' @param path Folder the user nominated.
+#' @return A list with `dir` (resolved folder, or `NA_character_`), `n` (images
+#'   found there), `moved` (whether resolution descended a level) and
+#'   `candidates` (subfolders holding images, when the choice is ambiguous).
+#' @noRd
+resolve_images_dir <- function(path) {
+  none <- list(dir = NA_character_, n = 0L, moved = FALSE, candidates = character(0))
+  if (!is.character(path) || !length(path) || is.na(path[[1]]) ||
+      !nzchar(path[[1]]) || !dir.exists(path[[1]])) {
+    return(none)
+  }
+  path <- path[[1]]
+  pat  <- "\\.(jpe?g|tif?f|png)$"
+  n_here <- length(list.files(path, pattern = pat, ignore.case = TRUE))
+  if (n_here > 0L) {
+    return(list(dir = path, n = n_here, moved = FALSE, candidates = character(0)))
+  }
+
+  subs <- list.dirs(path, recursive = FALSE, full.names = TRUE)
+  # An ODM output tree lives beside the photos in a typical project; it holds
+  # thousands of images of its own and must never be mistaken for the source.
+  subs <- subs[!basename(subs) %in% c("outputs", "output", "odm", "covariates")]
+  subs <- subs[!startsWith(basename(subs), ".")]
+  if (!length(subs)) return(none)
+
+  counts <- vapply(subs, function(d)
+    length(list.files(d, pattern = pat, ignore.case = TRUE)), integer(1))
+  hits <- subs[counts > 0L]
+  if (length(hits) == 1L) {
+    return(list(dir = hits, n = unname(counts[counts > 0L]), moved = TRUE,
+                candidates = character(0)))
+  }
+  if (length(hits) > 1L) {
+    return(list(dir = NA_character_, n = 0L, moved = FALSE,
+                candidates = basename(hits)))
+  }
+  none
+}

@@ -7871,6 +7871,13 @@ server <- function(input, output, session) {
 
   manifest <- reactive({
     validate(need(dir.exists(input$images_dir), paste("Image folder not found:", input$images_dir)))
+    # Read the resolved folder, not the field: pointed at the parent of the
+    # photos, every test below sees an empty directory and takes the wrong
+    # branch without complaining.
+    dir <- resolved_images_dir()
+    validate(need(length(list.files(dir, pattern = "\\.(jpe?g|tif?f|png)$",
+                                    ignore.case = TRUE)) > 0,
+                  paste("No images found in:", input$images_dir)))
     # DJI Mavic 3M datasets do not match the MicaSense `capture_band`
     # filename pattern that list_micasense_images() enforces, so we
     # dispatch on the permissive lister (which already knows to drop
@@ -7878,10 +7885,10 @@ server <- function(input, output, session) {
     # when DJI Mavic 3M images are present. Otherwise keep the
     # MicaSense path so legacy MicaSense / Sequoia flights show their
     # capture/band breakdown as before.
-    if (DroneBioR::has_djim3m_images(input$images_dir)) {
-      list_aerial_images(input$images_dir)
+    if (DroneBioR::has_djim3m_images(dir)) {
+      list_aerial_images(dir)
     } else {
-      list_micasense_images(input$images_dir)
+      list_micasense_images(dir)
     }
   })
 
@@ -8418,8 +8425,16 @@ server <- function(input, output, session) {
 
   # Auto-detected camera type based on the contents of the images folder.
   # Drives the badge below the camera_type selector and the run-time guard.
+  # Resolve first: the detector reads one directory and does not descend, so a
+  # photos field pointing at the parent of the photos makes it report "no
+  # images found" while 1,500 sit one level down.
+  resolved_images_dir <- reactive({
+    r <- DroneBioR:::resolve_images_dir(input$images_dir %||% "")
+    if (is.na(r$dir)) (input$images_dir %||% "") else r$dir
+  })
+
   detected_camera <- reactive({
-    DroneBioR:::detect_camera_from_folder(input$images_dir %||% "")
+    DroneBioR:::detect_camera_from_folder(resolved_images_dir())
   })
 
   # Auto-correct the Camera type selector on the first detection of a
@@ -8457,7 +8472,7 @@ server <- function(input, output, session) {
     # Name the rig, not the class. "multispectral" told the user nothing they
     # could check against the drone in their hand; "DJI Mavic 3M" does, and it
     # is the difference between trusting the guess and second-guessing it.
-    label <- tryCatch(DroneBioR:::detect_sensor_label(input$images_dir %||% ""),
+    label <- tryCatch(DroneBioR:::detect_sensor_label(resolved_images_dir()),
                       error = function(e) NA_character_)
     if (is.na(label)) label <- d
     if (is.na(d)) {
@@ -8479,7 +8494,7 @@ server <- function(input, output, session) {
   # auto-attach --geo. The badge tells the user the override is in
   # effect before they hit Run.
   geoscan_detected <- reactive({
-    DroneBioR::detect_geoscan_metadata(input$images_dir %||% "")
+    DroneBioR::detect_geoscan_metadata(resolved_images_dir())
   })
 
   output$geoscan_detected_note <- renderUI({
@@ -8706,6 +8721,34 @@ server <- function(input, output, session) {
           stop("Docker not found in PATH. Install/start Docker Desktop.", call. = FALSE)
         }
         p <- project()
+
+        # Resolve the photos folder before anything is decided from it. Every
+        # folder-level test here - has_djim3m_images(), the image listers -
+        # reads one directory and does not descend. Point the field at the
+        # parent of the photos and they all see an empty folder and answer as
+        # though the flight were something else: the run proceeds, takes hours
+        # and produces the wrong product, with nothing having failed. That is
+        # exactly how a Mavic 3M flight came back as a three-band orthomosaic.
+        res <- DroneBioR:::resolve_images_dir(p$images_dir)
+        if (is.na(res$dir)) {
+          stop(
+            if (length(res$candidates)) paste0(
+              "No images directly in ", p$images_dir, ", and more than one ",
+              "subfolder holds some (", paste(res$candidates, collapse = ", "),
+              "). Set 'Drone photos folder' to the one you want."
+            ) else paste0(
+              "No images found in ", p$images_dir,
+              ". Set 'Drone photos folder' to the folder holding the flight's ",
+              "photos."
+            ), call. = FALSE)
+        }
+        if (isTRUE(res$moved)) {
+          p$images_dir <- res$dir
+          showNotification(
+            sprintf("No photos directly in that folder; using %s (%d images).",
+                    basename(res$dir), res$n),
+            type = "message", duration = 8)
+        }
 
         # DJI Mavic 3M: the camera ships 1 RGB JPG + 4 single-band MS
         # TIFFs per shot. The legacy `list_micasense_images()` rejects
