@@ -4893,7 +4893,14 @@ server <- function(input, output, session) {
     } else {
       dronebio_project(project_dir = input$project_dir)
     }
-    p$images_dir <- input$images_dir
+    # Resolve here, not at each call site. This is the single place the photos
+    # folder enters the project object, and every consumer reads it from there:
+    # build_point_cloud_only(), run_odm_project(), the DJI router, the listers.
+    # Patching the callers one at a time is how the first attempt at this fix
+    # missed the step-2 button - it hardened the engine Run path and left
+    # "Build the point cloud" reading the raw field.
+    res <- DroneBioR:::resolve_images_dir(input$images_dir)
+    p$images_dir <- if (is.na(res$dir)) input$images_dir else res$dir
     p$output_dir <- input$output_dir
     p
   })
@@ -8729,7 +8736,10 @@ server <- function(input, output, session) {
         # though the flight were something else: the run proceeds, takes hours
         # and produces the wrong product, with nothing having failed. That is
         # exactly how a Mavic 3M flight came back as a three-band orthomosaic.
-        res <- DroneBioR:::resolve_images_dir(p$images_dir)
+        # project() has already resolved p$images_dir; this re-runs the same
+        # cheap lookup only to produce the message, and to refuse when there
+        # is nothing to reconstruct.
+        res <- DroneBioR:::resolve_images_dir(input$images_dir)
         if (is.na(res$dir)) {
           stop(
             if (length(res$candidates)) paste0(
@@ -8743,7 +8753,6 @@ server <- function(input, output, session) {
             ), call. = FALSE)
         }
         if (isTRUE(res$moved)) {
-          p$images_dir <- res$dir
           showNotification(
             sprintf("No photos directly in that folder; using %s (%d images).",
                     basename(res$dir), res$n),

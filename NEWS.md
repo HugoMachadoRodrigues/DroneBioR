@@ -1,5 +1,17 @@
 # DroneBioR (development version)
 
+* Fixed a regression introduced by the previous entry: recognising a DJI Mavic
+  3M by `has_djim3m_images()` alone made `detect_camera_from_folder()` call a
+  folder of nothing but `_D.JPG` colour frames "multispectral", and
+  `detect_sensor_label()` announce four bands that were not there. The
+  package's own staged ODM images folder is exactly such a folder. Detection
+  now requires at least one `_MS_` band file, and the label names the bands
+  actually on disk — a partial set reads "DJI Mavic 3M - multispectral (G, R)".
+* The photos folder is resolved once, in the Studio's project object, rather
+  than at individual call sites. The first attempt hardened one dispatch path
+  and missed the two buttons that are actually wired to the UI.
+* Tests cover both, including the folder shapes that produced the wrong answer.
+
 * The Studio resolves the photos folder before deciding anything from it.
   Every folder-level test — `has_djim3m_images()`,
   `detect_camera_from_folder()`, the image listers — reads one directory and

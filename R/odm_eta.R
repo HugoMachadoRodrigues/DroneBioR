@@ -356,7 +356,12 @@ detect_camera_from_folder <- function(images_dir) {
   # "multispectral" only because there happen to be four TIFFs per JPG; a
   # flight where the RGB outnumbered the MS frames would have been called RGB
   # and reconstructed from the colour camera alone.
-  if (has_djim3m_images(images_dir)) return("multispectral")
+  #
+  # has_djim3m_images() is not enough on its own: it also matches a folder
+  # holding only the `_D.JPG` frames, and the package's own staged ODM images
+  # folder is exactly that. Calling such a folder multispectral is worse than
+  # the bug being fixed, so require a band file to be present.
+  if (length(djim3m_bands_present(images_dir))) return("multispectral")
 
   files <- list.files(images_dir, pattern = "\\.(jpe?g|tif?f)$",
                       ignore.case = TRUE, recursive = FALSE)
@@ -369,6 +374,26 @@ detect_camera_from_folder <- function(images_dir) {
   NA_character_
 }
 
+#' Which DJI Mavic 3M multispectral bands are present in a folder.
+#'
+#' Returns the band suffixes actually on disk, in canonical order. Empty when
+#' the folder holds no `_MS_` frames - including the common case of a folder
+#' holding only the rig's `_D.JPG` colour frames, which
+#' [has_djim3m_images()] also matches.
+#' @noRd
+djim3m_bands_present <- function(images_dir) {
+  if (!is.character(images_dir) || !length(images_dir) || is.na(images_dir[[1]]) ||
+      !nzchar(images_dir[[1]]) || !dir.exists(images_dir[[1]])) {
+    return(character(0))
+  }
+  f <- list.files(images_dir[[1]],
+                  pattern = "^DJI_[0-9]+_[0-9]+_MS_(G|R|RE|NIR)\\.[A-Za-z]+$",
+                  ignore.case = TRUE)
+  if (!length(f)) return(character(0))
+  seen <- toupper(sub("^.*_MS_([A-Za-z]+)\\.[A-Za-z]+$", "\\1", f))
+  intersect(c("G", "R", "RE", "NIR"), unique(seen))
+}
+
 #' Human-readable name of the rig in a folder of source images.
 #'
 #' Used by the Studio to tell the user which camera it recognised, rather than
@@ -378,8 +403,18 @@ detect_camera_from_folder <- function(images_dir) {
 detect_sensor_label <- function(images_dir) {
   cam <- detect_camera_from_folder(images_dir)
   if (is.na(cam)) return(NA_character_)
-  if (isTRUE(try(has_djim3m_images(images_dir), silent = TRUE))) {
-    return("DJI Mavic 3M - multispectral (G, R, RE, NIR) + RGB camera")
+  # Name the bands that are there, not the bands the model is capable of. A
+  # folder holding only the colour frames, or a partial band set, must not be
+  # announced as carrying all four: the label is the thing the user checks the
+  # workflow against, so it has to describe this folder.
+  bands <- djim3m_bands_present(images_dir)
+  if (length(bands)) {
+    has_rgb <- length(list.files(
+      images_dir[[1]], pattern = "^DJI_[0-9]+_[0-9]+_D\\.[A-Za-z]+$",
+      ignore.case = TRUE)) > 0
+    return(sprintf("DJI Mavic 3M - multispectral (%s)%s",
+                   paste(bands, collapse = ", "),
+                   if (has_rgb) " + RGB camera" else ""))
   }
   switch(cam,
          multispectral = "Multispectral (MicaSense / Sequoia-style band files)",
