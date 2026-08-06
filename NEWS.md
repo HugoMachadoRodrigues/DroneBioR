@@ -18,8 +18,14 @@ No change to any analytical function.
   instead of the output directory.
 * `renv.lock` recorded the 134 dependencies but not DroneBioR itself, so
   `renv::restore()` did not install the package under study.
-* Tables 6 and 7 are regenerated; 18 cells had drifted from the values the
-  current code produces. Table 8 records DroneBioR 0.5.x and is legible at the
+* `sensitivity_tables_6_7.R` no longer recomputes Tables 6 and 7 beside the
+  script: it reads `sensitivity.rds` and writes the table bodies, so the
+  number in a table and the number the script prints cannot diverge. They had
+  diverged, because it read `odm_georeferenced_model.las` while the
+  distributed products carry the `.laz`, and the two are quantised
+  differently; and it read the CHM from a fifth stale path.
+* `reproduce_manuscript.R` carries the unclipped row inside the clipping
+  table rather than printing it alongside, so Table 7 is complete as saved. Table 8 records DroneBioR 0.5.x and is legible at the
   size the journal renders it. Table S2 no longer advertises an `--only`
   argument the script never had, and Table S3 reports 910 rows, not 980.
 
