@@ -13863,7 +13863,11 @@ server <- function(input, output, session) {
     proxy |>
       clearGroup("Predicted biomass") |>
       clearGroup("Field points") |>
-      removeControl("field_map_legend")
+      removeControl("field_map_legend") |>
+      # Drop the sample legend with the samples. Leaving it up after the
+      # points are switched off leaves the map asserting a key to something
+      # no longer drawn.
+      removeControl("field_points_legend")
     if (is.null(info)) return()
 
     map_r <- info$raster
@@ -13956,6 +13960,29 @@ server <- function(input, output, session) {
                   "<br>Predicted: ", formatC(predicted, format = "f", digits = 2),
                   " kg/ha",
                   "<br>Residual: ", formatC(residual, format = "f", digits = 2)))
+
+            # Two colours on a map with nothing to read them by is a puzzle,
+            # not a legend: the split was only in each point's popup, so
+            # telling hold-out from cross-validated meant clicking every dot.
+            # Count them here too - "which are the test points" is usually
+            # followed by "how many", and the answer is already in hand.
+            n_test <- sum(df$split == "test")
+            n_cv   <- nrow(df) - n_test
+            lab <- c(
+              if (n_test > 0) sprintf("Hold-out test (%d)", n_test),
+              if (n_cv   > 0) sprintf("Cross-validated (%d)", n_cv)
+            )
+            cols <- c(
+              if (n_test > 0) "#ef4444",
+              if (n_cv   > 0) "#0f766e"
+            )
+            if (length(lab)) {
+              proxy <- proxy |>
+                addLegend(position = "bottomleft",
+                          colors = cols, labels = lab, opacity = 0.85,
+                          title = "Field samples",
+                          layerId = "field_points_legend")
+            }
           }
         }
       }
