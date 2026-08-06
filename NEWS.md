@@ -1,5 +1,20 @@
 # DroneBioR (development version)
 
+* **Process step 4 now runs the multispectral reconstruction for a DJI Mavic
+  3M.** Nothing did. Step 2 correctly builds the point cloud from the RGB
+  camera — that is where a Mavic 3M's geometry comes from, since the spectral
+  runs use `--fast-orthophoto` and produce no dense cloud — but the four
+  aligned spectral bands live in a second reconstruction that no live button
+  ever triggered. `run_odm_dji_mavic_3m()` existed, was correct, and was
+  unreachable from the interface. The flight finished with a three-band
+  orthomosaic and NDVI, NDRE, EVI and every other NIR index simply absent.
+* Both live Process buttons resolve the photos folder before using it, and
+  refuse to run when it holds no images. The fix previously landed in
+  `launch_odm_run()`, which is dead code: there is no `run_odm` button.
+* `launch_odm_run()` and the WebODM branch inside it are marked unreachable.
+  They read like the code that runs, so a fix applied there looks right and
+  changes nothing.
+
 * Fixed a regression introduced by the previous entry: recognising a DJI Mavic
   3M by `has_djim3m_images()` alone made `detect_camera_from_folder()` call a
   folder of nothing but `_D.JPG` colour frames "multispectral", and

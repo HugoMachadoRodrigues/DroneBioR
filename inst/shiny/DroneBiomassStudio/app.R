@@ -3355,7 +3355,12 @@ ui <- page_navbar(
                "every covariate (all bands, vegetation indices and biomass ",
                "proxies) exported as full-resolution GeoTIFFs to a ",
                "covariates/ folder — ready for modelling. Runs in the ",
-               "background; the app stays usable while it works."),
+               "background; the app stays usable while it works. ",
+               "On a DJI Mavic 3M this step also runs the aligned ",
+               "multispectral reconstruction and stacks the 7-band ",
+               "orthomosaic, which is what makes NDVI, NDRE and the other ",
+               "NIR indices available — it therefore takes considerably ",
+               "longer on that camera."),
         div(class = "mb-2",
             tags$strong(class = "small", "Products on disk"),
             tableOutput("processing_products")),
@@ -8676,8 +8681,17 @@ server <- function(input, output, session) {
     }
   })
 
-  # Factor out the actual launch so we can call it from the modal
-  # confirmation paths as well as the direct Run button.
+  # UNREACHABLE FROM THE UI. There is no actionButton("run_odm"), no
+  # selectInput("processing_engine") and no textInput("webodm_url"), so
+  # observeEvent(input$run_odm) never fires, the two confirm-modal observers
+  # below it are only ever created by that dead observer, and the whole WebODM
+  # branch inside is dormant. The live Process buttons are run_stage0 (step 2)
+  # and run_stage0_rebuild (step 4).
+  #
+  # Kept rather than deleted because it is the only remaining WebODM wiring and
+  # may be wanted back. Left here it is a trap: it reads like the code that
+  # runs, so a fix applied here looks correct and changes nothing. If WebODM is
+  # not coming back, delete this function and the three observers that follow.
   launch_odm_run <- function(cam) {
     engine <- input$processing_engine %||% "odm_docker"
     common_args <- list(
@@ -9836,9 +9850,37 @@ server <- function(input, output, session) {
       type = "message", duration = 10)
   })
 
+  # Both Process buttons take the project straight from project(), which sets
+  # images_dir from the field verbatim. Every folder-level test downstream
+  # reads one directory and does not descend, so a field pointing at the
+  # parent of the photos silently sends the run down the wrong branch. Resolve
+  # once, here, and fail loudly rather than reconstruct the wrong thing.
+  project_with_images <- function() {
+    p <- project()
+    res <- DroneBioR:::resolve_images_dir(p$images_dir)
+    if (is.na(res$dir)) {
+      stop(if (length(res$candidates)) paste0(
+             "No images directly in ", p$images_dir, ", and more than one ",
+             "subfolder holds some (", paste(res$candidates, collapse = ", "),
+             "). Set 'Drone photos folder' to the one you want."
+           ) else paste0(
+             "No images found in ", p$images_dir, ". Set 'Drone photos ",
+             "folder' to the folder holding the flight's photos."
+           ), call. = FALSE)
+    }
+    if (isTRUE(res$moved)) {
+      p$images_dir <- res$dir
+      showNotification(
+        sprintf("No photos directly in that folder; using %s (%d images).",
+                basename(res$dir), res$n),
+        type = "message", duration = 8)
+    }
+    p
+  }
+
   observeEvent(input$run_stage0, {
     with_error_toast("Build the point cloud", {
-      p <- project()
+      p <- project_with_images()
       showNotification(
         paste0("Reconstructing to the point cloud at '",
                input$pc_quality %||% "medium",
@@ -9889,13 +9931,29 @@ server <- function(input, output, session) {
         type = "warning", duration = 6)
       return()
     }
-    p <- tryCatch(project(), error = function(e) NULL)
+    p <- tryCatch(project_with_images(), error = function(e) e)
+    if (inherits(p, "error")) {
+      showNotification(conditionMessage(p), type = "error", duration = 12)
+      return()
+    }
     if (is.null(p)) {
       showNotification("No project is configured.", type = "warning",
                        duration = 6)
       return()
     }
     cam <- input$camera_type %||% "multispectral"
+
+    # A DJI Mavic 3M needs a second reconstruction that nothing else triggers.
+    # Step 2 builds the cloud from the RGB camera, because that is where the
+    # geometry comes from - the MS runs use --fast-orthophoto and produce no
+    # dense cloud. But the four spectral bands live in a separate aligned run,
+    # and without it this step finishes with a three-band orthomosaic: no NIR,
+    # no red edge, and NDVI, NDRE, EVI and the rest simply absent from a
+    # flight that carries them. run_odm_dji_mavic_3m() performs that run and
+    # stacks the result into odm_orthophoto_dji.tif, which
+    # odm_product_paths() already prefers over the RGB-only file.
+    is_dji <- tryCatch(DroneBioR::has_djim3m_images(p$images_dir),
+                       error = function(e) FALSE)
 
     finish_rebuild <- function(res = NULL, err = NULL) {
       stage0_rebuild_running(FALSE)
@@ -9954,9 +10012,14 @@ server <- function(input, output, session) {
           pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
                             attach = FALSE, helpers = FALSE)
         }
-        res <- DroneBioR::rebuild_from_edited_cloud(
-          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
-          pc_las = TRUE)
+        res <- if (isTRUE(is_dji)) {
+          DroneBioR::run_odm_dji_mavic_3m(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE)
+        } else {
+          DroneBioR::rebuild_from_edited_cloud(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
+            pc_las = TRUE)
+        }
         # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
         # ground under dense canopy far better than ODM's SMRF default, but the
         # CSF CHM helper skips the P99.5 spike clip and would coarsen the DTM,
@@ -9982,7 +10045,7 @@ server <- function(input, output, session) {
                    error = function(e2) NULL))
         res
       }, seed = TRUE,
-         globals = list(p_snapshot = p_snapshot, cam = cam,
+         globals = list(p_snapshot = p_snapshot, cam = cam, is_dji = is_dji,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_rebuild(res = res),
@@ -9994,8 +10057,17 @@ server <- function(input, output, session) {
         type = "message", duration = NULL, closeButton = FALSE,
         id = "stage0_rebuild_progress")
       res <- tryCatch(
-        rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                  camera_type = cam, pc_las = TRUE),
+        # Same DJI branch as the background path above. Kept in step with it:
+        # a fallback that quietly builds a different product than the primary
+        # path is worse than no fallback, because nothing announces which one
+        # ran.
+        if (isTRUE(is_dji)) {
+          run_odm_dji_mavic_3m(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                               pc_las = TRUE)
+        } else {
+          rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                                    camera_type = cam, pc_las = TRUE)
+        },
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
         # See the async branch above for the rationale: CSF-refine the DTM at
