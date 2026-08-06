@@ -456,17 +456,21 @@ chm_ref    <- rast(file.path(OUT, "covariates", "CHM.tif"))
 heights    <- values(chm_ref); heights <- heights[is.finite(heights)]
 thresholds <- quantile(heights, c(0.990, 0.995, 0.999))
 
+# The last row is the unclipped model, carried in the table rather than
+# mentioned beside it so that Table 7 is complete as saved: the table image is
+# built from this object, and a row that exists only in printed output would
+# have to be transcribed by hand.
 clipping <- data.frame(
-  percentile    = c(99.0, 99.5, 99.9),
-  threshold_m   = as.numeric(thresholds),
-  cells_clipped = sapply(thresholds, function(t) sum(heights > t)),
-  pct_clipped   = sapply(thresholds, function(t) 100 * mean(heights > t)),
-  mean_after    = sapply(thresholds, function(t) mean(heights[heights <= t])),
-  max_after     = as.numeric(thresholds))
+  percentile    = c(99.0, 99.5, 99.9, 100.0),
+  threshold_m   = c(as.numeric(thresholds), NA_real_),
+  cells_clipped = c(sapply(thresholds, function(t) sum(heights > t)), 0L),
+  pct_clipped   = c(sapply(thresholds, function(t) 100 * mean(heights > t)), 0),
+  mean_after    = c(sapply(thresholds, function(t) mean(heights[heights <= t])),
+                    mean(heights)),
+  max_after     = c(as.numeric(thresholds), max(heights)))
 
 cat("\n  -- Table 7 --\n")
 print(clipping, digits = 4, row.names = FALSE)
-cat(sprintf("  unclipped: mean %.2f m, max %.2f m\n", mean(heights), max(heights)))
 
 # patches() labels each connected group of above-threshold cells, so the
 # table of labels gives the size of every patch.
