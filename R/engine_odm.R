@@ -365,6 +365,23 @@ run_odm_project <- function(project,
            multispectral = list_micasense_images(project$images_dir),
            rgb           = list_aerial_images(project$images_dir))
   }
+
+  # The permissive lister hands ODM only the RGB JPGs, because ODM cannot
+  # reconstruct from the single-band MS TIFFs directly. That is the right call
+  # for this function, but it silently yields an RGB-only orthomosaic: every
+  # index needing NIR or red edge is then unavailable, and the user discovers
+  # it two steps later with no explanation. Say so here, while it still costs
+  # nothing to change course.
+  if (isTRUE(attr(manifest, "dji_visible_multispectral"))) {
+    warning(
+      "DJI Mavic 3M flight: only the ", nrow(manifest), " RGB images are being ",
+      "reconstructed, so the orthomosaic will be RGB-only and NDVI, NDRE, EVI, ",
+      "SAVI and the other NIR/red-edge indices will not be computable from it. ",
+      "For the 7-band multispectral product, use run_odm_dji_mavic_3m(), which ",
+      "runs one ODM reconstruction per band and stacks the result.",
+      call. = FALSE
+    )
+  }
   copy_images_for_odm(manifest, project$odm_images_dir)
 
   if (isTRUE(force) && file.exists(project$odm_orthomosaic)) {

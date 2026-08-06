@@ -1,5 +1,13 @@
 # DroneBioR (development version)
 
+* `run_odm_project()` now warns when a DJI Mavic 3M flight is reconstructed
+  from its RGB images alone. Letting the permissive lister through (previous
+  entry) fixed the crash but replaced it with something worse: an RGB-only
+  orthomosaic produced without comment, so NDVI, NDRE and every other
+  NIR/red-edge index turned out to be uncomputable two steps later, in the GIS
+  tab, with nothing to explain why. The warning names
+  `run_odm_dji_mavic_3m()` as the route to the 7-band product.
+
 * `run_odm_project()` rejected DJI Mavic 3M flights with "Some image names do
   not match the expected MicaSense pattern". The function already detects the
   sensor — it labels the ETA history `dji_mavic_3m` eight lines earlier — but
