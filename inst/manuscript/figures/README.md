@@ -35,8 +35,9 @@ DRONEBIOR_FIGDIR=/path/to/figures \
 
 **Run `reproduce_manuscript.R` first.** Figures 2, 4 and 5 read the covariate
 rasters and `verification.rds` out of `DRONEBIOR_REPRO` rather than recomputing
-them. `sensitivity_tables_6_7.R` is the exception: it rebuilds the terrain
-itself at each parameter setting, so it needs only `DRONEBIOR_PROJECT`.
+them. `sensitivity_tables_6_7.R` recomputes nothing at all: it reads
+`sensitivity.rds` and renders Tables 6 and 7 from it, so it needs
+`DRONEBIOR_REPRO` and `DRONEBIOR_FIGDIR` but not `DRONEBIOR_PROJECT`.
 
 Point-cloud paths are resolved through `odm_product_paths()`, which composes
 both the `.las` and `.laz` names whether or not the file exists. The scripts
