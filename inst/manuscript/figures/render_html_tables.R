@@ -23,9 +23,14 @@
 
 library(chromote)
 
+# By default the sources beside this script are rendered. DRONEBIOR_FIGDIR
+# points it at another directory holding the same *.html - the manuscript build
+# keeps its own copy, and rendering into only one of the two is how a corrected
+# table ends up absent from the document that embeds it.
 here <- normalizePath(dirname(sub("^--file=", "",
           grep("^--file=", commandArgs(FALSE), value = TRUE)[1])), mustWork = FALSE)
 if (is.na(here) || !nzchar(here)) here <- getwd()
+here <- normalizePath(Sys.getenv("DRONEBIOR_FIGDIR", here), mustWork = TRUE)
 
 names_ <- commandArgs(TRUE)
 if (!length(names_)) {
