@@ -1,0 +1,124 @@
+# Reading products from ODM, WebODM, Pix4Dmapper and Agisoft Metashape
+
+## Why external engines
+
+Photogrammetric reconstruction (SfM, MVS, mesh and texture generation)
+is computationally heavy and is well served by established tools.
+DroneBioR does not re-implement those algorithms in R — it consumes the
+products and runs the scientific layer afterwards. The reader functions
+tolerate the small layout differences between engines.
+
+The minimum input DroneBioR needs is a **multispectral orthomosaic**:
+one GeoTIFF with Blue, Green, Red, RedEdge and NIR layers and,
+optionally, an alpha mask as a sixth layer. Optional additional inputs
+are a DSM, a DTM and a dense point cloud.
+
+## OpenDroneMap (ODM) via Docker
+
+When ODM is installed locally, DroneBioR can drive it end-to-end.
+
+``` r
+
+library(DroneBioR)
+
+project <- dronebio_project("/path/to/Drone_Biomass")
+
+# Stage MicaSense images into the ODM dataset folder
+manifest <- list_micasense_images(project$images_dir)
+copy_images_for_odm(manifest, project$odm_images_dir)
+
+# Inspect the command that will be issued
+build_odm_args(
+  dataset_dir   = project$odm_dataset_dir,
+  project_name  = project$odm_project_name,
+  multispectral = TRUE
+)
+
+# Run ODM
+run_odm_project(project, multispectral = TRUE)
+
+# Summarize what ODM produced
+summarize_odm_products(project)
+```
+
+The default ODM project layout is:
+
+    outputs/odm_micasense_dataset/
+      micasense/
+        images/                                          # input images
+        odm_orthophoto/
+          odm_orthophoto.tif                             # multispectral orthomosaic
+        odm_dem/
+          dsm.tif                                        # digital surface model
+          dtm.tif                                        # digital terrain model
+        odm_georeferencing/
+          odm_georeferenced_model.laz                    # dense point cloud
+
+`odm_product_paths(project)` returns these locations as a named list.
+
+## WebODM
+
+WebODM exports the same product set as ODM, usually as a downloadable
+archive. Unpack it so the inner folder layout matches the ODM tree
+above, then point
+[`dronebio_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/dronebio_project.md)
+at the dataset directory. From that point on, the workflow is identical
+to ODM.
+
+## Pix4Dmapper
+
+A typical Pix4Dmapper project lays its products out as:
+
+    3_dsm_ortho/
+      2_mosaic/<name>_transparent_mosaic_group1.tif      # orthomosaic
+      1_dsm/<name>_dsm.tif                               # DSM
+    2_densification/
+      point_cloud/<name>_group1_densified_point_cloud.las
+
+Point
+[`read_multispectral_orthomosaic()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_multispectral_orthomosaic.md)
+at the orthomosaic and pass the DSM/DTM paths to
+[`build_chm_from_dsm_dtm()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_chm_from_dsm_dtm.md).
+Pix4D usually exports DTM in a separate processing template — generate
+it once and reuse the file path.
+
+``` r
+
+ortho <- read_multispectral_orthomosaic(
+  "3_dsm_ortho/2_mosaic/flight_transparent_mosaic_group1.tif"
+)
+```
+
+## Agisoft Metashape
+
+Metashape writes products into an `export/` folder chosen at export
+time. Recommended export settings:
+
+- Orthomosaic: GeoTIFF, all five bands, optional alpha as a sixth layer.
+- DSM and DTM: GeoTIFF, same CRS as the orthomosaic.
+- Dense cloud: LAS or LAZ.
+
+``` r
+
+ortho <- read_multispectral_orthomosaic("export/orthomosaic.tif")
+chm   <- build_chm_from_dsm_dtm("export/dsm.tif", "export/dtm.tif")
+```
+
+## Reflectance scaling
+
+Engine outputs differ in numeric range. MicaSense reflectance products
+are typically 16-bit integers scaled by 32768.
+[`scale_to_reflectance()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/scale_to_reflectance.md)
+auto-detects when values exceed 1; pass `scale_factor` explicitly when
+you know the divisor your engine used.
+
+``` r
+
+refl <- scale_to_reflectance(ortho$bands)         # auto-detects
+refl <- scale_to_reflectance(ortho$bands, 32768)  # explicit
+```
+
+After scaling, `compute_spectral_indices(refl)` produces the index stack
+regardless of which engine generated the orthomosaic. This is the
+boundary where the scientific R layer takes over from the photogrammetry
+engine.

@@ -1,0 +1,400 @@
+# Package index
+
+## Project setup
+
+Build the project description used by the rest of the package, locate
+existing ODM projects, and configure PROJ on systems where terra or sf
+cannot find it.
+
+- [`dronebio_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/dronebio_project.md)
+  : Create a DroneBioR project description
+- [`detect_odm_projects()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/detect_odm_projects.md)
+  : Detect existing ODM project subdirectories in a project root
+- [`configure_proj_database()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/configure_proj_database.md)
+  : Configure PROJ paths for terra and sf
+
+## External photogrammetry engines
+
+Stage MicaSense images for ODM, drive ODM via Docker, and read products
+from ODM, WebODM, Pix4Dmapper and Agisoft Metashape.
+
+- [`list_micasense_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/list_micasense_images.md)
+  : List MicaSense image files
+- [`list_aerial_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/list_aerial_images.md)
+  : List generic aerial images for an ODM project
+- [`copy_images_for_odm()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/copy_images_for_odm.md)
+  : Copy images into an ODM project folder
+- [`build_odm_args()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_odm_args.md)
+  : Build an ODM Docker command
+- [`build_point_cloud_only()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_point_cloud_only.md)
+  : Reconstruct up to the point cloud and stop
+- [`default_max_concurrency()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/default_max_concurrency.md)
+  : Default number of ODM workers for this machine
+- [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
+  : Run ODM through Docker for a DroneBioR project
+- [`refilter_odm_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/refilter_odm_point_cloud.md)
+  : Re-clean an ODM point cloud without redoing the reconstruction
+- [`rebuild_from_edited_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/rebuild_from_edited_cloud.md)
+  : Build the ODM products from an edited point cloud
+- [`convert_undistorted_tiffs_for_texturing()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/convert_undistorted_tiffs_for_texturing.md)
+  : Convert ODM undistorted Float TIFFs to UInt16 for texturing
+- [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/odm_product_paths.md)
+  : Return expected ODM product paths
+- [`summarize_odm_products()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/summarize_odm_products.md)
+  : Summarize available ODM products
+- [`pick_best_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/pick_best_point_cloud.md)
+  : Pick the best available point cloud, in order: COPC \> LAZ \> LAS \>
+  PLY.
+- [`pick_best_textured_obj()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/pick_best_textured_obj.md)
+  : Pick whichever textured mesh actually exists, preferring full 3D
+  over 2.5D.
+- [`pick_best_textured_glb()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/pick_best_textured_glb.md)
+  : Pick whichever glTF binary actually exists, preferring full 3D over
+  2.5D.
+
+## WebODM
+
+Drive a WebODM server over its REST API instead of a local Docker
+container.
+
+- [`as_webodm_options()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/as_webodm_options.md)
+  :
+
+  Translate
+  [`build_odm_args()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_odm_args.md)
+  arguments into a WebODM options list
+
+- [`webodm_authenticate()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_authenticate.md)
+  : Authenticate with a WebODM instance
+
+- [`webodm_create_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_create_project.md)
+  : Create or look up a WebODM project
+
+- [`webodm_list_projects()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_list_projects.md)
+  : List WebODM projects
+
+- [`webodm_submit_task()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_submit_task.md)
+  : Submit a task to a WebODM project
+
+- [`webodm_task_status()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_task_status.md)
+  : Poll the status of a WebODM task
+
+- [`webodm_download_asset()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/webodm_download_asset.md)
+  : Download an asset from a WebODM task
+
+- [`run_webodm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_webodm_project.md)
+  : Run a DroneBioR project through a remote WebODM instance
+
+## DJI Mavic 3M, PPK and camera geolocation
+
+Reconstruct DJI Mavic 3M multispectral flights, and turn RTK/PPK logs
+and GeoScan metadata into the geolocation files ODM expects.
+
+- [`run_odm_dji_mavic_3m()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_dji_mavic_3m.md)
+  : Run OpenDroneMap on a DJI Mavic 3M flight, producing a 7-band ortho
+
+- [`list_dji_mavic_3m_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/list_dji_mavic_3m_images.md)
+  : List DJI Mavic 3M images grouped by camera band
+
+- [`has_djim3m_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/has_djim3m_images.md)
+  : Does this folder hold a DJI Mavic 3M image set?
+
+- [`detect_djim3m_ppk_files()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/detect_djim3m_ppk_files.md)
+  : Detect DJI Mavic 3M PPK / RTK sidecar files
+
+- [`inspect_djim3m_mrk()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/inspect_djim3m_mrk.md)
+  : Inspect a DJI Mavic 3M .MRK folder
+
+- [`parse_djim3m_mrk()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/parse_djim3m_mrk.md)
+  :
+
+  Parse a DJI Mavic 3M `_Timestamp.MRK` file
+
+- [`parse_djim3m_mrk_folder()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/parse_djim3m_mrk_folder.md)
+  : Parse and merge every .MRK in a folder
+
+- [`write_djim3m_geo_txt()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/write_djim3m_geo_txt.md)
+  :
+
+  Write an ODM `geo.txt` from a .MRK folder + a list of filenames
+
+- [`ppk_cli_rtklib_dji()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/ppk_cli_rtklib_dji.md)
+  : PPK CLI hook factory using rtklib + a DJI .bin -\> RINEX converter
+
+- [`detect_geoscan_metadata()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/detect_geoscan_metadata.md)
+  : Detect GeoScan metadata sibling of a source-images folder
+
+- [`read_geoscan_cameras()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_geoscan_cameras.md)
+  : Read GeoScan-style camera position file
+
+- [`read_geoscan_gnss_offset()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_geoscan_gnss_offset.md)
+  : Read GeoScan GNSS-to-camera offset file
+
+- [`convert_geoscan_to_odm_geo()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/convert_geoscan_to_odm_geo.md)
+  :
+
+  Convert GeoScan camera metadata to ODM `geo.txt` and write to disk
+
+## Multispectral orthomosaic
+
+Read and scale a multispectral orthomosaic, summarize layers and write
+DroneBioR raster products to disk.
+
+- [`read_multispectral_orthomosaic()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_multispectral_orthomosaic.md)
+  : Read a multispectral or RGB orthomosaic
+
+- [`default_rgb_band_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/default_rgb_band_map.md)
+  : Default band map for a 3-band RGB orthomosaic (Sony / DJI / Phantom)
+
+- [`default_dji_mavic_3m_band_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/default_dji_mavic_3m_band_map.md)
+  : Default band map for the DJI Mavic 3M 7-band stacked orthomosaic
+
+- [`orthomosaic_band_presence()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/orthomosaic_band_presence.md)
+  : Which spectral bands an orthomosaic actually carries
+
+- [`canonical_band_names()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/canonical_band_names.md)
+  : Canonical band names from whatever a raster calls its layers
+
+- [`default_band_map_for_layers()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/default_band_map_for_layers.md)
+  :
+
+  The band map
+  [`read_multispectral_orthomosaic()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_multispectral_orthomosaic.md)
+  picks for a layer count
+
+- [`scale_to_reflectance()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/scale_to_reflectance.md)
+  : Scale raster values to reflectance-like 0-1 values
+
+- [`set_radiometric_level()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/set_radiometric_level.md)
+  [`radiometric_level()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/set_radiometric_level.md)
+  : Record or read the radiometric state of a raster
+
+- [`summarize_spatraster()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/summarize_spatraster.md)
+  : Summarize a SpatRaster by layer
+
+- [`write_dronebio_rasters()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/write_dronebio_rasters.md)
+  : Write DroneBioR raster products
+
+## Vegetation indices and biomass proxy
+
+- [`compute_spectral_indices()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_spectral_indices.md)
+  : Compute spectral vegetation indices
+- [`compute_biomass_proxy()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_biomass_proxy.md)
+  : Compute an image-only biomass proxy
+- [`compute_biomass_proxies()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_biomass_proxies.md)
+  : Compute multiple biomass-proxy rasters
+- [`export_all_covariates()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/export_all_covariates.md)
+  : Compute and export every covariate to a folder
+
+## Classification
+
+- [`classify_ground_vegetation()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/classify_ground_vegetation.md)
+  : Rule-based ground / vegetation classification from NDVI (and CHM)
+- [`classify_ground_csf()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/classify_ground_csf.md)
+  : Classify ground points in a LAS file using lidR's CSF algorithm
+- [`improve_dtm_csf()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/improve_dtm_csf.md)
+  : Re-classify ground via CSF and rebuild the DTM (and optionally the
+  CHM)
+
+## Field data and baseline biomass model
+
+- [`read_field_data()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_field_data.md)
+  : Read field biomass data
+- [`extract_field_spectral_data()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/extract_field_spectral_data.md)
+  : Extract raster values at field sample points
+- [`fit_biomass_lm()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/fit_biomass_lm.md)
+  : Fit a baseline biomass linear model
+
+## Field sample ingest and windowed extraction
+
+Load field points from a CSV or shapefile, pick the covariates built in
+the earlier tabs, and aggregate them over an n x n pixel window around
+each sample.
+
+- [`stage_uploaded_vector()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/stage_uploaded_vector.md)
+  : Stage a Shiny multi-file upload back onto disk
+- [`field_source_columns()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/field_source_columns.md)
+  : Probe a field-sample file for columns, CRS and a column-mapping
+  guess
+- [`read_field_points()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_field_points.md)
+  : Read field sample points from a CSV or vector file
+- [`prepare_field_table()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/prepare_field_table.md)
+  : Rename, convert and reproject field points for modelling
+- [`field_covariate_catalogue()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/field_covariate_catalogue.md)
+  : Catalogue the covariates available for field modelling
+- [`normalize_covariate_names()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/normalize_covariate_names.md)
+  : Canonicalise covariate / layer names
+- [`window_cells()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/window_cells.md)
+  : Cell numbers of the n x n window around each field point
+- [`window_from_metres()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/window_from_metres.md)
+  : Convert a metric window to the nearest odd pixel window
+- [`extract_window_values()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/extract_window_values.md)
+  : Aggregate raster values over pre-computed window cells
+- [`synthesize_pixel_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/synthesize_pixel_raster.md)
+  : Pack pixel values into a one-row SpatRaster
+- [`covariate_frame_from_pixels()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/covariate_frame_from_pixels.md)
+  : Compute a covariate frame from pixel values
+- [`extract_field_covariates()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/extract_field_covariates.md)
+  : Extract windowed covariates at field sample points
+
+## caret field models
+
+Train caret regression models with a shared 10-fold split, compare them,
+map the winner and save it as a runnable bundle.
+
+- [`caret_model_catalogue()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/caret_model_catalogue.md)
+  : Catalogue caret models of a given type
+- [`caret_model_available()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/caret_model_available.md)
+  : Check whether a caret model can be trained here
+- [`field_train_split()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/field_train_split.md)
+  : Build the train / test partition and CV folds for a model sweep
+- [`fit_field_caret_model()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/fit_field_caret_model.md)
+  : Fit one caret model on a shared train / test split
+- [`field_model_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/field_model_metrics.md)
+  : Metrics for a fitted field model
+- [`format_field_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/format_field_metrics.md)
+  : Format field model metrics for display
+- [`predict(`*`<dronebio_field_model>`*`)`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/predict.dronebio_field_model.md)
+  : Predict from a fitted field model
+- [`build_prediction_stack()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_prediction_stack.md)
+  : Build an aggregated covariate stack for map prediction
+- [`predict_field_model_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/predict_field_model_map.md)
+  : Predict a biomass map from a covariate stack
+- [`export_field_biomass_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/export_field_biomass_map.md)
+  : Export the exact full-resolution biomass map
+- [`biomass_map_breaks()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/biomass_map_breaks.md)
+  : Quantile breaks and a robust stretch for a biomass map
+- [`classify_biomass_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/classify_biomass_map.md)
+  : Classify a biomass map into labelled classes
+- [`save_field_model_bundle()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/save_field_model_bundle.md)
+  : Save a trained field model as a self-contained zip bundle
+- [`load_field_model_bundle()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/load_field_model_bundle.md)
+  : Load a field model bundle written by save_field_model_bundle()
+- [`write_field_model_summary()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/write_field_model_summary.md)
+  : Write a plain-text summary of a fitted field model
+
+## Field-calibrated biomass mapping
+
+Calibrate against field samples or a rising-plate meter, then predict a
+biomass surface over the flight.
+
+- [`fit_plate_meter()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/fit_plate_meter.md)
+  : Calibrate a rising plate / disc meter against clipped biomass
+- [`predict(`*`<dronebio_plate_meter>`*`)`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/predict.dronebio_plate_meter.md)
+  : Predict biomass from plate-meter heights
+- [`build_biomass_calibration()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_biomass_calibration.md)
+  : Assemble the biomass calibration table
+- [`fit_biomass_model()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/fit_biomass_model.md)
+  : Fit a field-calibrated biomass model (staged LM / random forest)
+- [`make_biomass_grid()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/make_biomass_grid.md)
+  : Build a grid of biomass predictors from indices and a CHM
+- [`predict_biomass_map()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/predict_biomass_map.md)
+  : Predict a biomass map from a fitted model
+- [`run_biomass_mapping()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_biomass_mapping.md)
+  : Run the field-calibrated biomass mapping workflow
+
+## Point clouds and CHM
+
+Read dense point clouds, build a canopy height model from DSM/DTM and
+attach heights to selected points.
+
+- [`read_full_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_full_point_cloud.md)
+  : Read a full-resolution LAS/LAZ/COPC point cloud
+- [`read_las_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_las_point_cloud.md)
+  : Read an uncompressed LAS point cloud
+- [`read_ply_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/read_ply_point_cloud.md)
+  : Read a binary little-endian PLY point cloud sample
+- [`parse_ply_header()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/parse_ply_header.md)
+  : Parse the header of a binary little-endian PLY file
+- [`write_ply_subset()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/write_ply_subset.md)
+  : Write a filtered copy of a binary PLY, preserving its exact vertex
+  layout
+- [`despike_point_cloud()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/despike_point_cloud.md)
+  : Flag reconstruction spikes in a point cloud
+- [`despike_ply()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/despike_ply.md)
+  : Remove reconstruction spikes from a point-cloud file
+- [`build_chm_from_dsm_dtm()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_chm_from_dsm_dtm.md)
+  : Build a canopy height model from DSM and DTM rasters
+- [`build_chm_raster()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_chm_raster.md)
+  : Build a Canopy Height Model (CHM) from the DSM and DTM
+- [`despike_dem()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/despike_dem.md)
+  : Remove isolated spikes from a DSM / DTM / DEM
+- [`harmonize_dem_products()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/harmonize_dem_products.md)
+  : Produce physically consistent DSM, DTM and CHM
+- [`add_chm_heights()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/add_chm_heights.md)
+  : Add CHM-derived heights to selected points
+- [`add_point_heights()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/add_point_heights.md)
+  : Add local height above a ground proxy to point cloud data
+- [`compute_chm_roi_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_chm_roi_metrics.md)
+  : Compute CHM metrics for a polygon ROI
+
+## Region of interest and selection metrics
+
+- [`build_roi_polygon()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/build_roi_polygon.md)
+  : Build a 2D ROI polygon from selected points
+- [`points_in_roi()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/points_in_roi.md)
+  : Test whether coordinates are inside a polygon ROI
+- [`filter_points_by_roi()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/filter_points_by_roi.md)
+  : Filter point cloud data by a polygon ROI
+- [`compute_selection_metrics()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_selection_metrics.md)
+  : Compute selection metrics for a point cloud ROI
+- [`compute_vertical_profile()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_vertical_profile.md)
+  : Compute a vertical point-density profile
+- [`compute_survey_volumes()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/compute_survey_volumes.md)
+  : Survey-grade volume calculations over a region of interest
+- [`derive_tree_candidates()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/derive_tree_candidates.md)
+  : Derive approximate tree candidates from a point cloud
+- [`export_point_selection()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/export_point_selection.md)
+  : Export a selected point cloud ROI
+
+## Reports
+
+- [`render_dronebio_report()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/render_dronebio_report.md)
+  : Render a DroneBioR biomass report
+
+## Time series across flights
+
+- [`default_flight_registry()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/default_flight_registry.md)
+  : Default location of the DroneBioR flight registry
+
+- [`register_flight()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/register_flight.md)
+  : Register a flight in the time-series registry
+
+- [`list_flights()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/list_flights.md)
+  : List flights registered in the time-series registry
+
+- [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/flight_time_series.md)
+  : Compute a time series of a custom flight summary
+
+- [`flight_ndvi_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/flight_summary_helpers.md)
+  [`flight_biomass_proxy_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/flight_summary_helpers.md)
+  [`flight_chm_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/flight_summary_helpers.md)
+  :
+
+  Stock summary helpers for
+  [`flight_time_series()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/flight_time_series.md)
+
+## Workflow and outputs
+
+Run the whole pipeline, collect the products into one documented folder,
+and check what actually landed on disk.
+
+- [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_dronebio_workflow.md)
+  : Run the DroneBioR orthomosaic analysis workflow
+- [`finalize_dronebio_products()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/finalize_dronebio_products.md)
+  : Collect the final products into one flat folder with metadata
+- [`validate_odm_outputs()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/validate_odm_outputs.md)
+  : Validate ODM output products against sanity thresholds
+- [`quick_outputs_check()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/quick_outputs_check.md)
+  : Lightweight existence + size check on ODM outputs
+- [`is_cloud_sync_path()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/is_cloud_sync_path.md)
+  : Detect whether a path lives inside a cloud-sync provider folder
+
+## Web application
+
+- [`run_drone_biomass_studio()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_drone_biomass_studio.md)
+  : Start Drone Biomass Studio
+- [`with_error_toast()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/with_error_toast.md)
+  : Run an expression and report errors as Shiny toasts
+- [`observer_need()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/observer_need.md)
+  : Guard an observer, showing the reason when it stops

@@ -1,0 +1,13 @@
+pandoc: 3.8.3
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles:
+  app-reference: app-reference.html
+  dronebior-overview: dronebior-overview.html
+  external-engines: external-engines.html
+  point-clouds-and-chm: point-clouds-and-chm.html
+  spectral-indices: spectral-indices.html
+last_built: 2026-08-06T15:07Z
+urls:
+  reference: https://hugomachadorodrigues.github.io/DroneBioR/reference
+  article: https://hugomachadorodrigues.github.io/DroneBioR/articles
