@@ -1,3 +1,28 @@
+# DroneBioR 0.5.1
+
+Reproduction fixes found by an independent audit of the submission package.
+No change to any analytical function.
+
+* `reproduce_manuscript.R` compared its results against the pre-correction
+  Section 3.4 values, so a correct run printed `-1.03 (paper: -1.09)` and
+  looked like a divergence. It now cites -1.03 / 80.4 / 14.4.
+* `reproduce_manuscript.R` and the figure scripts opened
+  `paths[["point_cloud_las"]]`, which `odm_product_paths()` composes whether or
+  not the file exists. The distributed products carry `.laz`, so the run
+  stopped at the CSF step. They now take whichever is on disk.
+* The four figure scripts used four different path conventions
+  (`PROJECT/covariates`, `PROJECT/imagens/outputs/...`, a relative
+  `repro_full/verification.rds`, and `odm_product_paths()`). They now share
+  one: `DRONEBIOR_PROJECT`, `DRONEBIOR_REPRO` and `DRONEBIOR_FIGDIR`.
+* `sensitivity_tables_6_7.R` wrote `sens.rds` into the working directory
+  instead of the output directory.
+* `renv.lock` recorded the 134 dependencies but not DroneBioR itself, so
+  `renv::restore()` did not install the package under study.
+* Tables 6 and 7 are regenerated; 18 cells had drifted from the values the
+  current code produces. Table 8 records DroneBioR 0.5.x and is legible at the
+  size the journal renders it. Table S2 no longer advertises an `--only`
+  argument the script never had, and Table S3 reports 910 rows, not 980.
+
 # DroneBioR 0.5.0
 
 ## Exports tab

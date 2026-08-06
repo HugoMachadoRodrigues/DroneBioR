@@ -13,122 +13,6 @@
     ]
   },
   "Packages": {
-    "AsioHeaders": {
-      "Package": "AsioHeaders",
-      "Version": "1.30.2-1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "BH": {
-      "Package": "BH",
-      "Version": "1.90.0-1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "DBI": {
-      "Package": "DBI",
-      "Version": "1.3.0",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "KernSmooth": {
-      "Package": "KernSmooth",
-      "Version": "2.23-26",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "MASS": {
-      "Package": "MASS",
-      "Version": "7.3-65",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "Matrix": {
-      "Package": "Matrix",
-      "Version": "1.7-5",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "lattice"
-      ]
-    },
-    "ModelMetrics": {
-      "Package": "ModelMetrics",
-      "Version": "1.2.2.2",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "Rcpp",
-        "data.table"
-      ]
-    },
-    "R6": {
-      "Package": "R6",
-      "Version": "2.6.1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "RCSF": {
-      "Package": "RCSF",
-      "Version": "1.0.2",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "Rcpp"
-      ]
-    },
-    "RColorBrewer": {
-      "Package": "RColorBrewer",
-      "Version": "1.1-3",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "Rcpp": {
-      "Package": "Rcpp",
-      "Version": "1.1.1-1.1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "RcppArmadillo": {
-      "Package": "RcppArmadillo",
-      "Version": "15.4.0-1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "Rcpp"
-      ]
-    },
-    "RcppEigen": {
-      "Package": "RcppEigen",
-      "Version": "0.3.4.0.2",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "Rcpp"
-      ]
-    },
-    "S7": {
-      "Package": "S7",
-      "Version": "0.2.2",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
-    "SQUAREM": {
-      "Package": "SQUAREM",
-      "Version": "2026.1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
     "abind": {
       "Package": "abind",
       "Version": "1.4-8",
@@ -136,9 +20,23 @@
       "Repository": "CRAN",
       "Requirements": []
     },
+    "AsioHeaders": {
+      "Package": "AsioHeaders",
+      "Version": "1.30.2-1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "base64enc": {
       "Package": "base64enc",
       "Version": "0.1-6",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
+    "BH": {
+      "Package": "BH",
+      "Version": "1.90.0-1",
       "Source": "Repository",
       "Repository": "CRAN",
       "Requirements": []
@@ -301,6 +199,13 @@
       "Repository": "CRAN",
       "Requirements": []
     },
+    "DBI": {
+      "Package": "DBI",
+      "Version": "1.3.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "diagram": {
       "Package": "diagram",
       "Version": "1.6.5",
@@ -334,6 +239,25 @@
         "tibble",
         "tidyselect",
         "vctrs"
+      ]
+    },
+    "DroneBioR": {
+      "Package": "DroneBioR",
+      "Version": "0.5.0",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteUsername": "HugoMachadoRodrigues",
+      "RemoteRepo": "DroneBioR",
+      "RemoteRef": "v0.5.0",
+      "RemoteSha": "6f18c2bffedce214bfdc76280b581e638b6e6af8",
+      "Requirements": [
+        "grDevices",
+        "parallel",
+        "sf",
+        "stats",
+        "terra",
+        "utils"
       ]
     },
     "e1071": {
@@ -583,6 +507,13 @@
       "Repository": "CRAN",
       "Requirements": []
     },
+    "KernSmooth": {
+      "Package": "KernSmooth",
+      "Version": "2.23-26",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "knitr": {
       "Package": "knitr",
       "Version": "1.51",
@@ -731,6 +662,22 @@
       "Repository": "CRAN",
       "Requirements": []
     },
+    "MASS": {
+      "Package": "MASS",
+      "Version": "7.3-65",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
+    "Matrix": {
+      "Package": "Matrix",
+      "Version": "1.7-5",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "lattice"
+      ]
+    },
     "memoise": {
       "Package": "memoise",
       "Version": "2.0.1",
@@ -747,6 +694,16 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Requirements": []
+    },
+    "ModelMetrics": {
+      "Package": "ModelMetrics",
+      "Version": "1.2.2.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp",
+        "data.table"
+      ]
     },
     "nlme": {
       "Package": "nlme",
@@ -777,15 +734,6 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Requirements": []
-    },
-    "pROC": {
-      "Package": "pROC",
-      "Version": "1.19.0.1",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": [
-        "Rcpp"
-      ]
     },
     "parallelly": {
       "Package": "parallelly",
@@ -830,6 +778,15 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Requirements": []
+    },
+    "pROC": {
+      "Package": "pROC",
+      "Version": "1.19.0.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp"
+      ]
     },
     "processx": {
       "Package": "processx",
@@ -909,6 +866,13 @@
         "vctrs"
       ]
     },
+    "R6": {
+      "Package": "R6",
+      "Version": "2.6.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "randomForest": {
       "Package": "randomForest",
       "Version": "4.7-1.2",
@@ -943,6 +907,47 @@
         "Rcpp",
         "sp",
         "terra"
+      ]
+    },
+    "RColorBrewer": {
+      "Package": "RColorBrewer",
+      "Version": "1.1-3",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
+    "Rcpp": {
+      "Package": "Rcpp",
+      "Version": "1.1.1-1.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
+    "RcppArmadillo": {
+      "Package": "RcppArmadillo",
+      "Version": "15.4.0-1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp"
+      ]
+    },
+    "RcppEigen": {
+      "Package": "RcppEigen",
+      "Version": "0.3.4.0.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp"
+      ]
+    },
+    "RCSF": {
+      "Package": "RCSF",
+      "Version": "1.0.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp"
       ]
     },
     "recipes": {
@@ -1056,6 +1061,13 @@
         "wk"
       ]
     },
+    "S7": {
+      "Package": "S7",
+      "Version": "0.2.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "sass": {
       "Package": "sass",
       "Version": "0.4.10",
@@ -1161,6 +1173,13 @@
         "vctrs"
       ]
     },
+    "SQUAREM": {
+      "Package": "SQUAREM",
+      "Version": "2026.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "stars": {
       "Package": "stars",
       "Version": "0.7-2",
@@ -1264,13 +1283,6 @@
         "withr"
       ]
     },
-    "timeDate": {
-      "Package": "timeDate",
-      "Version": "4052.112",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Requirements": []
-    },
     "timechange": {
       "Package": "timechange",
       "Version": "0.4.0",
@@ -1279,6 +1291,13 @@
       "Requirements": [
         "cpp11"
       ]
+    },
+    "timeDate": {
+      "Package": "timeDate",
+      "Version": "4052.112",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
     },
     "tinytex": {
       "Package": "tinytex",

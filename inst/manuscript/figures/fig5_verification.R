@@ -1,13 +1,25 @@
-suppressMessages({library(terra); library(caret)})
-# Set PROJECT to the demonstration project and OUTDIR to where the figure
-# should be written. Both are the only paths this script needs.
+suppressMessages({library(DroneBioR); library(terra); library(caret)})
+# Three paths, each overridable by environment variable:
+#   DRONEBIOR_PROJECT  the demonstration project holding the ODM products
+#   DRONEBIOR_REPRO    the directory reproduce_manuscript.R wrote. It holds
+#                      covariates/ and verification.rds; this script reads
+#                      them rather than recomputing them, so run that script
+#                      first.
+#   DRONEBIOR_FIGDIR   where this figure is written
 PROJECT <- Sys.getenv("DRONEBIOR_PROJECT", "~/DroneBioR-projects/micasense_demo")
+REPRO   <- Sys.getenv("DRONEBIOR_REPRO",   file.path(getwd(), "manuscript_repro"))
 OUTDIR  <- Sys.getenv("DRONEBIOR_FIGDIR",  file.path(getwd(), "figures"))
 PROJECT <- normalizePath(PROJECT, mustWork = TRUE)
+REPRO   <- normalizePath(REPRO,   mustWork = TRUE)
 dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
-COV  <- file.path(PROJECT, "covariates")
+COV     <- file.path(REPRO, "covariates")
+PATHS   <- odm_product_paths(dronebio_project(PROJECT))
 
-S <- readRDS("repro_full/verification.rds")
+# odm_product_paths() composes both point-cloud names whether or not the file
+# exists, and the distributed products carry the compressed one.
+CLOUD   <- Filter(file.exists, unname(PATHS[c("point_cloud_las", "point_cloud_laz")]))[1]
+
+S <- readRDS(file.path(REPRO, "verification.rds"))
 E <- subset(S$extraction, generator=="linear" & gps==0.20); C <- subset(S$coefficients, gps==0.20); R <- S$performance
 agg <- function(d,f,by) tapply(d[[f]], d[[by]], mean)
 

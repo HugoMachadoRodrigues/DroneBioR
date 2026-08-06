@@ -145,7 +145,10 @@ stopifnot("dtm_raw.tif is missing: CSF has not been applied to this project, so 
 
 smrf   <- rast(smrf_path)
 native <- min(res(rast(unname(paths[["dsm"]]))))   # rebuild at the DSM posting
-las    <- readLAS(unname(paths[["point_cloud_las"]]))
+# odm_product_paths() composes both names whether or not the file exists, and
+# the distributed products carry the compressed one. Take whichever is on disk.
+cloud  <- Filter(file.exists, unname(paths[c("point_cloud_las", "point_cloud_laz")]))[1]
+las    <- readLAS(cloud)
 
 # Classify ground with the cloth-simulation filter at the package defaults,
 # then turn those ground points into a terrain raster.
@@ -158,9 +161,9 @@ csf_dtm <- rasterize_terrain(ground, res = native, algorithm = tin())
 diff_m <- values(resample(csf_dtm, smrf, method = "bilinear") - smrf)
 diff_m <- diff_m[is.finite(diff_m)]
 
-cat(sprintf("  mean CSF - SMRF  : %+.2f m    (paper: -1.09)\n", mean(diff_m)))
-cat(sprintf("  cells CSF lower  : %.1f %%     (paper: 81.2)\n", 100 * mean(diff_m < 0)))
-cat(sprintf("  largest lowering : %.1f m     (paper: 13.8)\n", -min(diff_m)))
+cat(sprintf("  mean CSF - SMRF  : %+.2f m    (paper: -1.03)\n", mean(diff_m)))
+cat(sprintf("  cells CSF lower  : %.1f %%     (paper: 80.4)\n", 100 * mean(diff_m < 0)))
+cat(sprintf("  largest lowering : %.1f m     (paper: 14.4)\n", -min(diff_m)))
 writeRaster(csf_dtm, file.path(OUT, "dtm_csf.tif"), overwrite = TRUE)
 
 

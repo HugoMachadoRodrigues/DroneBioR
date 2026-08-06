@@ -3,19 +3,27 @@
 #   A. CSF parameters -> terrain surface and the CHM derived from it
 #   B. CHM upper-tail clipping -> how many cells, and does it remove real crowns?
 # ---------------------------------------------------------------------------
-suppressMessages({library(lidR); library(terra)})
+suppressMessages({library(DroneBioR); library(lidR); library(terra)})
 
-# Set PROJECT to the demonstration project and OUTDIR to where the figure
-# should be written. Both are the only paths this script needs.
+# Two paths, each overridable by environment variable:
+#   DRONEBIOR_PROJECT  the demonstration project holding the ODM products
+#   DRONEBIOR_FIGDIR   where this table is written
+#
+# This one works from the ODM products alone: it rebuilds the terrain itself
+# at each parameter setting, so it needs no covariates and no prior run of
+# reproduce_manuscript.R.
 PROJECT <- Sys.getenv("DRONEBIOR_PROJECT", "~/DroneBioR-projects/micasense_demo")
 OUTDIR  <- Sys.getenv("DRONEBIOR_FIGDIR",  file.path(getwd(), "figures"))
 PROJECT <- normalizePath(PROJECT, mustWork = TRUE)
 dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
-COV  <- file.path(PROJECT, "covariates")
+PATHS   <- odm_product_paths(dronebio_project(PROJECT))
 
-LAS  <- file.path(PROJECT, "imagens/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.las")
-DEM  <- file.path(PROJECT, "outputs/odm_micasense_dataset/micasense/odm_dem")
-las  <- readLAS(LAS)
+# odm_product_paths() composes both point-cloud names whether or not the file
+# exists, and the distributed products carry the compressed one.
+CLOUD   <- Filter(file.exists, unname(PATHS[c("point_cloud_las", "point_cloud_laz")]))[1]
+
+DEM  <- dirname(unname(PATHS[["dtm"]]))
+las  <- readLAS(CLOUD)
 NATIVE <- min(res(rast(file.path(DEM,"dsm.tif"))))
 cat("native resolution:", round(NATIVE,4), "m\n")
 dsm  <- rast(file.path(DEM,"dsm.tif"))
@@ -78,5 +86,5 @@ cat(sprintf("\nAbove-P99.5 cells form %d connected patches; median %d cells, 90t
     length(sz), median(sz), round(quantile(sz,0.9)), max(sz)))
 cat(sprintf("patches of 1-2 cells: %.1f%% | patches >= 20 cells: %.1f%%\n",
     100*mean(sz<=2), 100*mean(sz>=20)))
-saveRDS(list(csf=A, clip=B, patch_sizes=sz), "sens.rds")
+saveRDS(list(csf=A, clip=B, patch_sizes=sz), file.path(OUTDIR, "sens.rds"))
 cat("\nsaved\n")

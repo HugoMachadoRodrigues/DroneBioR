@@ -2,8 +2,6 @@
 # Figure 4 - what CSF ground refinement does to the terrain, and therefore to
 # the canopy height derived from it.
 #
-#   DRONEBIOR_PROJECT=/path/to/project DRONEBIOR_FIGDIR=/path/to/figures \
-#     Rscript fig4_csf_vs_smrf.R
 #
 # The baseline is dtm_raw.tif, the engine's original SMRF terrain, preserved
 # when improve_dtm_csf() overwrote dtm.tif. Comparing against the path the
@@ -13,20 +11,33 @@ suppressWarnings(suppressMessages({
   library(DroneBioR); library(terra); library(lidR)
 }))
 
+# Three paths, each overridable by environment variable:
+#   DRONEBIOR_PROJECT  the demonstration project holding the ODM products
+#   DRONEBIOR_REPRO    the directory reproduce_manuscript.R wrote. It holds
+#                      covariates/ and verification.rds; this script reads
+#                      them rather than recomputing them, so run that script
+#                      first.
+#   DRONEBIOR_FIGDIR   where this figure is written
 PROJECT <- Sys.getenv("DRONEBIOR_PROJECT", "~/DroneBioR-projects/micasense_demo")
+REPRO   <- Sys.getenv("DRONEBIOR_REPRO",   file.path(getwd(), "manuscript_repro"))
 OUTDIR  <- Sys.getenv("DRONEBIOR_FIGDIR",  file.path(getwd(), "figures"))
 PROJECT <- normalizePath(PROJECT, mustWork = TRUE)
+REPRO   <- normalizePath(REPRO,   mustWork = TRUE)
 dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
-COV <- file.path(PROJECT, "covariates")
+COV     <- file.path(REPRO, "covariates")
+PATHS   <- odm_product_paths(dronebio_project(PROJECT))
+
+# odm_product_paths() composes both point-cloud names whether or not the file
+# exists, and the distributed products carry the compressed one.
+CLOUD   <- Filter(file.exists, unname(PATHS[c("point_cloud_las", "point_cloud_laz")]))[1]
 OUT <- file.path(OUTDIR, "fig4_csf_vs_smrf.png")
 
-paths <- odm_product_paths(dronebio_project(PROJECT))
-smrf  <- rast(file.path(dirname(unname(paths[["dtm"]])), "dtm_raw.tif"))
-dsm   <- rast(unname(paths[["dsm"]]))
+smrf  <- rast(file.path(dirname(unname(PATHS[["dtm"]])), "dtm_raw.tif"))
+dsm   <- rast(unname(PATHS[["dsm"]]))
 native <- min(res(dsm))
 
 # Rebuild the CSF terrain at the DSM's own posting, exactly as Section 3.4 does.
-ground  <- classify_ground(readLAS(unname(paths[["point_cloud_las"]])),
+ground  <- classify_ground(readLAS(CLOUD),
                            csf(class_threshold = 0.5, cloth_resolution = 0.5,
                                rigidness = 1L), last_returns = FALSE)
 csf_dtm <- resample(rasterize_terrain(ground, res = native, algorithm = tin()),
