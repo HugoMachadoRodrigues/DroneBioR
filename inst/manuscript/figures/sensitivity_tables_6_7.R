@@ -61,15 +61,49 @@ row7 <- function(i) {
 }
 
 # --- write both bodies into their sources ----------------------------------
-patch <- function(file, body) {
+patch <- function(file, body, caption_subs = list()) {
   path <- file.path(OUTDIR, file)
   html <- paste(readLines(path, warn = FALSE), collapse = "\n")
   html <- sub("(?s)(<tbody>).*?(</tbody>)", paste0("\\1", body, "\\2"), html, perl = TRUE)
+  # Captions quote figures from the same data, so they are rewritten here too.
+  # Leaving them to be edited by hand is how Table 6 came to claim a 1.34 m
+  # range above a body that showed 1.35 m.
+  for (s in caption_subs) {
+    stopifnot("caption pattern not found" = grepl(s$find, html, perl = TRUE))
+    html <- sub(s$find, s$replace, html, perl = TRUE)
+  }
   writeLines(html, path)
   cat("  wrote", file, "\n")
 }
-patch("table6_sensitivity.html", paste(vapply(ord, row6, character(1)), collapse = ""))
-patch("table7_clipping.html",    paste(vapply(seq_len(nrow(B)), row7, character(1)), collapse = ""))
+
+d_default <- A$mean_diff[abs(A$cloth_resolution - 0.5) < 1e-9 & A$rigidness == 1L &
+                         abs(A$class_threshold - 0.5) < 1e-9]
+
+patch("table6_sensitivity.html",
+      paste(vapply(ord, row6, character(1)), collapse = ""),
+      list(list(find    = "moves &Delta; across a [0-9.]+ m range",
+                replace = sprintf("moves &Delta; across a %.2f m range",
+                                  diff(range(A$mean_diff)))),
+           list(find    = "The default row is the &minus;[0-9.]+ m and [0-9.]+%",
+                replace = sprintf("The default row is the &minus;%.2f m and %.1f%%",
+                                  abs(d_default),
+                                  A$pct_lower[abs(A$cloth_resolution - 0.5) < 1e-9 &
+                                              A$rigidness == 1L &
+                                              abs(A$class_threshold - 0.5) < 1e-9]))))
+
+patch("table7_clipping.html",
+      paste(vapply(seq_len(nrow(B)), row7, character(1)), collapse = ""),
+      list(list(find    = "removes [0-9,]+ cells and lowers the maximum by [0-9.]+ m while moving the mean by [0-9.]+ m",
+                replace = sprintf("removes %s cells and lowers the maximum by %.1f m while moving the mean by %.2f m",
+                                  formatC(B$cells_clipped[2], format = "d", big.mark = ","),
+                                  B$max_after[4] - B$max_after[2],
+                                  B$mean_after[4] - B$mean_after[2])),
+           list(find    = "they form [0-9,]+ connected patches with a median of [0-9,]+ cells and a maximum of [0-9,]+, and [0-9.]+% of the patches",
+                replace = sprintf("they form %s connected patches with a median of %s cells and a maximum of %s, and %.1f%% of the patches",
+                                  formatC(length(sz), format = "d", big.mark = ","),
+                                  formatC(median(sz), format = "d", big.mark = ","),
+                                  formatC(max(sz), format = "d", big.mark = ","),
+                                  100 * mean(sz >= 20)))))
 
 # --- the figures Section 3.7 quotes in prose -------------------------------
 d <- A$mean_diff[abs(A$cloth_resolution - 0.5) < 1e-9 & A$rigidness == 1L &
