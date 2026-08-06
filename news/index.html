@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">DroneBioR</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.5.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.5.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -36,9 +36,26 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
       <img src="../logo.png" class="logo" alt=""><h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/HugoMachadoRodrigues/DroneBioR/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/HugoMachadoRodrigues/DroneBioR/blob/v0.5.1/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.5.1" id="dronebior-051">DroneBioR 0.5.1<a class="anchor" aria-label="anchor" href="#dronebior-051"></a></h2>
+<p>Reproduction fixes found by an independent audit of the submission package. No change to any analytical function.</p>
+<ul><li>
+<code>reproduce_manuscript.R</code> compared its results against the pre-correction Section 3.4 values, so a correct run printed <code>-1.03 (paper: -1.09)</code> and looked like a divergence. It now cites -1.03 / 80.4 / 14.4.</li>
+<li>
+<code>reproduce_manuscript.R</code> and the figure scripts opened <code>paths[["point_cloud_las"]]</code>, which <code><a href="../reference/odm_product_paths.html">odm_product_paths()</a></code> composes whether or not the file exists. The distributed products carry <code>.laz</code>, so the run stopped at the CSF step. They now take whichever is on disk.</li>
+<li>The four figure scripts used four different path conventions (<code>PROJECT/covariates</code>, <code>PROJECT/imagens/outputs/...</code>, a relative <code>repro_full/verification.rds</code>, and <code><a href="../reference/odm_product_paths.html">odm_product_paths()</a></code>). They now share one: <code>DRONEBIOR_PROJECT</code>, <code>DRONEBIOR_REPRO</code> and <code>DRONEBIOR_FIGDIR</code>.</li>
+<li>
+<code>sensitivity_tables_6_7.R</code> wrote <code>sens.rds</code> into the working directory instead of the output directory.</li>
+<li>
+<code>renv.lock</code> recorded the 134 dependencies but not DroneBioR itself, so <code>renv::restore()</code> did not install the package under study.</li>
+<li>
+<code>sensitivity_tables_6_7.R</code> no longer recomputes Tables 6 and 7 beside the script: it reads <code>sensitivity.rds</code> and writes the table bodies, so the number in a table and the number the script prints cannot diverge. They had diverged, because it read <code>odm_georeferenced_model.las</code> while the distributed products carry the <code>.laz</code>, and the two are quantised differently; and it read the CHM from a fifth stale path.</li>
+<li>
+<code>reproduce_manuscript.R</code> carries the unclipped row inside the clipping table rather than printing it alongside, so Table 7 is complete as saved. Table 8 records DroneBioR 0.5.x and is legible at the size the journal renders it. Table S2 no longer advertises an <code>--only</code> argument the script never had, and Table S3 reports 910 rows, not 980.</li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.5.0" id="dronebior-050">DroneBioR 0.5.0<a class="anchor" aria-label="anchor" href="#dronebior-050"></a></h2>
 <div class="section level3">
