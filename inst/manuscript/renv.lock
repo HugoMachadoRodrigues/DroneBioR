@@ -243,14 +243,13 @@
     },
     "DroneBioR": {
       "Package": "DroneBioR",
-      "Version": "0.5.0",
+      "Version": "0.5.1",
       "Source": "GitHub",
       "RemoteType": "github",
       "RemoteHost": "api.github.com",
       "RemoteUsername": "HugoMachadoRodrigues",
       "RemoteRepo": "DroneBioR",
-      "RemoteRef": "v0.5.0",
-      "RemoteSha": "6f18c2bffedce214bfdc76280b581e638b6e6af8",
+      "RemoteRef": "v0.5.1",
       "Requirements": [
         "grDevices",
         "parallel",
