@@ -5815,7 +5815,7 @@ server <- function(input, output, session) {
   # so asking the map for Blue returns nothing and the orthomosaic silently
   # stops rendering. For display, take the colour camera's own layers.
   rgb_display_stack <- function(ortho, ortho_path) {
-    got <- tryCatch(ortho$bands[[c("Blue", "Green", "Red")]], error = function(e) NULL)
+    got <- DroneBioR:::display_rgb_bands(ortho$bands)
     if (!is.null(got)) return(got)
     raw <- tryCatch(terra::rast(ortho_path), error = function(e) NULL)
     if (is.null(raw)) return(NULL)
@@ -9104,9 +9104,14 @@ server <- function(input, output, session) {
     old_par <- par(no.readonly = TRUE)
     on.exit(par(old_par), add = TRUE)
     par(mar = c(0, 0, 2.2, 0))
-    display <- stretch_raster_for_display(x[[c("Blue", "Green", "Red")]], input$display_stretch %||% "Percentile 2-98")
+    trio <- DroneBioR:::display_rgb_bands(x)
+    validate(need(!is.null(trio),
+                  "This raster has too few layers to draw a colour preview."))
+    display <- stretch_raster_for_display(trio, input$display_stretch %||% "Percentile 2-98")
     terra::plotRGB(display, r = 3, g = 2, b = 1, axes = FALSE, stretch = "lin")
-    title(main = "Draw panel ROI with the mouse", line = 0.6)
+    title(main = if (isTRUE(attr(trio, "false_colour")))
+                   "Draw panel ROI with the mouse (false colour - no blue band)"
+                 else "Draw panel ROI with the mouse", line = 0.6)
   })
 
   observeEvent(input$apply_panel_calibration, {
@@ -9195,9 +9200,14 @@ server <- function(input, output, session) {
     on.exit(par(old_par), add = TRUE)
     if (identical(input$preview_mode, "RGB")) {
       par(mar = c(0, 0, 2.2, 0))
-      display <- stretch_raster_for_display(x[[c("Blue", "Green", "Red")]], input$display_stretch %||% "Percentile 2-98")
+      trio <- DroneBioR:::display_rgb_bands(x)
+      validate(need(!is.null(trio),
+                    "This raster has too few layers to draw a colour preview."))
+      display <- stretch_raster_for_display(trio, input$display_stretch %||% "Percentile 2-98")
       terra::plotRGB(display, r = 3, g = 2, b = 1, stretch = "lin", axes = FALSE)
-      title(main = "RGB display raster", line = 0.6)
+      title(main = if (isTRUE(attr(trio, "false_colour")))
+                     "False-colour display raster (no blue band)"
+                   else "RGB display raster", line = 0.6)
     } else {
       par(mar = c(4.2, 4.2, 3, 4.2))
       display <- stretch_layer_for_display(x[[input$preview_mode]], input$display_stretch %||% "Percentile 2-98")
