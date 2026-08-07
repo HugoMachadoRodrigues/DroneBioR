@@ -1,5 +1,11 @@
 # DroneBioR (development version)
 
+* The Parallel workers slider now governs Process step 4 as well as step 2.
+  It only ever reached step 2, so a user who chose 3 workers to survive a
+  memory kill watched step 4 quietly start 9 — on the same machine, against
+  the same ceiling, and on a DJI flight the heavier of the two runs. The
+  label says which steps it covers.
+
 * `run_odm_project()` warns when a DJI Mavic 3M flight is reconstructed from
   its RGB images alone. The Studio's step 4 now runs the multispectral
   reconstruction, but a direct call to `run_odm_project()` is still handed the

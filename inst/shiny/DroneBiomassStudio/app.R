@@ -3332,7 +3332,8 @@ ui <- page_navbar(
         # stage runs one worker per unit of concurrency and each carries its
         # own copy of the working set, so this is the knob that decides
         # whether the run finishes or the kernel kills it at 45 GB.
-        sliderInput("pc_max_concurrency", "Parallel workers",
+        sliderInput("pc_max_concurrency",
+                    "Parallel workers (used by steps 2 and 4)",
                     min = 1, max = 16, value = 0, step = 1, ticks = FALSE),
         div(class = "small text-muted mb-3",
             textOutput("pc_concurrency_note", inline = TRUE)),
@@ -9901,7 +9902,7 @@ server <- function(input, output, session) {
   output$pc_concurrency_note <- renderText({
     auto <- DroneBioR:::default_max_concurrency()
     n <- odm_workers()
-    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. %d worker%s.",
+    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. It applies to step 4 as well, which is the heavier of the two on a DJI flight. %d worker%s.",
                     n, if (n == 1L) "" else "s")
     if (identical(as.integer(input$pc_max_concurrency %||% 0L), 0L))
       paste(base, sprintf("(automatic: %d, one per physical core)", auto))
@@ -10089,6 +10090,11 @@ server <- function(input, output, session) {
     # odm_product_paths() already prefers over the RGB-only file.
     is_dji <- tryCatch(DroneBioR::has_djim3m_images(p$images_dir),
                        error = function(e) FALSE)
+    # The worker slider lives in step 2, but it is the same machine and the
+    # same memory ceiling here - and this step runs the heavier of the two on
+    # a DJI flight. Honouring it only in step 2 meant a user who chose 3 saw
+    # step 4 quietly run 9.
+    workers <- odm_workers()
 
     finish_rebuild <- function(res = NULL, err = NULL) {
       stage0_rebuild_running(FALSE)
@@ -10149,11 +10155,12 @@ server <- function(input, output, session) {
         }
         res <- if (isTRUE(is_dji)) {
           DroneBioR::run_odm_dji_mavic_3m(
-            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE)
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE,
+            max_concurrency = workers)
         } else {
           DroneBioR::rebuild_from_edited_cloud(
             p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
-            pc_las = TRUE)
+            pc_las = TRUE, max_concurrency = workers)
         }
         # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
         # ground under dense canopy far better than ODM's SMRF default, but the
@@ -10181,6 +10188,7 @@ server <- function(input, output, session) {
         res
       }, seed = TRUE,
          globals = list(p_snapshot = p_snapshot, cam = cam, is_dji = is_dji,
+                        workers = workers,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_rebuild(res = res),
@@ -10198,10 +10206,11 @@ server <- function(input, output, session) {
         # ran.
         if (isTRUE(is_dji)) {
           run_odm_dji_mavic_3m(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                               pc_las = TRUE)
+                               pc_las = TRUE, max_concurrency = workers)
         } else {
           rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                    camera_type = cam, pc_las = TRUE)
+                                    camera_type = cam, pc_las = TRUE,
+                                    max_concurrency = workers)
         },
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
