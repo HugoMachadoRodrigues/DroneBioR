@@ -118,9 +118,13 @@ test_that("keep_only_final_odm_products preserves DEM + ortho + logs", {
                                     "odm_orthophoto.tif")))
   expect_true(file.exists(file.path(proj, "log.json")))
   expect_true(file.exists(file.path(proj, "dronebior_odm.log")))
+  # The georeferenced cloud is a kept product, not an intermediate: the 3-D
+  # editor, the CSF terrain refinement and every point-cloud metric read it,
+  # and nothing recovers it short of repeating the whole reconstruction.
+  expect_true(dir.exists(file.path(proj, "odm_georeferencing")))
   # Removed:
   for (gone in c("images", "opensfm", "openmvs", "odm_filterpoints",
-                 "odm_georeferencing", "odm_postprocess",
+                 "odm_postprocess",
                  "cameras.json", "images.json", "img_list.txt",
                  "benchmark.txt")) {
     expect_false(file.exists(file.path(proj, gone)),

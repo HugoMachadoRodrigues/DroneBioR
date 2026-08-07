@@ -1,5 +1,14 @@
 # DroneBioR (development version)
 
+* The natural-colour orthomosaic renders again on a DJI flight. It was drawn
+  from the multispectral band map, which omits Blue by design — the only blue
+  available comes from the colour camera, and mixing it with calibrated MS
+  bands would make an index wrong. Correct for indices, fatal for a picture:
+  asking that map for Blue returned nothing and the layer silently stopped
+  drawing. The composite now takes the colour camera's own layers, and no
+  longer declares a band requirement, since its availability is already gated
+  on the orthomosaic existing.
+
 * The GIS tab reported a DJI multispectral flight as RGB-only. The
   orthomosaic path field was refilled from `project$odm_orthomosaic`, which
   always names `odm_orthophoto.tif`, while a DJI run writes its 7-band stack

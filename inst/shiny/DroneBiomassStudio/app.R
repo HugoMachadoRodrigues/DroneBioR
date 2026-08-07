@@ -5348,7 +5348,11 @@ server <- function(input, output, session) {
   # orthos that lack the bands - CHM availability is enforced inside
   # gis_stack() via compute_biomass_proxies().
   overlay_band_requirements <- list(
-    `RGB Orthomosaic`   = c("Blue", "Green", "Red"),  # composite display
+    # No band requirement: this is a display composite drawn from the colour
+    # camera's own layers, and its availability is already gated on the
+    # orthomosaic existing (quick_outputs_check below). Requiring the mapped
+    # Blue hid it on every DJI flight, where that map omits blue by design.
+    `RGB Orthomosaic`   = character(),
     DSM                 = character(),
     DTM                 = character(),
     CHM                 = character(),
@@ -5769,7 +5773,8 @@ server <- function(input, output, session) {
       # ~90 s cost on the user's real ortho. Now: subset to RGB,
       # downsample to 250 k cells, THEN scale/clamp. The scale step
       # operates on a tiny in-memory raster (sub-second).
-      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb_full <- rgb_display_stack(ortho, orthomosaic_path)
+      if (is.null(rgb_full)) return(NULL)
       rgb <- downsample_raster(rgb_full, size = 250000)
       if (isTRUE(scale_reflectance)) rgb <- scale_to_reflectance(rgb)
       e <- terra::ext(rgb)
@@ -5803,6 +5808,24 @@ server <- function(input, output, session) {
     })
   }
 
+  # The natural-colour composite is a picture, not a measurement, and it must
+  # not be gated on the multispectral band map. On a DJI stack that map
+  # deliberately omits Blue - the only blue available comes from the colour
+  # camera, and mixing it with calibrated MS bands would make an index wrong -
+  # so asking the map for Blue returns nothing and the orthomosaic silently
+  # stops rendering. For display, take the colour camera's own layers.
+  rgb_display_stack <- function(ortho, ortho_path) {
+    got <- tryCatch(ortho$bands[[c("Blue", "Green", "Red")]], error = function(e) NULL)
+    if (!is.null(got)) return(got)
+    raw <- tryCatch(terra::rast(ortho_path), error = function(e) NULL)
+    if (is.null(raw)) return(NULL)
+    nm <- tolower(names(raw))
+    idx <- match(c("blue", "green", "red"), nm)
+    if (!anyNA(idx)) return(raw[[idx]])
+    if (terra::nlyr(raw) >= 3L) return(raw[[c(3L, 2L, 1L)]])
+    NULL
+  }
+
   build_context_orthomosaic_raster <- function(orthomosaic_path, use_alpha = TRUE, scale_reflectance = TRUE) {
     if (!file.exists(orthomosaic_path)) {
       return(NULL)
@@ -5816,7 +5839,8 @@ server <- function(input, output, session) {
       # materialises the full ortho intermediate to /tmp under the
       # memory cap, which was the bulk of the user's reported wait
       # on the 3D context map.
-      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb_full <- rgb_display_stack(ortho, orthomosaic_path)
+      if (is.null(rgb_full)) return(NULL)
       rgb <- downsample_raster(rgb_full, size = 90000)
       rgb <- scale_to_reflectance(rgb)
       for (i in seq_len(terra::nlyr(rgb))) {
