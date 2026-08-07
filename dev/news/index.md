@@ -2,6 +2,14 @@
 
 ## DroneBioR (development version)
 
+- Spectral Analytics no longer fails with `[subset] invalid name(s)` on
+  a DJI flight. Both preview panels asked the band map for
+  `c("Blue","Green","Red")`, and that map omits Blue for a Mavic 3M by
+  design. A new internal `display_rgb_bands()` falls back through
+  canonical names, any case, then the first three layers, and marks the
+  result when it is false colour so the panel titles say so rather than
+  calling an infrared composite “RGB”.
+
 - Fixed “object ‘dronebior_pkg_path’ not found” when starting Process
   step 2. Moving that step into the background copied the `globals` list
   from step 4 without the assignment that precedes it in every other
