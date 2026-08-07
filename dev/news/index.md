@@ -2,6 +2,104 @@
 
 ## DroneBioR (development version)
 
+- Process step 2 gains a **Stop the reconstruction** button and a
+  **Parallel workers** slider. Docker runs a reconstruction detached, so
+  closing the Studio never stopped one: the container kept every core
+  and tens of gigabytes, and the only way out was `docker ps` and
+  `docker stop` in a terminal. Containers are now named after the
+  project (`dronebior-<dataset>-<project>`) so the app can find and stop
+  the run it started. The worker count is what actually decides whether
+  a large flight finishes — the dense stage gives each worker its own
+  working set — so it is now a control rather than a hidden default.
+
+- Process step 2 now says *why* a reconstruction produced no point
+  cloud. It reported “The run finished but no point cloud was written;
+  check the ODM log” as a transient amber toast — easy to miss, and
+  useless once seen, since it asks the user to learn to read a log to
+  find out what the app already knows. A new internal
+  `diagnose_odm_failure()` reads `log.json` and the docker log and names
+  the cause: exit 137 is an out-of-memory kill, and the message points
+  at the Detail-level setting that fixes it. The notification is now red
+  and sticky.
+
+- **Process step 4 now runs the multispectral reconstruction for a DJI
+  Mavic 3M.** Nothing did. Step 2 correctly builds the point cloud from
+  the RGB camera — that is where a Mavic 3M’s geometry comes from, since
+  the spectral runs use `--fast-orthophoto` and produce no dense cloud —
+  but the four aligned spectral bands live in a second reconstruction
+  that no live button ever triggered.
+  [`run_odm_dji_mavic_3m()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_dji_mavic_3m.md)
+  existed, was correct, and was unreachable from the interface. The
+  flight finished with a three-band orthomosaic and NDVI, NDRE, EVI and
+  every other NIR index simply absent.
+
+- Both live Process buttons resolve the photos folder before using it,
+  and refuse to run when it holds no images. The fix previously landed
+  in `launch_odm_run()`, which is dead code: there is no `run_odm`
+  button.
+
+- `launch_odm_run()` and the WebODM branch inside it are marked
+  unreachable. They read like the code that runs, so a fix applied there
+  looks right and changes nothing.
+
+- Fixed a regression introduced by the previous entry: recognising a DJI
+  Mavic 3M by
+  [`has_djim3m_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/has_djim3m_images.md)
+  alone made `detect_camera_from_folder()` call a folder of nothing but
+  `_D.JPG` colour frames “multispectral”, and `detect_sensor_label()`
+  announce four bands that were not there. The package’s own staged ODM
+  images folder is exactly such a folder. Detection now requires at
+  least one `_MS_` band file, and the label names the bands actually on
+  disk — a partial set reads “DJI Mavic 3M - multispectral (G, R)”.
+
+- The photos folder is resolved once, in the Studio’s project object,
+  rather than at individual call sites. The first attempt hardened one
+  dispatch path and missed the two buttons that are actually wired to
+  the UI.
+
+- Tests cover both, including the folder shapes that produced the wrong
+  answer.
+
+- The Studio resolves the photos folder before deciding anything from
+  it. Every folder-level test —
+  [`has_djim3m_images()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/has_djim3m_images.md),
+  `detect_camera_from_folder()`, the image listers — reads one directory
+  and does not descend. With the photos field pointed at the *parent* of
+  the photos, all of them saw an empty folder and answered as though the
+  flight were something else. Nothing failed: the run took hours and
+  produced a three-band orthomosaic from a multispectral flight. Images
+  one level down are now found when the choice is unambiguous, said out
+  loud when they are, and the run is refused outright when there are no
+  images at all.
+
+- The Studio no longer describes a DJI as an RGB camera. The camera-type
+  selector listed “RGB (Sony / DJI / Phantom / generic)”, which is false
+  for the Mavic 3M: it is a multispectral rig carrying green, red,
+  red-edge and NIR — no blue — alongside a separate 20 MP colour camera.
+  The label pointed users at the path that reconstructs the colour
+  camera alone.
+
+- `detect_camera_from_folder()` recognises the Mavic 3M by name instead
+  of guessing from extension counts. It happened to answer
+  “multispectral” only because the rig writes four TIFFs per JPG; a
+  flight with more RGB frames than MS frames would have been called RGB
+  and reconstructed accordingly.
+
+- The detection note names the rig — “DJI Mavic 3M — multispectral (G,
+  R, RE, NIR) + RGB camera” — rather than the class. A user can check
+  that against the drone in their hand; “multispectral” gave them
+  nothing to verify.
+
+- [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
+  now warns when a DJI Mavic 3M flight is reconstructed from its RGB
+  images alone. Letting the permissive lister through (previous entry)
+  fixed the crash but replaced it with something worse: an RGB-only
+  orthomosaic produced without comment, so NDVI, NDRE and every other
+  NIR/red-edge index turned out to be uncomputable two steps later, in
+  the GIS tab, with nothing to explain why. The warning names
+  [`run_odm_dji_mavic_3m()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_dji_mavic_3m.md)
+  as the route to the 7-band product.
+
 - [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
   rejected DJI Mavic 3M flights with “Some image names do not match the
   expected MicaSense pattern”. The function already detects the sensor —

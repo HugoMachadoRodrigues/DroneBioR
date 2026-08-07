@@ -172,8 +172,8 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "-v"                        "/tmp/RtmpRKlQ8i:/datasets"
-#> [5] "opendronemap/odm"          "--project-path"           
+#> [3] "--name"                    "dronebior-Rtmpd5hPv0-demo"
+#> [5] "-v"                        "/tmp/Rtmpd5hPv0:/datasets"
 
 # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.
 rgb_args <- build_odm_args(
