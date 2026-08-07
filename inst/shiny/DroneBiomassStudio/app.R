@@ -9938,25 +9938,9 @@ server <- function(input, output, session) {
     stage0_running(FALSE)
   })
 
-  observeEvent(input$run_stage0, {
-    with_error_toast("Build the point cloud", {
-      p <- project_with_images()
-      showNotification(
-        paste0("Reconstructing to the point cloud at '",
-               input$pc_quality %||% "medium",
-               "' detail. This is the long part; the products come later."),
-        type = "message", duration = 10)
-      stage0_running(TRUE)
-      on.exit(stage0_running(FALSE), add = TRUE)
-      res <- build_point_cloud_only(
-        p,
-        pc_quality      = input$pc_quality %||% "medium",
-        pc_filter       = input$pc_filter_stage0 %||% 2.5,
-        pc_rectify      = isTRUE(input$pc_rectify_stage0),
-        camera_type     = input$camera_type %||% "multispectral",
-        max_concurrency = odm_workers()
-      )
-      stage0_tick(isolate(stage0_tick()) + 1L)
+  # Reporting is shared by the background and foreground paths, so the success
+  # and failure wording cannot drift apart.
+  report_stage0_result <- function(res, p) {
       if (isTRUE(res$exists)) {
         # A fresh reconstruction replaces the working cloud, so any snapshot
         # from a previous build is stale (it describes a different cloud).
@@ -9985,6 +9969,81 @@ server <- function(input, output, session) {
                                  ".")),
           type = "error", duration = NULL, closeButton = TRUE,
           id = "stage0_cloud_failed")
+      }
+  }
+
+  observeEvent(input$run_stage0, {
+    with_error_toast("Build the point cloud", {
+      p <- project_with_images()
+      showNotification(
+        paste0("Reconstructing to the point cloud at '",
+               input$pc_quality %||% "medium",
+               "' detail. This is the long part; the products come later."),
+        type = "message", duration = 10)
+
+      args <- list(
+        pc_quality      = input$pc_quality %||% "medium",
+        pc_filter       = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify      = isTRUE(input$pc_rectify_stage0),
+        camera_type     = input$camera_type %||% "multispectral",
+        max_concurrency = odm_workers()
+      )
+
+      finish_stage0 <- function(res = NULL, err = NULL) {
+        stage0_running(FALSE)
+        stage0_tick(isolate(stage0_tick()) + 1L)
+        if (!is.null(err)) {
+          why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                          error = function(e) NULL)
+          showNotification(
+            paste0("The reconstruction stopped: ", conditionMessage(err),
+                   if (!is.null(why)) paste0(" ", why) else ""),
+            type = "error", duration = NULL, closeButton = TRUE,
+            id = "stage0_cloud_failed")
+          return(invisible(NULL))
+        }
+        report_stage0_result(res, p)
+      }
+
+      stage0_running(TRUE)
+
+      # Run it off the main thread. Held here, build_point_cloud_only() blocks
+      # the Shiny session for the whole reconstruction, and a blocked session
+      # cannot redraw - so stage0_running(TRUE) is set and the stop button it
+      # controls never appears, because nothing renders until the observer
+      # returns. Step 4 already runs in the background for this reason.
+      if (.dronebior_async_available) {
+        p_snap <- p
+        fut <- promises::future_promise({
+          if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+            if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+                !dir.exists(dronebior_pkg_path) ||
+                !requireNamespace("pkgload", quietly = TRUE)) {
+              stop("DroneBioR could not be loaded in the background worker.",
+                   call. = FALSE)
+            }
+            pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
+                              attach = FALSE, helpers = FALSE)
+          }
+          do.call(DroneBioR::build_point_cloud_only, c(list(p_snap), args))
+        }, seed = TRUE,
+           globals = list(p_snap = p_snap, args = args,
+                          dronebior_pkg_path = dronebior_pkg_path))
+        promises::then(fut,
+                       onFulfilled = function(res) finish_stage0(res = res),
+                       onRejected  = function(err) finish_stage0(err = err))
+      } else {
+        # Without future/promises the run blocks and the stop button cannot be
+        # shown; say so rather than leaving the user hunting for a control that
+        # will never appear.
+        showNotification(
+          paste0("Running in the foreground: install the `future` and ",
+                 "`promises` packages to keep the app responsive and enable ",
+                 "the stop button."),
+          type = "warning", duration = 12)
+        res <- tryCatch(do.call(build_point_cloud_only, c(list(p), args)),
+                        error = function(e) { finish_stage0(err = e); NULL })
+        if (!is.null(res)) finish_stage0(res = res)
       }
     })
   })
