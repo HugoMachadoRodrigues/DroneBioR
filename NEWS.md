@@ -1,5 +1,13 @@
 # DroneBioR (development version)
 
+* The GIS tab reported a DJI multispectral flight as RGB-only. The
+  orthomosaic path field was refilled from `project$odm_orthomosaic`, which
+  always names `odm_orthophoto.tif`, while a DJI run writes its 7-band stack
+  beside it as `odm_orthophoto_dji.tif`. That observer overwrote the correct
+  path set elsewhere, so NDVI, NDRE and every other multispectral index stayed
+  greyed out on a flight that had just produced NIR and red edge. It resolves
+  through `odm_product_paths()` now, which already preferred the stack.
+
 * A finished DJI run no longer deletes its own point cloud. The cleanup that
   reclaims disk after a successful reconstruction treated
   `odm_georeferencing/` as an intermediate, but the georeferenced cloud is a

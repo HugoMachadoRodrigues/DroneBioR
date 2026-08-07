@@ -56,3 +56,33 @@ test_that("a .las with no compressed twin is kept, not silently deleted", {
 
   expect_true(file.exists(las))
 })
+
+test_that("odm_product_paths prefers the 7-band stack, and the bands are recognised", {
+  root <- tempfile("dji_ortho_"); dir.create(root)
+  p <- dronebio_project(project_dir = root)
+  od <- file.path(p$odm_project_dir, "odm_orthophoto")
+  dir.create(od, recursive = TRUE)
+  file.create(file.path(od, "odm_orthophoto.tif"))
+
+  # with only the RGB file, that is what a caller gets
+  expect_match(unname(odm_product_paths(p)[["orthomosaic"]]),
+               "odm_orthophoto\\.tif$")
+
+  # once the stack exists it wins - this is the path the Studio must show,
+  # because taking p$odm_orthomosaic instead reports a DJI flight as RGB-only
+  file.create(file.path(od, "odm_orthophoto_dji.tif"))
+  expect_match(unname(odm_product_paths(p)[["orthomosaic"]]),
+               "odm_orthophoto_dji\\.tif$")
+  expect_match(p$odm_orthomosaic, "odm_orthophoto\\.tif$")  # the raw field lags
+})
+
+test_that("the DJI stack's band names resolve to NIR and RedEdge", {
+  # The stack is written as Red, Green, Blue, MS_G, MS_R, MS_RE, MS_NIR; the
+  # multispectral indices depend on those MS_ names mapping to canonical ones.
+  nms <- c("Red", "Green", "Blue", "MS_G", "MS_R", "MS_RE", "MS_NIR")
+  b <- orthomosaic_band_presence(nms, nlyr = length(nms))
+  expect_true(b$has_nir)
+  expect_true(b$has_rededge)
+  expect_true(b$has_red)
+  expect_true(b$has_green)
+})

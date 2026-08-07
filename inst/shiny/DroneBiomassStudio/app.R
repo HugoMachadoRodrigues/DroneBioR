@@ -8673,8 +8673,15 @@ server <- function(input, output, session) {
                     input$odm_project_pick), {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
+    # Resolve through odm_product_paths(), not p$odm_orthomosaic. The project
+    # field always names odm_orthophoto.tif - the RGB-only file - while a DJI
+    # run writes its 7-band stack beside it as odm_orthophoto_dji.tif. Taking
+    # the raw field here overwrote the correct path set elsewhere, and left the
+    # GIS tab reporting "this orthomosaic is RGB-only" for a flight that had
+    # just produced NIR and red edge, with every multispectral index greyed
+    # out and no way to see why.
     updateTextInput(session, "orthomosaic",
-                    value = unname(p$odm_orthomosaic))
+                    value = unname(odm_product_paths(p)[["orthomosaic"]]))
     updateTextInput(session, "full_cloud_path",
                     value = pick_best_point_cloud(p))
 
