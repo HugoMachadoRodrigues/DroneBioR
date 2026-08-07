@@ -3328,8 +3328,20 @@ ui <- page_navbar(
         div(class = "small text-muted mb-3",
             "Each step up gives a denser cloud and costs about 4x the time. ",
             "Start at Medium; go higher only once the whole flow works."),
+        # Memory, not time, is what actually stops a large flight: the dense
+        # stage runs one worker per unit of concurrency and each carries its
+        # own copy of the working set, so this is the knob that decides
+        # whether the run finishes or the kernel kills it at 45 GB.
+        sliderInput("pc_max_concurrency", "Parallel workers",
+                    min = 1, max = 16, value = 0, step = 1, ticks = FALSE),
+        div(class = "small text-muted mb-3",
+            textOutput("pc_concurrency_note", inline = TRUE)),
         actionButton("run_stage0", "Build the point cloud",
                      class = "btn-primary btn-lg w-100"),
+        # Closing the browser tab does not stop the reconstruction: docker runs
+        # it detached from this session. Without this button the only way to
+        # stop it is `docker ps` and `docker stop` in a terminal.
+        uiOutput("stage0_cancel_ui"),
         div(class = "mt-3",
             tags$strong(class = "small", "Current point cloud"),
             verbatimTextOutput("stage0_cloud_status"))
@@ -3355,7 +3367,12 @@ ui <- page_navbar(
                "every covariate (all bands, vegetation indices and biomass ",
                "proxies) exported as full-resolution GeoTIFFs to a ",
                "covariates/ folder — ready for modelling. Runs in the ",
-               "background; the app stays usable while it works."),
+               "background; the app stays usable while it works. ",
+               "On a DJI Mavic 3M this step also runs the aligned ",
+               "multispectral reconstruction and stacks the 7-band ",
+               "orthomosaic, which is what makes NDVI, NDRE and the other ",
+               "NIR indices available — it therefore takes considerably ",
+               "longer on that camera."),
         div(class = "mb-2",
             tags$strong(class = "small", "Products on disk"),
             tableOutput("processing_products")),
@@ -8676,8 +8693,17 @@ server <- function(input, output, session) {
     }
   })
 
-  # Factor out the actual launch so we can call it from the modal
-  # confirmation paths as well as the direct Run button.
+  # UNREACHABLE FROM THE UI. There is no actionButton("run_odm"), no
+  # selectInput("processing_engine") and no textInput("webodm_url"), so
+  # observeEvent(input$run_odm) never fires, the two confirm-modal observers
+  # below it are only ever created by that dead observer, and the whole WebODM
+  # branch inside is dormant. The live Process buttons are run_stage0 (step 2)
+  # and run_stage0_rebuild (step 4).
+  #
+  # Kept rather than deleted because it is the only remaining WebODM wiring and
+  # may be wanted back. Left here it is a trap: it reads like the code that
+  # runs, so a fix applied here looks correct and changes nothing. If WebODM is
+  # not coming back, delete this function and the three observers that follow.
   launch_odm_run <- function(cam) {
     engine <- input$processing_engine %||% "odm_docker"
     common_args <- list(
@@ -9836,22 +9862,85 @@ server <- function(input, output, session) {
       type = "message", duration = 10)
   })
 
-  observeEvent(input$run_stage0, {
-    with_error_toast("Build the point cloud", {
-      p <- project()
+  # Both Process buttons take the project straight from project(), which sets
+  # images_dir from the field verbatim. Every folder-level test downstream
+  # reads one directory and does not descend, so a field pointing at the
+  # parent of the photos silently sends the run down the wrong branch. Resolve
+  # once, here, and fail loudly rather than reconstruct the wrong thing.
+  project_with_images <- function() {
+    p <- project()
+    res <- DroneBioR:::resolve_images_dir(p$images_dir)
+    if (is.na(res$dir)) {
+      stop(if (length(res$candidates)) paste0(
+             "No images directly in ", p$images_dir, ", and more than one ",
+             "subfolder holds some (", paste(res$candidates, collapse = ", "),
+             "). Set 'Drone photos folder' to the one you want."
+           ) else paste0(
+             "No images found in ", p$images_dir, ". Set 'Drone photos ",
+             "folder' to the folder holding the flight's photos."
+           ), call. = FALSE)
+    }
+    if (isTRUE(res$moved)) {
+      p$images_dir <- res$dir
       showNotification(
-        paste0("Reconstructing to the point cloud at '",
-               input$pc_quality %||% "medium",
-               "' detail. This is the long part; the products come later."),
-        type = "message", duration = 10)
-      res <- build_point_cloud_only(
-        p,
-        pc_quality  = input$pc_quality %||% "medium",
-        pc_filter   = input$pc_filter_stage0 %||% 2.5,
-        pc_rectify  = isTRUE(input$pc_rectify_stage0),
-        camera_type = input$camera_type %||% "multispectral"
-      )
-      stage0_tick(isolate(stage0_tick()) + 1L)
+        sprintf("No photos directly in that folder; using %s (%d images).",
+                basename(res$dir), res$n),
+        type = "message", duration = 8)
+    }
+    p
+  }
+
+  # --- step 2: worker count, and stopping a run --------------------------
+  # The slider defaults to 0, meaning "let the package decide"; the note
+  # spells out what that resolves to so the default is not a mystery.
+  odm_workers <- reactive({
+    n <- suppressWarnings(as.integer(input$pc_max_concurrency %||% 0L))
+    if (!is.finite(n) || n < 1L) DroneBioR:::default_max_concurrency() else n
+  })
+
+  output$pc_concurrency_note <- renderText({
+    auto <- DroneBioR:::default_max_concurrency()
+    n <- odm_workers()
+    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. %d worker%s.",
+                    n, if (n == 1L) "" else "s")
+    if (identical(as.integer(input$pc_max_concurrency %||% 0L), 0L))
+      paste(base, sprintf("(automatic: %d, one per physical core)", auto))
+    else if (n < auto) paste(base, "Fewer than the automatic choice: slower, but a smaller peak.")
+    else base
+  })
+
+  # A reconstruction outlives the browser tab: docker is launched detached, so
+  # closing the app leaves the container running. Offer the stop the user
+  # would otherwise have to find in a terminal.
+  stage0_running <- reactiveVal(FALSE)
+
+  output$stage0_cancel_ui <- renderUI({
+    if (!isTRUE(stage0_running())) return(NULL)
+    div(class = "mt-2",
+        actionButton("cancel_stage0", "Stop the reconstruction",
+                     class = "btn-outline-danger w-100"),
+        div(class = "small text-muted mt-1",
+            "Stops the container. The partial project is left on disk, and a ",
+            "later run resumes from the last completed stage."))
+  })
+
+  observeEvent(input$cancel_stage0, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    stopped <- DroneBioR:::stop_odm_container(p$odm_dataset_dir,
+                                              p$odm_project_name)
+    showNotification(
+      if (isTRUE(stopped))
+        "Reconstruction stopped. Nothing usable was lost: a re-run picks up from the last completed stage."
+      else
+        "No running reconstruction was found for this project.",
+      type = if (isTRUE(stopped)) "message" else "warning", duration = 10)
+    stage0_running(FALSE)
+  })
+
+  # Reporting is shared by the background and foreground paths, so the success
+  # and failure wording cannot drift apart.
+  report_stage0_result <- function(res, p) {
       if (isTRUE(res$exists)) {
         # A fresh reconstruction replaces the working cloud, so any snapshot
         # from a previous build is stale (it describes a different cloud).
@@ -9864,9 +9953,97 @@ server <- function(input, output, session) {
                   format(parse_ply_header(res$point_cloud)$n_vertices, big.mark = ",")),
           type = "message", duration = 12)
       } else {
+        # An hour of waiting has just ended in nothing. "Check the ODM log" is
+        # true and useless at that moment: it asks the user to learn to read a
+        # log to find out what the app already knows. Read it for them, name
+        # the cause, and give the one setting that fixes it. Sticky and red,
+        # because a transient amber toast is how this went unnoticed until the
+        # next step refused to open.
+        why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                        error = function(e) NULL)
         showNotification(
-          "The run finished but no point cloud was written; check the ODM log.",
+          paste0("The reconstruction produced no point cloud. ",
+                 why %||% paste0("Nothing diagnostic was found in the ODM log; ",
+                                 "its last lines are in ",
+                                 file.path(p$odm_project_dir, "dronebior_odm.log"),
+                                 ".")),
+          type = "error", duration = NULL, closeButton = TRUE,
+          id = "stage0_cloud_failed")
+      }
+  }
+
+  observeEvent(input$run_stage0, {
+    with_error_toast("Build the point cloud", {
+      p <- project_with_images()
+      showNotification(
+        paste0("Reconstructing to the point cloud at '",
+               input$pc_quality %||% "medium",
+               "' detail. This is the long part; the products come later."),
+        type = "message", duration = 10)
+
+      args <- list(
+        pc_quality      = input$pc_quality %||% "medium",
+        pc_filter       = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify      = isTRUE(input$pc_rectify_stage0),
+        camera_type     = input$camera_type %||% "multispectral",
+        max_concurrency = odm_workers()
+      )
+
+      finish_stage0 <- function(res = NULL, err = NULL) {
+        stage0_running(FALSE)
+        stage0_tick(isolate(stage0_tick()) + 1L)
+        if (!is.null(err)) {
+          why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                          error = function(e) NULL)
+          showNotification(
+            paste0("The reconstruction stopped: ", conditionMessage(err),
+                   if (!is.null(why)) paste0(" ", why) else ""),
+            type = "error", duration = NULL, closeButton = TRUE,
+            id = "stage0_cloud_failed")
+          return(invisible(NULL))
+        }
+        report_stage0_result(res, p)
+      }
+
+      stage0_running(TRUE)
+
+      # Run it off the main thread. Held here, build_point_cloud_only() blocks
+      # the Shiny session for the whole reconstruction, and a blocked session
+      # cannot redraw - so stage0_running(TRUE) is set and the stop button it
+      # controls never appears, because nothing renders until the observer
+      # returns. Step 4 already runs in the background for this reason.
+      if (.dronebior_async_available) {
+        p_snap <- p
+        fut <- promises::future_promise({
+          if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+            if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+                !dir.exists(dronebior_pkg_path) ||
+                !requireNamespace("pkgload", quietly = TRUE)) {
+              stop("DroneBioR could not be loaded in the background worker.",
+                   call. = FALSE)
+            }
+            pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
+                              attach = FALSE, helpers = FALSE)
+          }
+          do.call(DroneBioR::build_point_cloud_only, c(list(p_snap), args))
+        }, seed = TRUE,
+           globals = list(p_snap = p_snap, args = args,
+                          dronebior_pkg_path = dronebior_pkg_path))
+        promises::then(fut,
+                       onFulfilled = function(res) finish_stage0(res = res),
+                       onRejected  = function(err) finish_stage0(err = err))
+      } else {
+        # Without future/promises the run blocks and the stop button cannot be
+        # shown; say so rather than leaving the user hunting for a control that
+        # will never appear.
+        showNotification(
+          paste0("Running in the foreground: install the `future` and ",
+                 "`promises` packages to keep the app responsive and enable ",
+                 "the stop button."),
           type = "warning", duration = 12)
+        res <- tryCatch(do.call(build_point_cloud_only, c(list(p), args)),
+                        error = function(e) { finish_stage0(err = e); NULL })
+        if (!is.null(res)) finish_stage0(res = res)
       }
     })
   })
@@ -9889,13 +10066,29 @@ server <- function(input, output, session) {
         type = "warning", duration = 6)
       return()
     }
-    p <- tryCatch(project(), error = function(e) NULL)
+    p <- tryCatch(project_with_images(), error = function(e) e)
+    if (inherits(p, "error")) {
+      showNotification(conditionMessage(p), type = "error", duration = 12)
+      return()
+    }
     if (is.null(p)) {
       showNotification("No project is configured.", type = "warning",
                        duration = 6)
       return()
     }
     cam <- input$camera_type %||% "multispectral"
+
+    # A DJI Mavic 3M needs a second reconstruction that nothing else triggers.
+    # Step 2 builds the cloud from the RGB camera, because that is where the
+    # geometry comes from - the MS runs use --fast-orthophoto and produce no
+    # dense cloud. But the four spectral bands live in a separate aligned run,
+    # and without it this step finishes with a three-band orthomosaic: no NIR,
+    # no red edge, and NDVI, NDRE, EVI and the rest simply absent from a
+    # flight that carries them. run_odm_dji_mavic_3m() performs that run and
+    # stacks the result into odm_orthophoto_dji.tif, which
+    # odm_product_paths() already prefers over the RGB-only file.
+    is_dji <- tryCatch(DroneBioR::has_djim3m_images(p$images_dir),
+                       error = function(e) FALSE)
 
     finish_rebuild <- function(res = NULL, err = NULL) {
       stage0_rebuild_running(FALSE)
@@ -9954,9 +10147,14 @@ server <- function(input, output, session) {
           pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
                             attach = FALSE, helpers = FALSE)
         }
-        res <- DroneBioR::rebuild_from_edited_cloud(
-          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
-          pc_las = TRUE)
+        res <- if (isTRUE(is_dji)) {
+          DroneBioR::run_odm_dji_mavic_3m(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE)
+        } else {
+          DroneBioR::rebuild_from_edited_cloud(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
+            pc_las = TRUE)
+        }
         # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
         # ground under dense canopy far better than ODM's SMRF default, but the
         # CSF CHM helper skips the P99.5 spike clip and would coarsen the DTM,
@@ -9982,7 +10180,7 @@ server <- function(input, output, session) {
                    error = function(e2) NULL))
         res
       }, seed = TRUE,
-         globals = list(p_snapshot = p_snapshot, cam = cam,
+         globals = list(p_snapshot = p_snapshot, cam = cam, is_dji = is_dji,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_rebuild(res = res),
@@ -9994,8 +10192,17 @@ server <- function(input, output, session) {
         type = "message", duration = NULL, closeButton = FALSE,
         id = "stage0_rebuild_progress")
       res <- tryCatch(
-        rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                  camera_type = cam, pc_las = TRUE),
+        # Same DJI branch as the background path above. Kept in step with it:
+        # a fallback that quietly builds a different product than the primary
+        # path is worse than no fallback, because nothing announces which one
+        # ran.
+        if (isTRUE(is_dji)) {
+          run_odm_dji_mavic_3m(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                               pc_las = TRUE)
+        } else {
+          rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                                    camera_type = cam, pc_las = TRUE)
+        },
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
         # See the async branch above for the rationale: CSF-refine the DTM at
