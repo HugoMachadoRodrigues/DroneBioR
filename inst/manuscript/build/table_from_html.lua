@@ -128,6 +128,16 @@ function Para(para)
       out[#out + 1] = block
     end
   end
+  -- Only a table may replace an image. fig1_architecture.png also has an
+  -- .html sibling -- it is a diagram, drawn in HTML for the PNG -- and the
+  -- only reason it is not swallowed today is that its Markdown carries a
+  -- caption, which makes it a Figure rather than a bare Para. That is an
+  -- accident, not a guarantee, so require the parse to actually yield a table.
+  local is_table = false
+  for _, block in ipairs(out) do
+    if block.t == "Table" then is_table = true end
+  end
+  if not is_table then return nil end
   if #out == 0 then return nil end
   io.stderr:write(("  + %s -> native table\n"):format(png:match("[^/]+$")))
   return out
