@@ -25,5 +25,5 @@ Absolute path to the best point cloud found, or the COPC path as default
 ``` r
 project <- dronebio_project(project_dir = tempdir())
 pick_best_point_cloud(project)
-#> [1] "/tmp/RtmpatLiBZ/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz"
+#> [1] "/tmp/Rtmpx9nP3I/outputs/odm_micasense_dataset/micasense/odm_georeferencing/odm_georeferenced_model.copc.laz"
 ```

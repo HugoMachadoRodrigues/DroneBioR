@@ -2,6 +2,52 @@
 
 ## DroneBioR (development version)
 
+- The natural-colour orthomosaic renders again on a DJI flight. It was
+  drawn from the multispectral band map, which omits Blue by design —
+  the only blue available comes from the colour camera, and mixing it
+  with calibrated MS bands would make an index wrong. Correct for
+  indices, fatal for a picture: asking that map for Blue returned
+  nothing and the layer silently stopped drawing. The composite now
+  takes the colour camera’s own layers, and no longer declares a band
+  requirement, since its availability is already gated on the
+  orthomosaic existing.
+
+- The GIS tab reported a DJI multispectral flight as RGB-only. The
+  orthomosaic path field was refilled from `project$odm_orthomosaic`,
+  which always names `odm_orthophoto.tif`, while a DJI run writes its
+  7-band stack beside it as `odm_orthophoto_dji.tif`. That observer
+  overwrote the correct path set elsewhere, so NDVI, NDRE and every
+  other multispectral index stayed greyed out on a flight that had just
+  produced NIR and red edge. It resolves through
+  [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/odm_product_paths.md)
+  now, which already preferred the stack.
+
+- A finished DJI run no longer deletes its own point cloud. The cleanup
+  that reclaims disk after a successful reconstruction treated
+  `odm_georeferencing/` as an intermediate, but the georeferenced cloud
+  is a final product: the 3-D editor, the CSF terrain refinement and
+  every point-cloud metric read it, and it cannot be recovered without
+  repeating the whole reconstruction. It is kept now, minus the
+  uncompressed `.las` when its `.laz` twin is present - the same points
+  at a ninth of the size.
+
+- Process step 4 no longer refuses to run because its own success
+  removed the working cloud. When the maps are already on disk there is
+  nothing left to rebuild, so it exports the covariates instead of
+  asking for step 2 again.
+
+- Background jobs check the working directory before launching. `future`
+  captures it to restore in the worker, so a directory deleted
+  underneath the session made every background step die on `setwd(NULL)`
+  with “character argument expected” - a message that names neither the
+  cause nor the cure.
+
+- The Parallel workers slider now governs Process step 4 as well as
+  step 2. It only ever reached step 2, so a user who chose 3 workers to
+  survive a memory kill watched step 4 quietly start 9 — on the same
+  machine, against the same ceiling, and on a DJI flight the heavier of
+  the two runs. The label says which steps it covers.
+
 - [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
   warns when a DJI Mavic 3M flight is reconstructed from its RGB images
   alone. The Studio’s step 4 now runs the multispectral reconstruction,
