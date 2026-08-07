@@ -3328,8 +3328,20 @@ ui <- page_navbar(
         div(class = "small text-muted mb-3",
             "Each step up gives a denser cloud and costs about 4x the time. ",
             "Start at Medium; go higher only once the whole flow works."),
+        # Memory, not time, is what actually stops a large flight: the dense
+        # stage runs one worker per unit of concurrency and each carries its
+        # own copy of the working set, so this is the knob that decides
+        # whether the run finishes or the kernel kills it at 45 GB.
+        sliderInput("pc_max_concurrency", "Parallel workers",
+                    min = 1, max = 16, value = 0, step = 1, ticks = FALSE),
+        div(class = "small text-muted mb-3",
+            textOutput("pc_concurrency_note", inline = TRUE)),
         actionButton("run_stage0", "Build the point cloud",
                      class = "btn-primary btn-lg w-100"),
+        # Closing the browser tab does not stop the reconstruction: docker runs
+        # it detached from this session. Without this button the only way to
+        # stop it is `docker ps` and `docker stop` in a terminal.
+        uiOutput("stage0_cancel_ui"),
         div(class = "mt-3",
             tags$strong(class = "small", "Current point cloud"),
             verbatimTextOutput("stage0_cloud_status"))
@@ -9878,6 +9890,54 @@ server <- function(input, output, session) {
     p
   }
 
+  # --- step 2: worker count, and stopping a run --------------------------
+  # The slider defaults to 0, meaning "let the package decide"; the note
+  # spells out what that resolves to so the default is not a mystery.
+  odm_workers <- reactive({
+    n <- suppressWarnings(as.integer(input$pc_max_concurrency %||% 0L))
+    if (!is.finite(n) || n < 1L) DroneBioR:::default_max_concurrency() else n
+  })
+
+  output$pc_concurrency_note <- renderText({
+    auto <- DroneBioR:::default_max_concurrency()
+    n <- odm_workers()
+    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. %d worker%s.",
+                    n, if (n == 1L) "" else "s")
+    if (identical(as.integer(input$pc_max_concurrency %||% 0L), 0L))
+      paste(base, sprintf("(automatic: %d, one per physical core)", auto))
+    else if (n < auto) paste(base, "Fewer than the automatic choice: slower, but a smaller peak.")
+    else base
+  })
+
+  # A reconstruction outlives the browser tab: docker is launched detached, so
+  # closing the app leaves the container running. Offer the stop the user
+  # would otherwise have to find in a terminal.
+  stage0_running <- reactiveVal(FALSE)
+
+  output$stage0_cancel_ui <- renderUI({
+    if (!isTRUE(stage0_running())) return(NULL)
+    div(class = "mt-2",
+        actionButton("cancel_stage0", "Stop the reconstruction",
+                     class = "btn-outline-danger w-100"),
+        div(class = "small text-muted mt-1",
+            "Stops the container. The partial project is left on disk, and a ",
+            "later run resumes from the last completed stage."))
+  })
+
+  observeEvent(input$cancel_stage0, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    stopped <- DroneBioR:::stop_odm_container(p$odm_dataset_dir,
+                                              p$odm_project_name)
+    showNotification(
+      if (isTRUE(stopped))
+        "Reconstruction stopped. Nothing usable was lost: a re-run picks up from the last completed stage."
+      else
+        "No running reconstruction was found for this project.",
+      type = if (isTRUE(stopped)) "message" else "warning", duration = 10)
+    stage0_running(FALSE)
+  })
+
   observeEvent(input$run_stage0, {
     with_error_toast("Build the point cloud", {
       p <- project_with_images()
@@ -9886,12 +9946,15 @@ server <- function(input, output, session) {
                input$pc_quality %||% "medium",
                "' detail. This is the long part; the products come later."),
         type = "message", duration = 10)
+      stage0_running(TRUE)
+      on.exit(stage0_running(FALSE), add = TRUE)
       res <- build_point_cloud_only(
         p,
-        pc_quality  = input$pc_quality %||% "medium",
-        pc_filter   = input$pc_filter_stage0 %||% 2.5,
-        pc_rectify  = isTRUE(input$pc_rectify_stage0),
-        camera_type = input$camera_type %||% "multispectral"
+        pc_quality      = input$pc_quality %||% "medium",
+        pc_filter       = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify      = isTRUE(input$pc_rectify_stage0),
+        camera_type     = input$camera_type %||% "multispectral",
+        max_concurrency = odm_workers()
       )
       stage0_tick(isolate(stage0_tick()) + 1L)
       if (isTRUE(res$exists)) {

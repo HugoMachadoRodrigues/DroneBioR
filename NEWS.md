@@ -1,5 +1,15 @@
 # DroneBioR (development version)
 
+* Process step 2 gains a **Stop the reconstruction** button and a **Parallel
+  workers** slider. Docker runs a reconstruction detached, so closing the
+  Studio never stopped one: the container kept every core and tens of
+  gigabytes, and the only way out was `docker ps` and `docker stop` in a
+  terminal. Containers are now named after the project
+  (`dronebior-<dataset>-<project>`) so the app can find and stop the run it
+  started. The worker count is what actually decides whether a large flight
+  finishes — the dense stage gives each worker its own working set — so it is
+  now a control rather than a hidden default.
+
 * Process step 2 now says *why* a reconstruction produced no point cloud.
   It reported "The run finished but no point cloud was written; check the ODM
   log" as a transient amber toast — easy to miss, and useless once seen, since
