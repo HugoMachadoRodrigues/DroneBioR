@@ -40,10 +40,30 @@ keep_only_final_odm_products <- function(project_dir, keep_extra = character()) 
   keep <- c(
     "odm_dem",            # DSM / DTM (and CHM written later by build_chm_raster)
     "odm_orthophoto",     # RGB ortho + DJI 7-band stack
+    # The georeferenced cloud is a final product, not an intermediate: the 3-D
+    # editor, the CSF terrain refinement and every point-cloud metric read it,
+    # and it cannot be recovered without repeating the whole reconstruction.
+    # Removing it turned a finished project into one that had to be rebuilt
+    # from the photos to answer a question about its own canopy.
+    "odm_georeferencing",
     "log.json",           # ODM's structured run log
     "dronebior_odm.log",  # our redirected docker output
     keep_extra
   )
+  # Keeping the cloud does not mean keeping it twice. ODM writes both an
+  # uncompressed .las and a .laz of the same points; the .laz is roughly a
+  # ninth of the size and every reader here handles it, so drop the .las when
+  # its compressed twin is present.
+  geo <- file.path(project_dir, "odm_georeferencing")
+  if (dir.exists(geo)) {
+    laz <- list.files(geo, pattern = "\\.laz$", full.names = TRUE)
+    las <- list.files(geo, pattern = "\\.las$", full.names = TRUE)
+    for (f in las) {
+      twin <- sub("\\.las$", ".laz", f)
+      if (twin %in% laz) unlink(f, force = TRUE)
+    }
+  }
+
   entries <- list.files(project_dir, include.dirs = TRUE,
                         recursive = FALSE, all.files = FALSE,
                         no.. = TRUE)

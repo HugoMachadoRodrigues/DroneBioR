@@ -304,7 +304,7 @@ test_that("the Stage-0 product rebuild runs in the background, not a UI-freezing
   # covariate export, pushing future_promise a little further down. The async
   # pattern is unchanged; only the distance grew.
   expect_true(grepl(
-    '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,4500}?future_promise',
+    '(?s)observeEvent\\(input\\$run_stage0_rebuild.{0,7000}?future_promise',
     src, perl = TRUE))
 })
 

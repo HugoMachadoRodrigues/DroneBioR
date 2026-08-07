@@ -3332,7 +3332,8 @@ ui <- page_navbar(
         # stage runs one worker per unit of concurrency and each carries its
         # own copy of the working set, so this is the knob that decides
         # whether the run finishes or the kernel kills it at 45 GB.
-        sliderInput("pc_max_concurrency", "Parallel workers",
+        sliderInput("pc_max_concurrency",
+                    "Parallel workers (used by steps 2 and 4)",
                     min = 1, max = 16, value = 0, step = 1, ticks = FALSE),
         div(class = "small text-muted mb-3",
             textOutput("pc_concurrency_note", inline = TRUE)),
@@ -5347,7 +5348,11 @@ server <- function(input, output, session) {
   # orthos that lack the bands - CHM availability is enforced inside
   # gis_stack() via compute_biomass_proxies().
   overlay_band_requirements <- list(
-    `RGB Orthomosaic`   = c("Blue", "Green", "Red"),  # composite display
+    # No band requirement: this is a display composite drawn from the colour
+    # camera's own layers, and its availability is already gated on the
+    # orthomosaic existing (quick_outputs_check below). Requiring the mapped
+    # Blue hid it on every DJI flight, where that map omits blue by design.
+    `RGB Orthomosaic`   = character(),
     DSM                 = character(),
     DTM                 = character(),
     CHM                 = character(),
@@ -5768,7 +5773,8 @@ server <- function(input, output, session) {
       # ~90 s cost on the user's real ortho. Now: subset to RGB,
       # downsample to 250 k cells, THEN scale/clamp. The scale step
       # operates on a tiny in-memory raster (sub-second).
-      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb_full <- rgb_display_stack(ortho, orthomosaic_path)
+      if (is.null(rgb_full)) return(NULL)
       rgb <- downsample_raster(rgb_full, size = 250000)
       if (isTRUE(scale_reflectance)) rgb <- scale_to_reflectance(rgb)
       e <- terra::ext(rgb)
@@ -5802,6 +5808,24 @@ server <- function(input, output, session) {
     })
   }
 
+  # The natural-colour composite is a picture, not a measurement, and it must
+  # not be gated on the multispectral band map. On a DJI stack that map
+  # deliberately omits Blue - the only blue available comes from the colour
+  # camera, and mixing it with calibrated MS bands would make an index wrong -
+  # so asking the map for Blue returns nothing and the orthomosaic silently
+  # stops rendering. For display, take the colour camera's own layers.
+  rgb_display_stack <- function(ortho, ortho_path) {
+    got <- tryCatch(ortho$bands[[c("Blue", "Green", "Red")]], error = function(e) NULL)
+    if (!is.null(got)) return(got)
+    raw <- tryCatch(terra::rast(ortho_path), error = function(e) NULL)
+    if (is.null(raw)) return(NULL)
+    nm <- tolower(names(raw))
+    idx <- match(c("blue", "green", "red"), nm)
+    if (!anyNA(idx)) return(raw[[idx]])
+    if (terra::nlyr(raw) >= 3L) return(raw[[c(3L, 2L, 1L)]])
+    NULL
+  }
+
   build_context_orthomosaic_raster <- function(orthomosaic_path, use_alpha = TRUE, scale_reflectance = TRUE) {
     if (!file.exists(orthomosaic_path)) {
       return(NULL)
@@ -5815,7 +5839,8 @@ server <- function(input, output, session) {
       # materialises the full ortho intermediate to /tmp under the
       # memory cap, which was the bulk of the user's reported wait
       # on the 3D context map.
-      rgb_full <- ortho$bands[[c("Blue", "Green", "Red")]]
+      rgb_full <- rgb_display_stack(ortho, orthomosaic_path)
+      if (is.null(rgb_full)) return(NULL)
       rgb <- downsample_raster(rgb_full, size = 90000)
       rgb <- scale_to_reflectance(rgb)
       for (i in seq_len(terra::nlyr(rgb))) {
@@ -8672,8 +8697,15 @@ server <- function(input, output, session) {
                     input$odm_project_pick), {
     p <- tryCatch(project(), error = function(e) NULL)
     if (is.null(p)) return()
+    # Resolve through odm_product_paths(), not p$odm_orthomosaic. The project
+    # field always names odm_orthophoto.tif - the RGB-only file - while a DJI
+    # run writes its 7-band stack beside it as odm_orthophoto_dji.tif. Taking
+    # the raw field here overwrote the correct path set elsewhere, and left the
+    # GIS tab reporting "this orthomosaic is RGB-only" for a flight that had
+    # just produced NIR and red edge, with every multispectral index greyed
+    # out and no way to see why.
     updateTextInput(session, "orthomosaic",
-                    value = unname(p$odm_orthomosaic))
+                    value = unname(odm_product_paths(p)[["orthomosaic"]]))
     updateTextInput(session, "full_cloud_path",
                     value = pick_best_point_cloud(p))
 
@@ -9901,7 +9933,7 @@ server <- function(input, output, session) {
   output$pc_concurrency_note <- renderText({
     auto <- DroneBioR:::default_max_concurrency()
     n <- odm_workers()
-    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. %d worker%s.",
+    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. It applies to step 4 as well, which is the heavier of the two on a DJI flight. %d worker%s.",
                     n, if (n == 1L) "" else "s")
     if (identical(as.integer(input$pc_max_concurrency %||% 0L), 0L))
       paste(base, sprintf("(automatic: %d, one per physical core)", auto))
@@ -9937,6 +9969,28 @@ server <- function(input, output, session) {
       type = if (isTRUE(stopped)) "message" else "warning", duration = 10)
     stage0_running(FALSE)
   })
+
+  # future captures the working directory to restore it in the worker. When
+  # that directory has been deleted underneath the session - which happens
+  # whenever a run cleans up a folder R happened to be sitting in - getwd()
+  # returns NULL, and the worker dies on setwd(NULL) with "character argument
+  # expected". The reconstruction is fine; the job that was to report on it is
+  # not, and the message names neither the cause nor the cure. Check before
+  # launching anything in the background, and move somewhere real.
+  ensure_live_workdir <- function(fallback) {
+    wd <- tryCatch(getwd(), error = function(e) NULL)
+    if (!is.null(wd) && nzchar(wd) && dir.exists(wd)) return(invisible(TRUE))
+    target <- if (!is.null(fallback) && nzchar(fallback) && dir.exists(fallback))
+      fallback else tempdir()
+    ok <- tryCatch({ setwd(target); TRUE }, error = function(e) FALSE)
+    if (isTRUE(ok)) {
+      showNotification(
+        paste0("The working directory no longer existed - background jobs ",
+               "cannot start without one. Moved to ", target, "."),
+        type = "warning", duration = 12)
+    }
+    invisible(ok)
+  }
 
   # Reporting is shared by the background and foreground paths, so the success
   # and failure wording cannot drift apart.
@@ -10005,6 +10059,7 @@ server <- function(input, output, session) {
         report_stage0_result(res, p)
       }
 
+      ensure_live_workdir(p$project_dir)
       stage0_running(TRUE)
 
       # Run it off the main thread. Held here, build_point_cloud_only() blocks
@@ -10055,7 +10110,30 @@ server <- function(input, output, session) {
   # report on completion. A synchronous fallback keeps it working without future.
   observeEvent(input$run_stage0_rebuild, {
     ply <- stage0_ply()
-    if (is.na(ply) || !file.exists(ply)) {
+    have_ply <- !is.na(ply) && file.exists(ply)
+
+    # A finished DJI run removes its own intermediates, the working cloud among
+    # them, to save disk. That left this step demanding an input its own
+    # success had deleted: the project was complete, and the button that
+    # completed it could never be pressed again. When the maps are already on
+    # disk there is nothing left to rebuild - only the covariates to export -
+    # so go straight there instead of refusing.
+    products_ready <- tryCatch({
+      pp <- odm_product_paths(isolate(project()))
+      all(vapply(c("orthomosaic", "dsm", "dtm"),
+                 function(k) { v <- unname(pp[[k]]); !is.na(v) && file.exists(v) },
+                 logical(1)))
+    }, error = function(e) FALSE)
+
+    if (!have_ply && products_ready) {
+      showNotification(
+        paste0("The maps are already built and the working cloud was cleared ",
+               "after the run. Exporting the covariates from them."),
+        type = "message", duration = 10)
+      start_covariate_export()
+      return()
+    }
+    if (!have_ply) {
       showNotification("There is no point cloud yet; run step 2 first.",
                        type = "warning", duration = 8)
       return()
@@ -10078,6 +10156,8 @@ server <- function(input, output, session) {
     }
     cam <- input$camera_type %||% "multispectral"
 
+    ensure_live_workdir(p$project_dir)
+
     # A DJI Mavic 3M needs a second reconstruction that nothing else triggers.
     # Step 2 builds the cloud from the RGB camera, because that is where the
     # geometry comes from - the MS runs use --fast-orthophoto and produce no
@@ -10089,6 +10169,11 @@ server <- function(input, output, session) {
     # odm_product_paths() already prefers over the RGB-only file.
     is_dji <- tryCatch(DroneBioR::has_djim3m_images(p$images_dir),
                        error = function(e) FALSE)
+    # The worker slider lives in step 2, but it is the same machine and the
+    # same memory ceiling here - and this step runs the heavier of the two on
+    # a DJI flight. Honouring it only in step 2 meant a user who chose 3 saw
+    # step 4 quietly run 9.
+    workers <- odm_workers()
 
     finish_rebuild <- function(res = NULL, err = NULL) {
       stage0_rebuild_running(FALSE)
@@ -10149,11 +10234,12 @@ server <- function(input, output, session) {
         }
         res <- if (isTRUE(is_dji)) {
           DroneBioR::run_odm_dji_mavic_3m(
-            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE)
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE,
+            max_concurrency = workers)
         } else {
           DroneBioR::rebuild_from_edited_cloud(
             p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
-            pc_las = TRUE)
+            pc_las = TRUE, max_concurrency = workers)
         }
         # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
         # ground under dense canopy far better than ODM's SMRF default, but the
@@ -10181,6 +10267,7 @@ server <- function(input, output, session) {
         res
       }, seed = TRUE,
          globals = list(p_snapshot = p_snapshot, cam = cam, is_dji = is_dji,
+                        workers = workers,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_rebuild(res = res),
@@ -10198,10 +10285,11 @@ server <- function(input, output, session) {
         # ran.
         if (isTRUE(is_dji)) {
           run_odm_dji_mavic_3m(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                               pc_las = TRUE)
+                               pc_las = TRUE, max_concurrency = workers)
         } else {
           rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                    camera_type = cam, pc_las = TRUE)
+                                    camera_type = cam, pc_las = TRUE,
+                                    max_concurrency = workers)
         },
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
