@@ -2,6 +2,13 @@
 
 ## DroneBioR (development version)
 
+- Fixed “object ‘dronebior_pkg_path’ not found” when starting Process
+  step 2. Moving that step into the background copied the `globals` list
+  from step 4 without the assignment that precedes it in every other
+  handler, so the future was told to export a variable that did not
+  exist in the launching scope. It failed only on the click, after the
+  banner had gone up.
+
 - The natural-colour orthomosaic renders again on a DJI flight. It was
   drawn from the multispectral band map, which omits Blue by design —
   the only blue available comes from the colour camera, and mixing it
