@@ -472,3 +472,43 @@ canonical_band_names <- function(x) {
   }
   out
 }
+
+#' Three layers to draw as a natural-colour image.
+#'
+#' A picture is not a measurement, and the two need different rules. The band
+#' map deliberately omits Blue for a DJI Mavic 3M, because the only blue in the
+#' stack comes from the colour camera and mixing it with calibrated
+#' multispectral bands would make an index quietly wrong. Asking that map for
+#' `c("Blue", "Green", "Red")` then errors with `[subset] invalid name(s)`, and
+#' a panel that only wanted to show the user where to draw a rectangle dies.
+#'
+#' So for display, fall back through what is physically there: canonical names,
+#' then the same names in any case, then the first three layers - which on the
+#' DJI stack are the colour camera's red, green and blue.
+#'
+#' @param x A `SpatRaster`.
+#' @return A three-layer `SpatRaster` ordered Blue, Green, Red, or `NULL` when
+#'   the raster cannot supply one.
+#' @noRd
+display_rgb_bands <- function(x) {
+  if (!inherits(x, "SpatRaster")) return(NULL)
+  want <- c("Blue", "Green", "Red")
+  nm <- names(x)
+  if (all(want %in% nm)) return(x[[want]])
+  i <- match(tolower(want), tolower(nm))
+  if (!anyNA(i)) return(x[[i]])
+  n <- terra::nlyr(x)
+  # A DJI stack is Red, Green, Blue, MS_G, MS_R, MS_RE, MS_NIR: layers 3, 2, 1
+  # give the blue-green-red order this returns. But once the bands have been
+  # mapped, the same stack is Green, Red, RedEdge, NIR and there is no blue at
+  # all - the first three layers are then a false-colour composite, not a
+  # photograph. Return it, because a picture the user can draw on beats an
+  # error, and flag it so the caller can say what it is instead of calling
+  # infrared "RGB".
+  if (n >= 3L) {
+    out <- x[[c(3L, 2L, 1L)]]
+    attr(out, "false_colour") <- TRUE
+    return(out)
+  }
+  NULL
+}
