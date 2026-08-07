@@ -1,5 +1,14 @@
 # DroneBioR (development version)
 
+* Process step 2 now says *why* a reconstruction produced no point cloud.
+  It reported "The run finished but no point cloud was written; check the ODM
+  log" as a transient amber toast — easy to miss, and useless once seen, since
+  it asks the user to learn to read a log to find out what the app already
+  knows. A new internal `diagnose_odm_failure()` reads `log.json` and the
+  docker log and names the cause: exit 137 is an out-of-memory kill, and the
+  message points at the Detail-level setting that fixes it. The notification
+  is now red and sticky.
+
 * **Process step 4 now runs the multispectral reconstruction for a DJI Mavic
   3M.** Nothing did. Step 2 correctly builds the point cloud from the RGB
   camera — that is where a Mavic 3M's geometry comes from, since the spectral

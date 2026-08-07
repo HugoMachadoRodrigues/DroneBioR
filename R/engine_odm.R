@@ -809,3 +809,68 @@ default_max_concurrency <- function(cap = 16L) {
   .docker_ncpu_cache$value <- val
   val
 }
+
+#' Explain why an OpenDroneMap run produced nothing.
+#'
+#' A reconstruction that dies leaves the project without a point cloud, and the
+#' Studio only finds out because the file it expected is absent. "No cloud was
+#' written" is true but useless: the user has just waited an hour and needs the
+#' cause and the remedy, not a pointer to a log they would have to learn to
+#' read.
+#'
+#' ODM records the exit code in `log.json`, and OpenMVS narrates its own
+#' failures into the docker log. The most common failure on a large flight is
+#' the kernel killing the container for memory, which surfaces as exit 137 —
+#' unmistakable, and fixable by lowering the detail level.
+#'
+#' @param project A `dronebio_project()` list.
+#' @return A one-paragraph explanation, or `NULL` when nothing diagnostic was
+#'   found (in which case the caller should fall back to a generic message).
+#' @noRd
+diagnose_odm_failure <- function(project) {
+  d <- project$odm_project_dir
+  if (!is.character(d) || !length(d) || !dir.exists(d)) return(NULL)
+
+  code <- NULL
+  lj <- file.path(d, "log.json")
+  if (file.exists(lj) && requireNamespace("jsonlite", quietly = TRUE)) {
+    code <- tryCatch(jsonlite::fromJSON(lj)$error$code, error = function(e) NULL)
+  }
+
+  tail_lines <- character(0)
+  dl <- file.path(d, "dronebior_odm.log")
+  if (file.exists(dl)) {
+    tail_lines <- tryCatch(utils::tail(readLines(dl, warn = FALSE), 400),
+                           error = function(e) character(0))
+  }
+  saw <- function(pattern) any(grepl(pattern, tail_lines, ignore.case = TRUE))
+
+  # 137 is SIGKILL. On a container that is almost always the kernel reclaiming
+  # memory; OpenMVS also says so in as many words when it gets the chance.
+  if ((!is.null(code) && identical(as.integer(code), 137L)) ||
+      saw("out of memory") || saw("Killed")) {
+    return(paste0(
+      "The reconstruction was killed for running out of memory (exit 137) ",
+      "during the dense stage. Lower 'Detail level' in step 2 — Medium to ",
+      "Low is usually enough — or give Docker Desktop more memory ",
+      "(Settings > Resources). Nothing was lost: the point cloud was never ",
+      "written, so re-running costs only the time."))
+  }
+  if (saw("unsupported TIFF image") || saw("failed loading image header")) {
+    return(paste0(
+      "The dense stage could not read the undistorted images. This happens ",
+      "when they are written at a bit depth OpenMVS does not support. Re-run ",
+      "from a clean project folder, or reconstruct from the RGB images only."))
+  }
+  if (saw("No matches found") || saw("Not enough supported images")) {
+    return(paste0(
+      "The photos did not match each other well enough to reconstruct. Check ",
+      "that the folder holds a single flight with sufficient overlap."))
+  }
+  if (!is.null(code) && !identical(as.integer(code), 0L)) {
+    return(sprintf(paste0(
+      "OpenDroneMap exited with code %s. The end of %s says what happened."),
+      as.character(code), dl))
+  }
+  NULL
+}

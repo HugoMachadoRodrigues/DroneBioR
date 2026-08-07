@@ -9906,9 +9906,22 @@ server <- function(input, output, session) {
                   format(parse_ply_header(res$point_cloud)$n_vertices, big.mark = ",")),
           type = "message", duration = 12)
       } else {
+        # An hour of waiting has just ended in nothing. "Check the ODM log" is
+        # true and useless at that moment: it asks the user to learn to read a
+        # log to find out what the app already knows. Read it for them, name
+        # the cause, and give the one setting that fixes it. Sticky and red,
+        # because a transient amber toast is how this went unnoticed until the
+        # next step refused to open.
+        why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                        error = function(e) NULL)
         showNotification(
-          "The run finished but no point cloud was written; check the ODM log.",
-          type = "warning", duration = 12)
+          paste0("The reconstruction produced no point cloud. ",
+                 why %||% paste0("Nothing diagnostic was found in the ODM log; ",
+                                 "its last lines are in ",
+                                 file.path(p$odm_project_dir, "dronebior_odm.log"),
+                                 ".")),
+          type = "error", duration = NULL, closeButton = TRUE,
+          id = "stage0_cloud_failed")
       }
     })
   })
