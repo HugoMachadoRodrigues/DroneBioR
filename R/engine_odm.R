@@ -251,13 +251,55 @@ build_odm_args <- function(dataset_dir,
     odm_args <- c(odm_args, extra_args)
   }
 
+  # Name the container after the project. Without a name docker invents one
+  # ("kind_hellman"), and a run can then only be stopped by a human reading
+  # `docker ps` - which is why closing the Studio looks like it stopped the
+  # reconstruction while the container keeps 45 GB and every core busy. A
+  # deterministic name gives the app a handle it can stop.
   c(
     "run", "--rm",
+    "--name", odm_container_name(dataset_dir, project_name),
     "-v", paste0(dataset_dir, ":/datasets"),
     image,
     odm_args,
     project_name
   )
+}
+
+#' Deterministic docker container name for an ODM run.
+#'
+#' Derived from the dataset directory and project name so two projects on one
+#' machine never collide, and so the Studio can stop a run it started without
+#' asking the user to find it in `docker ps`. Docker accepts
+#' `[a-zA-Z0-9][a-zA-Z0-9_.-]*`; everything else is flattened.
+#' @noRd
+odm_container_name <- function(dataset_dir, project_name) {
+  key <- paste(basename(normalizePath(dataset_dir, mustWork = FALSE)),
+               project_name, sep = "-")
+  key <- gsub("[^A-Za-z0-9_.-]+", "-", key)
+  key <- gsub("^[^A-Za-z0-9]+", "", key)
+  paste0("dronebior-", substr(key, 1, 80))
+}
+
+#' Stop a running ODM container started by this package.
+#'
+#' `docker stop` sends SIGTERM then SIGKILL. The container runs `--rm`, so the
+#' partial project directory is left exactly as an out-of-memory kill would
+#' leave it, which is the state the resume logic already handles.
+#'
+#' @return Invisibly `TRUE` when a container was actually stopped.
+#' @noRd
+stop_odm_container <- function(dataset_dir, project_name) {
+  nm <- odm_container_name(dataset_dir, project_name)
+  running <- suppressWarnings(tryCatch(
+    system2("docker", c("ps", "-q", "--filter", paste0("name=^", nm, "$")),
+            stdout = TRUE, stderr = FALSE),
+    error = function(e) character(0)))
+  if (!length(running) || !any(nzchar(running))) return(invisible(FALSE))
+  suppressWarnings(tryCatch(
+    system2("docker", c("stop", "-t", "10", nm), stdout = FALSE, stderr = FALSE),
+    error = function(e) NULL))
+  invisible(TRUE)
 }
 
 #' Convert ODM undistorted Float TIFFs to UInt16 for texturing
@@ -808,4 +850,69 @@ default_max_concurrency <- function(cap = 16L) {
   }
   .docker_ncpu_cache$value <- val
   val
+}
+
+#' Explain why an OpenDroneMap run produced nothing.
+#'
+#' A reconstruction that dies leaves the project without a point cloud, and the
+#' Studio only finds out because the file it expected is absent. "No cloud was
+#' written" is true but useless: the user has just waited an hour and needs the
+#' cause and the remedy, not a pointer to a log they would have to learn to
+#' read.
+#'
+#' ODM records the exit code in `log.json`, and OpenMVS narrates its own
+#' failures into the docker log. The most common failure on a large flight is
+#' the kernel killing the container for memory, which surfaces as exit 137 -
+#' unmistakable, and fixable by lowering the detail level.
+#'
+#' @param project A `dronebio_project()` list.
+#' @return A one-paragraph explanation, or `NULL` when nothing diagnostic was
+#'   found (in which case the caller should fall back to a generic message).
+#' @noRd
+diagnose_odm_failure <- function(project) {
+  d <- project$odm_project_dir
+  if (!is.character(d) || !length(d) || !dir.exists(d)) return(NULL)
+
+  code <- NULL
+  lj <- file.path(d, "log.json")
+  if (file.exists(lj) && requireNamespace("jsonlite", quietly = TRUE)) {
+    code <- tryCatch(jsonlite::fromJSON(lj)$error$code, error = function(e) NULL)
+  }
+
+  tail_lines <- character(0)
+  dl <- file.path(d, "dronebior_odm.log")
+  if (file.exists(dl)) {
+    tail_lines <- tryCatch(utils::tail(readLines(dl, warn = FALSE), 400),
+                           error = function(e) character(0))
+  }
+  saw <- function(pattern) any(grepl(pattern, tail_lines, ignore.case = TRUE))
+
+  # 137 is SIGKILL. On a container that is almost always the kernel reclaiming
+  # memory; OpenMVS also says so in as many words when it gets the chance.
+  if ((!is.null(code) && identical(as.integer(code), 137L)) ||
+      saw("out of memory") || saw("Killed")) {
+    return(paste0(
+      "The reconstruction was killed for running out of memory (exit 137) ",
+      "during the dense stage. Lower 'Detail level' in step 2 - Medium to ",
+      "Low is usually enough - or give Docker Desktop more memory ",
+      "(Settings > Resources). Nothing was lost: the point cloud was never ",
+      "written, so re-running costs only the time."))
+  }
+  if (saw("unsupported TIFF image") || saw("failed loading image header")) {
+    return(paste0(
+      "The dense stage could not read the undistorted images. This happens ",
+      "when they are written at a bit depth OpenMVS does not support. Re-run ",
+      "from a clean project folder, or reconstruct from the RGB images only."))
+  }
+  if (saw("No matches found") || saw("Not enough supported images")) {
+    return(paste0(
+      "The photos did not match each other well enough to reconstruct. Check ",
+      "that the folder holds a single flight with sufficient overlap."))
+  }
+  if (!is.null(code) && !identical(as.integer(code), 0L)) {
+    return(sprintf(paste0(
+      "OpenDroneMap exited with code %s. The end of %s says what happened."),
+      as.character(code), dl))
+  }
+  NULL
 }

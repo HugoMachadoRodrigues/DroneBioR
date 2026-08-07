@@ -3298,10 +3298,15 @@ ui <- page_navbar(
                   placeholder = "Folder containing the drone JPGs / TIFFs"),
         uiOutput("odm_project_picker_ui"),
         selectInput(
-          "camera_type", "Camera type",
+          # Detected from the folder; the user only overrides it if the guess
+          # is wrong. "DJI" used to sit in the RGB label, which was false for
+          # the Mavic 3M - a multispectral rig that also carries a colour
+          # camera - and pointed people at the path that reconstructs the
+          # colour camera alone.
+          "camera_type", "Camera type (detected from the folder)",
           choices = c(
-            "Multispectral (MicaSense / Sequoia)" = "multispectral",
-            "RGB (Sony / DJI / Phantom / generic)" = "rgb"),
+            "Multispectral (MicaSense / Sequoia / DJI Mavic 3M)" = "multispectral",
+            "RGB only (Sony / Phantom / generic colour camera)"  = "rgb"),
           selected = "multispectral"),
         uiOutput("camera_detected_note"),
         uiOutput("geoscan_detected_note"),
@@ -3323,8 +3328,20 @@ ui <- page_navbar(
         div(class = "small text-muted mb-3",
             "Each step up gives a denser cloud and costs about 4x the time. ",
             "Start at Medium; go higher only once the whole flow works."),
+        # Memory, not time, is what actually stops a large flight: the dense
+        # stage runs one worker per unit of concurrency and each carries its
+        # own copy of the working set, so this is the knob that decides
+        # whether the run finishes or the kernel kills it at 45 GB.
+        sliderInput("pc_max_concurrency", "Parallel workers",
+                    min = 1, max = 16, value = 0, step = 1, ticks = FALSE),
+        div(class = "small text-muted mb-3",
+            textOutput("pc_concurrency_note", inline = TRUE)),
         actionButton("run_stage0", "Build the point cloud",
                      class = "btn-primary btn-lg w-100"),
+        # Closing the browser tab does not stop the reconstruction: docker runs
+        # it detached from this session. Without this button the only way to
+        # stop it is `docker ps` and `docker stop` in a terminal.
+        uiOutput("stage0_cancel_ui"),
         div(class = "mt-3",
             tags$strong(class = "small", "Current point cloud"),
             verbatimTextOutput("stage0_cloud_status"))
@@ -3350,7 +3367,12 @@ ui <- page_navbar(
                "every covariate (all bands, vegetation indices and biomass ",
                "proxies) exported as full-resolution GeoTIFFs to a ",
                "covariates/ folder — ready for modelling. Runs in the ",
-               "background; the app stays usable while it works."),
+               "background; the app stays usable while it works. ",
+               "On a DJI Mavic 3M this step also runs the aligned ",
+               "multispectral reconstruction and stacks the 7-band ",
+               "orthomosaic, which is what makes NDVI, NDRE and the other ",
+               "NIR indices available — it therefore takes considerably ",
+               "longer on that camera."),
         div(class = "mb-2",
             tags$strong(class = "small", "Products on disk"),
             tableOutput("processing_products")),
@@ -4888,7 +4910,14 @@ server <- function(input, output, session) {
     } else {
       dronebio_project(project_dir = input$project_dir)
     }
-    p$images_dir <- input$images_dir
+    # Resolve here, not at each call site. This is the single place the photos
+    # folder enters the project object, and every consumer reads it from there:
+    # build_point_cloud_only(), run_odm_project(), the DJI router, the listers.
+    # Patching the callers one at a time is how the first attempt at this fix
+    # missed the step-2 button - it hardened the engine Run path and left
+    # "Build the point cloud" reading the raw field.
+    res <- DroneBioR:::resolve_images_dir(input$images_dir)
+    p$images_dir <- if (is.na(res$dir)) input$images_dir else res$dir
     p$output_dir <- input$output_dir
     p
   })
@@ -7866,6 +7895,13 @@ server <- function(input, output, session) {
 
   manifest <- reactive({
     validate(need(dir.exists(input$images_dir), paste("Image folder not found:", input$images_dir)))
+    # Read the resolved folder, not the field: pointed at the parent of the
+    # photos, every test below sees an empty directory and takes the wrong
+    # branch without complaining.
+    dir <- resolved_images_dir()
+    validate(need(length(list.files(dir, pattern = "\\.(jpe?g|tif?f|png)$",
+                                    ignore.case = TRUE)) > 0,
+                  paste("No images found in:", input$images_dir)))
     # DJI Mavic 3M datasets do not match the MicaSense `capture_band`
     # filename pattern that list_micasense_images() enforces, so we
     # dispatch on the permissive lister (which already knows to drop
@@ -7873,10 +7909,10 @@ server <- function(input, output, session) {
     # when DJI Mavic 3M images are present. Otherwise keep the
     # MicaSense path so legacy MicaSense / Sequoia flights show their
     # capture/band breakdown as before.
-    if (DroneBioR::has_djim3m_images(input$images_dir)) {
-      list_aerial_images(input$images_dir)
+    if (DroneBioR::has_djim3m_images(dir)) {
+      list_aerial_images(dir)
     } else {
-      list_micasense_images(input$images_dir)
+      list_micasense_images(dir)
     }
   })
 
@@ -8413,8 +8449,16 @@ server <- function(input, output, session) {
 
   # Auto-detected camera type based on the contents of the images folder.
   # Drives the badge below the camera_type selector and the run-time guard.
+  # Resolve first: the detector reads one directory and does not descend, so a
+  # photos field pointing at the parent of the photos makes it report "no
+  # images found" while 1,500 sit one level down.
+  resolved_images_dir <- reactive({
+    r <- DroneBioR:::resolve_images_dir(input$images_dir %||% "")
+    if (is.na(r$dir)) (input$images_dir %||% "") else r$dir
+  })
+
   detected_camera <- reactive({
-    DroneBioR:::detect_camera_from_folder(input$images_dir %||% "")
+    DroneBioR:::detect_camera_from_folder(resolved_images_dir())
   })
 
   # Auto-correct the Camera type selector on the first detection of a
@@ -8447,8 +8491,14 @@ server <- function(input, output, session) {
   })
 
   output$camera_detected_note <- renderUI({
-    d <- detected_camera()
+    d   <- detected_camera()
     sel <- input$camera_type %||% "multispectral"
+    # Name the rig, not the class. "multispectral" told the user nothing they
+    # could check against the drone in their hand; "DJI Mavic 3M" does, and it
+    # is the difference between trusting the guess and second-guessing it.
+    label <- tryCatch(DroneBioR:::detect_sensor_label(resolved_images_dir()),
+                      error = function(e) NA_character_)
+    if (is.na(label)) label <- d
     if (is.na(d)) {
       tags$div(class = "small text-muted",
                style = "margin-top:-8px; margin-bottom:8px;",
@@ -8456,11 +8506,11 @@ server <- function(input, output, session) {
     } else if (identical(d, sel)) {
       tags$div(class = "small",
                style = "margin-top:-8px; margin-bottom:8px; color:#16a34a;",
-               sprintf("Auto-detect: %s ✓ matches selection", d))
+               sprintf("Detected: %s ✓ nothing to choose", label))
     } else {
       tags$div(class = "small",
                style = "margin-top:-8px; margin-bottom:8px; color:#d97706;",
-               sprintf("Auto-detect: %s ⚠ differs from selection (%s)", d, sel))
+               sprintf("Detected: %s ⚠ the selector says %s", label, sel))
     }
   })
 
@@ -8468,7 +8518,7 @@ server <- function(input, output, session) {
   # auto-attach --geo. The badge tells the user the override is in
   # effect before they hit Run.
   geoscan_detected <- reactive({
-    DroneBioR::detect_geoscan_metadata(input$images_dir %||% "")
+    DroneBioR::detect_geoscan_metadata(resolved_images_dir())
   })
 
   output$geoscan_detected_note <- renderUI({
@@ -8643,8 +8693,17 @@ server <- function(input, output, session) {
     }
   })
 
-  # Factor out the actual launch so we can call it from the modal
-  # confirmation paths as well as the direct Run button.
+  # UNREACHABLE FROM THE UI. There is no actionButton("run_odm"), no
+  # selectInput("processing_engine") and no textInput("webodm_url"), so
+  # observeEvent(input$run_odm) never fires, the two confirm-modal observers
+  # below it are only ever created by that dead observer, and the whole WebODM
+  # branch inside is dormant. The live Process buttons are run_stage0 (step 2)
+  # and run_stage0_rebuild (step 4).
+  #
+  # Kept rather than deleted because it is the only remaining WebODM wiring and
+  # may be wanted back. Left here it is a trap: it reads like the code that
+  # runs, so a fix applied here looks correct and changes nothing. If WebODM is
+  # not coming back, delete this function and the three observers that follow.
   launch_odm_run <- function(cam) {
     engine <- input$processing_engine %||% "odm_docker"
     common_args <- list(
@@ -8695,6 +8754,36 @@ server <- function(input, output, session) {
           stop("Docker not found in PATH. Install/start Docker Desktop.", call. = FALSE)
         }
         p <- project()
+
+        # Resolve the photos folder before anything is decided from it. Every
+        # folder-level test here - has_djim3m_images(), the image listers -
+        # reads one directory and does not descend. Point the field at the
+        # parent of the photos and they all see an empty folder and answer as
+        # though the flight were something else: the run proceeds, takes hours
+        # and produces the wrong product, with nothing having failed. That is
+        # exactly how a Mavic 3M flight came back as a three-band orthomosaic.
+        # project() has already resolved p$images_dir; this re-runs the same
+        # cheap lookup only to produce the message, and to refuse when there
+        # is nothing to reconstruct.
+        res <- DroneBioR:::resolve_images_dir(input$images_dir)
+        if (is.na(res$dir)) {
+          stop(
+            if (length(res$candidates)) paste0(
+              "No images directly in ", p$images_dir, ", and more than one ",
+              "subfolder holds some (", paste(res$candidates, collapse = ", "),
+              "). Set 'Drone photos folder' to the one you want."
+            ) else paste0(
+              "No images found in ", p$images_dir,
+              ". Set 'Drone photos folder' to the folder holding the flight's ",
+              "photos."
+            ), call. = FALSE)
+        }
+        if (isTRUE(res$moved)) {
+          showNotification(
+            sprintf("No photos directly in that folder; using %s (%d images).",
+                    basename(res$dir), res$n),
+            type = "message", duration = 8)
+        }
 
         # DJI Mavic 3M: the camera ships 1 RGB JPG + 4 single-band MS
         # TIFFs per shot. The legacy `list_micasense_images()` rejects
@@ -9773,22 +9862,85 @@ server <- function(input, output, session) {
       type = "message", duration = 10)
   })
 
-  observeEvent(input$run_stage0, {
-    with_error_toast("Build the point cloud", {
-      p <- project()
+  # Both Process buttons take the project straight from project(), which sets
+  # images_dir from the field verbatim. Every folder-level test downstream
+  # reads one directory and does not descend, so a field pointing at the
+  # parent of the photos silently sends the run down the wrong branch. Resolve
+  # once, here, and fail loudly rather than reconstruct the wrong thing.
+  project_with_images <- function() {
+    p <- project()
+    res <- DroneBioR:::resolve_images_dir(p$images_dir)
+    if (is.na(res$dir)) {
+      stop(if (length(res$candidates)) paste0(
+             "No images directly in ", p$images_dir, ", and more than one ",
+             "subfolder holds some (", paste(res$candidates, collapse = ", "),
+             "). Set 'Drone photos folder' to the one you want."
+           ) else paste0(
+             "No images found in ", p$images_dir, ". Set 'Drone photos ",
+             "folder' to the folder holding the flight's photos."
+           ), call. = FALSE)
+    }
+    if (isTRUE(res$moved)) {
+      p$images_dir <- res$dir
       showNotification(
-        paste0("Reconstructing to the point cloud at '",
-               input$pc_quality %||% "medium",
-               "' detail. This is the long part; the products come later."),
-        type = "message", duration = 10)
-      res <- build_point_cloud_only(
-        p,
-        pc_quality  = input$pc_quality %||% "medium",
-        pc_filter   = input$pc_filter_stage0 %||% 2.5,
-        pc_rectify  = isTRUE(input$pc_rectify_stage0),
-        camera_type = input$camera_type %||% "multispectral"
-      )
-      stage0_tick(isolate(stage0_tick()) + 1L)
+        sprintf("No photos directly in that folder; using %s (%d images).",
+                basename(res$dir), res$n),
+        type = "message", duration = 8)
+    }
+    p
+  }
+
+  # --- step 2: worker count, and stopping a run --------------------------
+  # The slider defaults to 0, meaning "let the package decide"; the note
+  # spells out what that resolves to so the default is not a mystery.
+  odm_workers <- reactive({
+    n <- suppressWarnings(as.integer(input$pc_max_concurrency %||% 0L))
+    if (!is.finite(n) || n < 1L) DroneBioR:::default_max_concurrency() else n
+  })
+
+  output$pc_concurrency_note <- renderText({
+    auto <- DroneBioR:::default_max_concurrency()
+    n <- odm_workers()
+    base <- sprintf("Each worker holds its own working set, so this is the setting that decides whether a big flight finishes or is killed for memory. %d worker%s.",
+                    n, if (n == 1L) "" else "s")
+    if (identical(as.integer(input$pc_max_concurrency %||% 0L), 0L))
+      paste(base, sprintf("(automatic: %d, one per physical core)", auto))
+    else if (n < auto) paste(base, "Fewer than the automatic choice: slower, but a smaller peak.")
+    else base
+  })
+
+  # A reconstruction outlives the browser tab: docker is launched detached, so
+  # closing the app leaves the container running. Offer the stop the user
+  # would otherwise have to find in a terminal.
+  stage0_running <- reactiveVal(FALSE)
+
+  output$stage0_cancel_ui <- renderUI({
+    if (!isTRUE(stage0_running())) return(NULL)
+    div(class = "mt-2",
+        actionButton("cancel_stage0", "Stop the reconstruction",
+                     class = "btn-outline-danger w-100"),
+        div(class = "small text-muted mt-1",
+            "Stops the container. The partial project is left on disk, and a ",
+            "later run resumes from the last completed stage."))
+  })
+
+  observeEvent(input$cancel_stage0, {
+    p <- tryCatch(project(), error = function(e) NULL)
+    if (is.null(p)) return()
+    stopped <- DroneBioR:::stop_odm_container(p$odm_dataset_dir,
+                                              p$odm_project_name)
+    showNotification(
+      if (isTRUE(stopped))
+        "Reconstruction stopped. Nothing usable was lost: a re-run picks up from the last completed stage."
+      else
+        "No running reconstruction was found for this project.",
+      type = if (isTRUE(stopped)) "message" else "warning", duration = 10)
+    stage0_running(FALSE)
+  })
+
+  # Reporting is shared by the background and foreground paths, so the success
+  # and failure wording cannot drift apart.
+  report_stage0_result <- function(res, p) {
       if (isTRUE(res$exists)) {
         # A fresh reconstruction replaces the working cloud, so any snapshot
         # from a previous build is stale (it describes a different cloud).
@@ -9801,9 +9953,97 @@ server <- function(input, output, session) {
                   format(parse_ply_header(res$point_cloud)$n_vertices, big.mark = ",")),
           type = "message", duration = 12)
       } else {
+        # An hour of waiting has just ended in nothing. "Check the ODM log" is
+        # true and useless at that moment: it asks the user to learn to read a
+        # log to find out what the app already knows. Read it for them, name
+        # the cause, and give the one setting that fixes it. Sticky and red,
+        # because a transient amber toast is how this went unnoticed until the
+        # next step refused to open.
+        why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                        error = function(e) NULL)
         showNotification(
-          "The run finished but no point cloud was written; check the ODM log.",
+          paste0("The reconstruction produced no point cloud. ",
+                 why %||% paste0("Nothing diagnostic was found in the ODM log; ",
+                                 "its last lines are in ",
+                                 file.path(p$odm_project_dir, "dronebior_odm.log"),
+                                 ".")),
+          type = "error", duration = NULL, closeButton = TRUE,
+          id = "stage0_cloud_failed")
+      }
+  }
+
+  observeEvent(input$run_stage0, {
+    with_error_toast("Build the point cloud", {
+      p <- project_with_images()
+      showNotification(
+        paste0("Reconstructing to the point cloud at '",
+               input$pc_quality %||% "medium",
+               "' detail. This is the long part; the products come later."),
+        type = "message", duration = 10)
+
+      args <- list(
+        pc_quality      = input$pc_quality %||% "medium",
+        pc_filter       = input$pc_filter_stage0 %||% 2.5,
+        pc_rectify      = isTRUE(input$pc_rectify_stage0),
+        camera_type     = input$camera_type %||% "multispectral",
+        max_concurrency = odm_workers()
+      )
+
+      finish_stage0 <- function(res = NULL, err = NULL) {
+        stage0_running(FALSE)
+        stage0_tick(isolate(stage0_tick()) + 1L)
+        if (!is.null(err)) {
+          why <- tryCatch(DroneBioR:::diagnose_odm_failure(p),
+                          error = function(e) NULL)
+          showNotification(
+            paste0("The reconstruction stopped: ", conditionMessage(err),
+                   if (!is.null(why)) paste0(" ", why) else ""),
+            type = "error", duration = NULL, closeButton = TRUE,
+            id = "stage0_cloud_failed")
+          return(invisible(NULL))
+        }
+        report_stage0_result(res, p)
+      }
+
+      stage0_running(TRUE)
+
+      # Run it off the main thread. Held here, build_point_cloud_only() blocks
+      # the Shiny session for the whole reconstruction, and a blocked session
+      # cannot redraw - so stage0_running(TRUE) is set and the stop button it
+      # controls never appears, because nothing renders until the observer
+      # returns. Step 4 already runs in the background for this reason.
+      if (.dronebior_async_available) {
+        p_snap <- p
+        fut <- promises::future_promise({
+          if (!requireNamespace("DroneBioR", quietly = TRUE)) {
+            if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
+                !dir.exists(dronebior_pkg_path) ||
+                !requireNamespace("pkgload", quietly = TRUE)) {
+              stop("DroneBioR could not be loaded in the background worker.",
+                   call. = FALSE)
+            }
+            pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
+                              attach = FALSE, helpers = FALSE)
+          }
+          do.call(DroneBioR::build_point_cloud_only, c(list(p_snap), args))
+        }, seed = TRUE,
+           globals = list(p_snap = p_snap, args = args,
+                          dronebior_pkg_path = dronebior_pkg_path))
+        promises::then(fut,
+                       onFulfilled = function(res) finish_stage0(res = res),
+                       onRejected  = function(err) finish_stage0(err = err))
+      } else {
+        # Without future/promises the run blocks and the stop button cannot be
+        # shown; say so rather than leaving the user hunting for a control that
+        # will never appear.
+        showNotification(
+          paste0("Running in the foreground: install the `future` and ",
+                 "`promises` packages to keep the app responsive and enable ",
+                 "the stop button."),
           type = "warning", duration = 12)
+        res <- tryCatch(do.call(build_point_cloud_only, c(list(p), args)),
+                        error = function(e) { finish_stage0(err = e); NULL })
+        if (!is.null(res)) finish_stage0(res = res)
       }
     })
   })
@@ -9826,13 +10066,29 @@ server <- function(input, output, session) {
         type = "warning", duration = 6)
       return()
     }
-    p <- tryCatch(project(), error = function(e) NULL)
+    p <- tryCatch(project_with_images(), error = function(e) e)
+    if (inherits(p, "error")) {
+      showNotification(conditionMessage(p), type = "error", duration = 12)
+      return()
+    }
     if (is.null(p)) {
       showNotification("No project is configured.", type = "warning",
                        duration = 6)
       return()
     }
     cam <- input$camera_type %||% "multispectral"
+
+    # A DJI Mavic 3M needs a second reconstruction that nothing else triggers.
+    # Step 2 builds the cloud from the RGB camera, because that is where the
+    # geometry comes from - the MS runs use --fast-orthophoto and produce no
+    # dense cloud. But the four spectral bands live in a separate aligned run,
+    # and without it this step finishes with a three-band orthomosaic: no NIR,
+    # no red edge, and NDVI, NDRE, EVI and the rest simply absent from a
+    # flight that carries them. run_odm_dji_mavic_3m() performs that run and
+    # stacks the result into odm_orthophoto_dji.tif, which
+    # odm_product_paths() already prefers over the RGB-only file.
+    is_dji <- tryCatch(DroneBioR::has_djim3m_images(p$images_dir),
+                       error = function(e) FALSE)
 
     finish_rebuild <- function(res = NULL, err = NULL) {
       stage0_rebuild_running(FALSE)
@@ -9891,9 +10147,14 @@ server <- function(input, output, session) {
           pkgload::load_all(dronebior_pkg_path, quiet = TRUE,
                             attach = FALSE, helpers = FALSE)
         }
-        res <- DroneBioR::rebuild_from_edited_cloud(
-          p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
-          pc_las = TRUE)
+        res <- if (isTRUE(is_dji)) {
+          DroneBioR::run_odm_dji_mavic_3m(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, pc_las = TRUE)
+        } else {
+          DroneBioR::rebuild_from_edited_cloud(
+            p_snapshot, build_dsm = TRUE, build_dtm = TRUE, camera_type = cam,
+            pc_las = TRUE)
+        }
         # Default CHM = CSF-refined ground. The Cloth Simulation Filter handles
         # ground under dense canopy far better than ODM's SMRF default, but the
         # CSF CHM helper skips the P99.5 spike clip and would coarsen the DTM,
@@ -9919,7 +10180,7 @@ server <- function(input, output, session) {
                    error = function(e2) NULL))
         res
       }, seed = TRUE,
-         globals = list(p_snapshot = p_snapshot, cam = cam,
+         globals = list(p_snapshot = p_snapshot, cam = cam, is_dji = is_dji,
                         dronebior_pkg_path = dronebior_pkg_path))
       promises::then(fut,
                      onFulfilled = function(res) finish_rebuild(res = res),
@@ -9931,8 +10192,17 @@ server <- function(input, output, session) {
         type = "message", duration = NULL, closeButton = FALSE,
         id = "stage0_rebuild_progress")
       res <- tryCatch(
-        rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
-                                  camera_type = cam, pc_las = TRUE),
+        # Same DJI branch as the background path above. Kept in step with it:
+        # a fallback that quietly builds a different product than the primary
+        # path is worse than no fallback, because nothing announces which one
+        # ran.
+        if (isTRUE(is_dji)) {
+          run_odm_dji_mavic_3m(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                               pc_las = TRUE)
+        } else {
+          rebuild_from_edited_cloud(p_snapshot, build_dsm = TRUE, build_dtm = TRUE,
+                                    camera_type = cam, pc_las = TRUE)
+        },
         error = function(e) { finish_rebuild(err = e); NULL })
       if (!is.null(res)) {
         # See the async branch above for the rationale: CSF-refine the DTM at
@@ -13852,7 +14122,11 @@ server <- function(input, output, session) {
     proxy |>
       clearGroup("Predicted biomass") |>
       clearGroup("Field points") |>
-      removeControl("field_map_legend")
+      removeControl("field_map_legend") |>
+      # Drop the sample legend with the samples. Leaving it up after the
+      # points are switched off leaves the map asserting a key to something
+      # no longer drawn.
+      removeControl("field_points_legend")
     if (is.null(info)) return()
 
     map_r <- info$raster
@@ -13926,9 +14200,15 @@ server <- function(input, output, session) {
                                      "Hold-out test", "Cross-validated")
             proxy <- proxy |>
               addCircleMarkers(
+                # Black outline, split colour inside. A coloured ring on a
+                # coloured basemap is unreadable: teal and red both vanish
+                # against a viridis biomass surface, which is exactly the layer
+                # these points are meant to be read against. Black reads on any
+                # of them, and moving the split to the fill keeps the
+                # test/cross-validated distinction the colour used to carry.
                 data = df, lng = ~lng, lat = ~lat,
-                radius = 5, weight = 2, color = ~col, fillColor = ~col,
-                opacity = 0.95, fillOpacity = 0.65,
+                radius = 5, weight = 2, color = "#000000", fillColor = ~col,
+                opacity = 1, fillOpacity = 0.85,
                 group = "Field points",
                 options = pathOptions(pane = "dbFieldPointPane"),
                 popup = ~paste0(
@@ -13939,6 +14219,29 @@ server <- function(input, output, session) {
                   "<br>Predicted: ", formatC(predicted, format = "f", digits = 2),
                   " kg/ha",
                   "<br>Residual: ", formatC(residual, format = "f", digits = 2)))
+
+            # Two colours on a map with nothing to read them by is a puzzle,
+            # not a legend: the split was only in each point's popup, so
+            # telling hold-out from cross-validated meant clicking every dot.
+            # Count them here too - "which are the test points" is usually
+            # followed by "how many", and the answer is already in hand.
+            n_test <- sum(df$split == "test")
+            n_cv   <- nrow(df) - n_test
+            lab <- c(
+              if (n_test > 0) sprintf("Hold-out test (%d)", n_test),
+              if (n_cv   > 0) sprintf("Cross-validated (%d)", n_cv)
+            )
+            cols <- c(
+              if (n_test > 0) "#ef4444",
+              if (n_cv   > 0) "#0f766e"
+            )
+            if (length(lab)) {
+              proxy <- proxy |>
+                addLegend(position = "bottomleft",
+                          colors = cols, labels = lab, opacity = 0.85,
+                          title = "Field samples",
+                          layerId = "field_points_legend")
+            }
           }
         }
       }
