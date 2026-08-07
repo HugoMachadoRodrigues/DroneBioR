@@ -862,7 +862,7 @@ default_max_concurrency <- function(cap = 16L) {
 #'
 #' ODM records the exit code in `log.json`, and OpenMVS narrates its own
 #' failures into the docker log. The most common failure on a large flight is
-#' the kernel killing the container for memory, which surfaces as exit 137 —
+#' the kernel killing the container for memory, which surfaces as exit 137 -
 #' unmistakable, and fixable by lowering the detail level.
 #'
 #' @param project A `dronebio_project()` list.
@@ -893,8 +893,8 @@ diagnose_odm_failure <- function(project) {
       saw("out of memory") || saw("Killed")) {
     return(paste0(
       "The reconstruction was killed for running out of memory (exit 137) ",
-      "during the dense stage. Lower 'Detail level' in step 2 — Medium to ",
-      "Low is usually enough — or give Docker Desktop more memory ",
+      "during the dense stage. Lower 'Detail level' in step 2 - Medium to ",
+      "Low is usually enough - or give Docker Desktop more memory ",
       "(Settings > Resources). Nothing was lost: the point cloud was never ",
       "written, so re-running costs only the time."))
   }
