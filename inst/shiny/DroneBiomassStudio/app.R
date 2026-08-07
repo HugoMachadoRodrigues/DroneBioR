@@ -9939,6 +9939,28 @@ server <- function(input, output, session) {
     stage0_running(FALSE)
   })
 
+  # future captures the working directory to restore it in the worker. When
+  # that directory has been deleted underneath the session - which happens
+  # whenever a run cleans up a folder R happened to be sitting in - getwd()
+  # returns NULL, and the worker dies on setwd(NULL) with "character argument
+  # expected". The reconstruction is fine; the job that was to report on it is
+  # not, and the message names neither the cause nor the cure. Check before
+  # launching anything in the background, and move somewhere real.
+  ensure_live_workdir <- function(fallback) {
+    wd <- tryCatch(getwd(), error = function(e) NULL)
+    if (!is.null(wd) && nzchar(wd) && dir.exists(wd)) return(invisible(TRUE))
+    target <- if (!is.null(fallback) && nzchar(fallback) && dir.exists(fallback))
+      fallback else tempdir()
+    ok <- tryCatch({ setwd(target); TRUE }, error = function(e) FALSE)
+    if (isTRUE(ok)) {
+      showNotification(
+        paste0("The working directory no longer existed - background jobs ",
+               "cannot start without one. Moved to ", target, "."),
+        type = "warning", duration = 12)
+    }
+    invisible(ok)
+  }
+
   # Reporting is shared by the background and foreground paths, so the success
   # and failure wording cannot drift apart.
   report_stage0_result <- function(res, p) {
@@ -10006,6 +10028,7 @@ server <- function(input, output, session) {
         report_stage0_result(res, p)
       }
 
+      ensure_live_workdir(p$project_dir)
       stage0_running(TRUE)
 
       # Run it off the main thread. Held here, build_point_cloud_only() blocks
@@ -10056,7 +10079,30 @@ server <- function(input, output, session) {
   # report on completion. A synchronous fallback keeps it working without future.
   observeEvent(input$run_stage0_rebuild, {
     ply <- stage0_ply()
-    if (is.na(ply) || !file.exists(ply)) {
+    have_ply <- !is.na(ply) && file.exists(ply)
+
+    # A finished DJI run removes its own intermediates, the working cloud among
+    # them, to save disk. That left this step demanding an input its own
+    # success had deleted: the project was complete, and the button that
+    # completed it could never be pressed again. When the maps are already on
+    # disk there is nothing left to rebuild - only the covariates to export -
+    # so go straight there instead of refusing.
+    products_ready <- tryCatch({
+      pp <- odm_product_paths(isolate(project()))
+      all(vapply(c("orthomosaic", "dsm", "dtm"),
+                 function(k) { v <- unname(pp[[k]]); !is.na(v) && file.exists(v) },
+                 logical(1)))
+    }, error = function(e) FALSE)
+
+    if (!have_ply && products_ready) {
+      showNotification(
+        paste0("The maps are already built and the working cloud was cleared ",
+               "after the run. Exporting the covariates from them."),
+        type = "message", duration = 10)
+      start_covariate_export()
+      return()
+    }
+    if (!have_ply) {
       showNotification("There is no point cloud yet; run step 2 first.",
                        type = "warning", duration = 8)
       return()
@@ -10078,6 +10124,8 @@ server <- function(input, output, session) {
       return()
     }
     cam <- input$camera_type %||% "multispectral"
+
+    ensure_live_workdir(p$project_dir)
 
     # A DJI Mavic 3M needs a second reconstruction that nothing else triggers.
     # Step 2 builds the cloud from the RGB camera, because that is where the

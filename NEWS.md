@@ -1,5 +1,20 @@
 # DroneBioR (development version)
 
+* A finished DJI run no longer deletes its own point cloud. The cleanup that
+  reclaims disk after a successful reconstruction treated
+  `odm_georeferencing/` as an intermediate, but the georeferenced cloud is a
+  final product: the 3-D editor, the CSF terrain refinement and every
+  point-cloud metric read it, and it cannot be recovered without repeating the
+  whole reconstruction. It is kept now, minus the uncompressed `.las` when its
+  `.laz` twin is present - the same points at a ninth of the size.
+* Process step 4 no longer refuses to run because its own success removed the
+  working cloud. When the maps are already on disk there is nothing left to
+  rebuild, so it exports the covariates instead of asking for step 2 again.
+* Background jobs check the working directory before launching. `future`
+  captures it to restore in the worker, so a directory deleted underneath the
+  session made every background step die on `setwd(NULL)` with "character
+  argument expected" - a message that names neither the cause nor the cure.
+
 * The Parallel workers slider now governs Process step 4 as well as step 2.
   It only ever reached step 2, so a user who chose 3 workers to survive a
   memory kill watched step 4 quietly start 9 — on the same machine, against
