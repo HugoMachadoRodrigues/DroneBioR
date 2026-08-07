@@ -10069,6 +10069,11 @@ server <- function(input, output, session) {
       # returns. Step 4 already runs in the background for this reason.
       if (.dronebior_async_available) {
         p_snap <- p
+        # Every observer that launches a future resolves this for itself; the
+        # worker is a fresh R process and has to be told where the package
+        # lives when it is not on the library path.
+        dronebior_pkg_path <- tryCatch(find.package("DroneBioR"),
+                                       error = function(e) NA_character_)
         fut <- promises::future_promise({
           if (!requireNamespace("DroneBioR", quietly = TRUE)) {
             if (is.na(dronebior_pkg_path) || !nzchar(dronebior_pkg_path) ||
