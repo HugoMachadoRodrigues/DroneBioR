@@ -2,6 +2,15 @@
 
 ## DroneBioR (development version)
 
+- [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
+  warns when a DJI Mavic 3M flight is reconstructed from its RGB images
+  alone. The Studio’s step 4 now runs the multispectral reconstruction,
+  but a direct call to
+  [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/dev/reference/run_odm_project.md)
+  is still handed the RGB images by the permissive lister — correctly,
+  since ODM cannot reconstruct from single-band TIFFs — and produced a
+  three-band orthomosaic without saying so.
+
 - Process step 2 gains a **Stop the reconstruction** button and a
   **Parallel workers** slider. Docker runs a reconstruction detached, so
   closing the Studio never stopped one: the container kept every core

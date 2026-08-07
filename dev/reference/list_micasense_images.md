@@ -26,18 +26,18 @@ for (cap in sprintf("IMG_%04d", 1:3))
   for (band in 1:5)
     file.create(file.path(tmp, paste0(cap, "_", band, ".tif")))
 head(list_micasense_images(tmp))
-#>                                                    file       filename
-#> 1 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0001_1.tif IMG_0001_1.tif
-#> 2 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0001_2.tif IMG_0001_2.tif
-#> 3 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0001_3.tif IMG_0001_3.tif
-#> 4 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0001_4.tif IMG_0001_4.tif
-#> 5 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0001_5.tif IMG_0001_5.tif
-#> 6 /tmp/Rtmpd5hPv0/micasense-23a525f572d5/IMG_0002_1.tif IMG_0002_1.tif
-#>   capture_id band_id file_size_mb
-#> 1   IMG_0001       1            0
-#> 2   IMG_0001       2            0
-#> 3   IMG_0001       3            0
-#> 4   IMG_0001       4            0
-#> 5   IMG_0001       5            0
-#> 6   IMG_0002       1            0
+#>                                                  file       filename capture_id
+#> 1 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0001_1.tif IMG_0001_1.tif   IMG_0001
+#> 2 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0001_2.tif IMG_0001_2.tif   IMG_0001
+#> 3 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0001_3.tif IMG_0001_3.tif   IMG_0001
+#> 4 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0001_4.tif IMG_0001_4.tif   IMG_0001
+#> 5 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0001_5.tif IMG_0001_5.tif   IMG_0001
+#> 6 /tmp/RtmpatLiBZ/micasense-2324ab16ee/IMG_0002_1.tif IMG_0002_1.tif   IMG_0002
+#>   band_id file_size_mb
+#> 1       1            0
+#> 2       2            0
+#> 3       3            0
+#> 4       4            0
+#> 5       5            0
+#> 6       1            0
 ```

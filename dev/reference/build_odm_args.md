@@ -172,8 +172,8 @@ args <- build_odm_args(
 )
 head(args)
 #> [1] "run"                       "--rm"                     
-#> [3] "--name"                    "dronebior-Rtmpd5hPv0-demo"
-#> [5] "-v"                        "/tmp/Rtmpd5hPv0:/datasets"
+#> [3] "--name"                    "dronebior-RtmpatLiBZ-demo"
+#> [5] "-v"                        "/tmp/RtmpatLiBZ:/datasets"
 
 # RGB camera (Sony / DJI / Phantom): no radiometric calibration flag.
 rgb_args <- build_odm_args(
