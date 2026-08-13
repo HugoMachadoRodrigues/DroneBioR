@@ -12,8 +12,10 @@ Absolute path to the default registry CSV.
 \description{
 The registry is a CSV that stores one row per flight: a date, the
 project directory for that flight, and an optional notes string.
-The default location lives under the user's home directory so the
-same registry can be reused across separate R sessions.
+The default location is the package's own directory under
+\code{tools::R_user_dir("DroneBioR", "data")}, so the same registry
+can be reused across separate R sessions. It is created on first
+write, not by asking where it is.
 }
 \examples{
 default_flight_registry()

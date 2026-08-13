@@ -134,6 +134,27 @@ at all.
   working cloud. When the maps are already on disk there is nothing left to
   rebuild, so it exports the covariates instead of asking for step 2 again.
 
+## CRAN
+
+* **The package no longer writes into the user's home directory.** Four things
+  outlive a session - the flight registry, the flight-metric cache, the ODM
+  stage history that drives the run-time estimates, and the active-run record
+  the application reads to recover after a browser refresh - and all four lived
+  in `~/.dronebior`. CRAN does not permit that, and it was not hypothetical: a
+  plain `R CMD check` of this package created the file, because
+  `flight_ndvi_mean()` and its two siblings cache every result they compute.
+  All four now live under `tools::R_user_dir("DroneBioR", ...)`, which is the
+  sanctioned location and which honours `R_USER_DATA_DIR` / `R_USER_CACHE_DIR`
+  so a test can confine it. Files already in `~/.dronebior` are neither
+  migrated nor read: a registry kept there must be passed explicitly through
+  `registry_path`, and the caches rebuild on demand.
+
+* Asking where one of those files lives no longer creates a directory.
+  `odm_history_path()` and `active_run_record_path()` called `dir.create()`
+  while merely computing a path, so a read-only call such as
+  `read_odm_stage_history()` left a directory behind on a machine that had
+  never run a reconstruction.
+
 ## Documentation
 
 * `inst/manuscript/build/` carries the machinery that builds the accompanying

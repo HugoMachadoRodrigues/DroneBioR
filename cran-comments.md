@@ -72,6 +72,10 @@ None; this is a new submission.
   external engine to be present: the examples that would need one are wrapped in
   `\dontrun{}`, and everything reachable without an engine runs.
 * No function writes outside `tempdir()` unless the caller supplies a path.
+  Persistent state - a flight registry, two caches and a run record - lives
+  under `tools::R_user_dir("DroneBioR", ...)`. Nothing is written to the home
+  directory; a regression test asserts it, and the path helpers no longer
+  create their directory as a side effect of being called.
 * `SystemRequirements` lists GDAL, PROJ and GEOS, which come in through `sf` and
   `terra`, plus the optional external tools, each of which is optional at
   run time and absent from the checks.

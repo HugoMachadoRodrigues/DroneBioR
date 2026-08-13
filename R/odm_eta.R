@@ -35,12 +35,14 @@ odm_stage_order <- function() {
     "odm_report", "odm_postprocess")
 }
 
-#' Path to the persistent ODM stage-history CSV under ~/.dronebior.
+#' Path to the persistent ODM stage-history CSV.
+#'
+#' @param create Create the parent directory. Only a caller that is about to
+#'   write passes `TRUE`; asking where the file lives must not leave a
+#'   directory behind.
 #' @noRd
-odm_history_path <- function() {
-  dir <- file.path(Sys.getenv("HOME"), ".dronebior")
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  file.path(dir, "odm_stage_history.csv")
+odm_history_path <- function(create = FALSE) {
+  dronebior_user_file("odm_stage_history.csv", "data", create = create)
 }
 
 #' Collapse a camera or band label to the buckets the history distinguishes.
@@ -137,7 +139,7 @@ record_odm_stage_completion <- function(run_started_at, image_count, stage,
          hist$stage          == new_row$stage[1L]
   if (any(dup)) hist <- hist[!dup, , drop = FALSE]
   out <- rbind(hist, new_row)
-  utils::write.csv(out, odm_history_path(), row.names = FALSE)
+  utils::write.csv(out, odm_history_path(create = TRUE), row.names = FALSE)
   invisible(TRUE)
 }
 
@@ -270,12 +272,12 @@ estimate_remaining_seconds <- function(active_stage,
   active_est + pending_est
 }
 
-#' Path to the persistent active-run record under ~/.dronebior.
+#' Path to the persistent active-run record.
+#'
+#' @param create Create the parent directory; see [odm_history_path()].
 #' @noRd
-active_run_record_path <- function() {
-  dir <- file.path(Sys.getenv("HOME"), ".dronebior")
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  file.path(dir, "active_runs.json")
+active_run_record_path <- function(create = FALSE) {
+  dronebior_user_file("active_runs.json", "data", create = create)
 }
 
 #' Persist a run record so the Shiny session can recover after a refresh.
@@ -299,7 +301,7 @@ write_active_run_record <- function(run_id, log_path, project_dir,
   tryCatch(
     {
       writeLines(jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null"),
-                 active_run_record_path())
+                 active_run_record_path(create = TRUE))
       invisible(TRUE)
     },
     error = function(e) invisible(FALSE)

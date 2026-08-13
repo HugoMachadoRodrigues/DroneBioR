@@ -261,7 +261,10 @@ test_that("history written before camera tracking stays usable", {
       duration_seconds = 900,
       stringsAsFactors = FALSE
     )
-    utils::write.csv(legacy, DroneBioR:::odm_history_path(), row.names = FALSE)
+    # create = TRUE: the path helper no longer creates the directory as a
+    # side effect of being asked where the file goes.
+    utils::write.csv(legacy, DroneBioR:::odm_history_path(create = TRUE),
+                     row.names = FALSE)
 
     hist <- DroneBioR:::read_odm_stage_history()
     expect_true("camera" %in% names(hist))
