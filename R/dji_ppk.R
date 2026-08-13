@@ -434,7 +434,7 @@ write_djim3m_geo_txt <- function(images_dir,
 #'      DJI's proprietary binary; **rtklib's `convbin` does NOT
 #'      handle DJI .bin out of the box**, so this must be a tool the
 #'      user installed separately — for example
-#'      [`klauppk`](https://github.com/heliopas/klauppk) or any DJI
+#'      [KlauPPK](https://klauppk.com/) or any DJI
 #'      Smart Farm-compatible converter).
 #'   2. Runs rtklib's `rnx2rtkp` with the rover RINEX, the
 #'      `_PPKNAV.nav` ephemerides and the **user-supplied base

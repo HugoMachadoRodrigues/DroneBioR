@@ -65,7 +65,12 @@ run_dronebio_workflow <- function(project = dronebio_project(),
     orthomosaic <- project$odm_orthomosaic
   }
   if (is.null(output_dir)) {
+    # Writing several hundred megabytes somewhere the caller did not name is
+    # worth one line of output. The path comes from the project, which defaults
+    # to the working directory, so a bare call writes under getwd().
     output_dir <- project$output_dir
+    message("Writing products to ", output_dir,
+            " (set output_dir to write elsewhere).")
   }
 
   t0 <- Sys.time()

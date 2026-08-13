@@ -1,17 +1,24 @@
 # Internal helpers — tested via ::: so they don't need to be exported.
-# Each test owns a private HOME so we never touch the user's real
-# ~/.dronebior/ directory.
+#
+# Each test owns a private state directory so we never touch the user's own.
+# Redirecting HOME is not enough: the package keeps its state under
+# tools::R_user_dir(), which on Windows is derived from %LOCALAPPDATA%, not
+# from HOME, so a HOME-only redirect isolated these tests on macOS and Linux
+# and silently stopped isolating them on Windows. R_USER_DATA_DIR and
+# R_USER_CACHE_DIR are what R_user_dir() actually consults, on every platform.
+# HOME is redirected too, because a few of these tests put a fake log file
+# there.
 
 with_fake_home <- function(code) {
   tmp <- tempfile("dronebior_home_")
   dir.create(tmp, recursive = TRUE)
-  old <- Sys.getenv("HOME")
-  Sys.setenv(HOME = tmp)
-  on.exit({
-    Sys.setenv(HOME = old)
-    unlink(tmp, recursive = TRUE)
-  })
-  force(code)
+  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+  withr::with_envvar(
+    c(HOME             = tmp,
+      R_USER_DATA_DIR  = file.path(tmp, "data"),
+      R_USER_CACHE_DIR = file.path(tmp, "cache")),
+    force(code)
+  )
 }
 
 test_that("odm_stage_baseline_seconds covers the canonical ODM 3.6 pipeline", {
@@ -261,7 +268,10 @@ test_that("history written before camera tracking stays usable", {
       duration_seconds = 900,
       stringsAsFactors = FALSE
     )
-    utils::write.csv(legacy, DroneBioR:::odm_history_path(), row.names = FALSE)
+    # create = TRUE: the path helper no longer creates the directory as a
+    # side effect of being asked where the file goes.
+    utils::write.csv(legacy, DroneBioR:::odm_history_path(create = TRUE),
+                     row.names = FALSE)
 
     hist <- DroneBioR:::read_odm_stage_history()
     expect_true("camera" %in% names(hist))

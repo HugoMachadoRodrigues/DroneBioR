@@ -2,16 +2,17 @@
 #'
 #' The registry is a CSV that stores one row per flight: a date, the
 #' project directory for that flight, and an optional notes string.
-#' The default location lives under the user's home directory so the
-#' same registry can be reused across separate R sessions.
+#' The default location is the package's own directory under
+#' `tools::R_user_dir("DroneBioR", "data")`, so the same registry can be
+#' reused across separate R sessions. It is created on first write, not by
+#' asking where it is.
 #'
 #' @return Absolute path to the default registry CSV.
 #' @examples
 #' default_flight_registry()
 #' @export
 default_flight_registry <- function() {
-  dir <- file.path(Sys.getenv("HOME", unset = tempdir()), ".dronebior")
-  file.path(dir, "flights.csv")
+  dronebior_user_file("flights.csv", "data")
 }
 
 ensure_flight_registry <- function(registry_path) {
@@ -234,8 +235,7 @@ NULL
 # restarts and is shared between the Time Series tab and the
 # command-line callers of `flight_time_series()`.
 flight_metric_cache_path <- function() {
-  dir <- file.path(Sys.getenv("HOME", unset = tempdir()), ".dronebior")
-  file.path(dir, "flight_metrics_cache.rds")
+  dronebior_user_file("flight_metrics_cache.rds", "cache")
 }
 
 read_flight_metric_cache <- function() {
@@ -245,8 +245,7 @@ read_flight_metric_cache <- function() {
 }
 
 write_flight_metric_cache <- function(cache) {
-  path <- flight_metric_cache_path()
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  path <- dronebior_user_file("flight_metrics_cache.rds", "cache", create = TRUE)
   tryCatch(saveRDS(cache, path), error = function(e) NULL)
   invisible(path)
 }

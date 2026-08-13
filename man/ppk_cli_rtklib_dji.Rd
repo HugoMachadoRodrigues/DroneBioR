@@ -44,7 +44,7 @@ using \code{dji_bin_to_rinex_cmd} (a user-supplied CLI that knows
 DJI's proprietary binary; \strong{rtklib's \code{convbin} does NOT
 handle DJI .bin out of the box}, so this must be a tool the
 user installed separately — for example
-\href{https://github.com/heliopas/klauppk}{\code{klauppk}} or any DJI
+\href{https://klauppk.com/}{KlauPPK} or any DJI
 Smart Farm-compatible converter).
 \item Runs rtklib's \code{rnx2rtkp} with the rover RINEX, the
 \verb{_PPKNAV.nav} ephemerides and the \strong{user-supplied base

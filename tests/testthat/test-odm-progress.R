@@ -113,11 +113,14 @@ test_that("run_docker_with_progress records per-stage durations on clean exit", 
   skip_if_not_installed("processx")
   if (!nzchar(Sys.which("sh"))) skip("`sh` not on PATH")
 
-  # Point the history file at a temp location so the test does not
-  # touch the user's real ~/.dronebior/odm_stage_history.csv.
+  # Point the history file at a temp location so the test does not touch the
+  # user's own. R_USER_DATA_DIR is what tools::R_user_dir() reads; HOME alone
+  # does not redirect it on Windows.
   tmp_home <- tempfile("dronebior-home-")
-  dir.create(file.path(tmp_home, ".dronebior"), recursive = TRUE)
-  withr::with_envvar(c(HOME = tmp_home), {
+  dir.create(tmp_home, recursive = TRUE)
+  withr::with_envvar(c(HOME = tmp_home,
+                       R_USER_DATA_DIR = file.path(tmp_home, "data"),
+                       R_USER_CACHE_DIR = file.path(tmp_home, "cache")), {
     project_dir <- tempfile("rec-")
     dir.create(project_dir)
 
