@@ -26,3 +26,9 @@
 ^.*backup.*\.tar\.gz$
 ^\.dronebior_studio\.json$
 ^inst/manuscript/manuscript_repro$
+^outputs$
+^imagens$
+^DroneBioR\.Rcheck$
+^DroneBioR_.*\.tar\.gz$
+^\.RData$
+^Manuscripts$
