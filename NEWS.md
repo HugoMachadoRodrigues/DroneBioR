@@ -155,6 +155,27 @@ at all.
   `read_odm_stage_history()` left a directory behind on a machine that had
   never run a reconstruction.
 
+* **Attaching the package no longer rewrites `PROJ_DATA` and `PROJ_LIB`.**
+  `.onLoad()` set both unconditionally, so loading DroneBioR could replace a
+  PROJ configuration that another geospatial package - or the user - had
+  deliberately chosen, and could emit a warning from a load hook on a machine
+  where `proj.db` was not found. It now steps in only when nothing usable is
+  set, which is the case the code exists for: a system where `sf` and `terra`
+  cannot find `proj.db` and fail with an error that names nothing useful. What
+  it does change is recorded and put back by a new `.onUnload()`.
+
+* *Drone Biomass Studio* restores the session it borrowed.
+  `run_drone_biomass_studio()` capped terra's `memfrac` and `memmax` so the
+  application runs on a laptop, and set `dronebior.project_dir` - and restored
+  neither. `shiny::runApp()` blocks and then returns to the console, so closing
+  the app left terra clamped to a quarter of memory for the rest of the
+  session. Both are restored on exit.
+
+* `run_dronebio_workflow()` says where it is writing when the caller did not
+  name a directory. It falls back to the project's output folder, which
+  defaults to the working directory, and several hundred megabytes appearing
+  somewhere unannounced is worth one line of output.
+
 ## Documentation
 
 * `inst/manuscript/build/` carries the machinery that builds the accompanying

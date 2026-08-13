@@ -30,5 +30,12 @@
 "_PACKAGE"
 
 .onLoad <- function(libname, pkgname) {
-  configure_proj_database(verbose = FALSE)
+  # force = FALSE: leave an existing, working PROJ configuration alone, and do
+  # not warn from a load hook if nothing is found - the functions that need
+  # proj.db report it themselves, with context.
+  configure_proj_database(verbose = FALSE, force = FALSE)
+}
+
+.onUnload <- function(libpath) {
+  restore_proj_database()
 }

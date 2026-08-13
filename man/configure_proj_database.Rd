@@ -4,10 +4,18 @@
 \alias{configure_proj_database}
 \title{Configure PROJ paths for terra and sf}
 \usage{
-configure_proj_database(verbose = FALSE)
+configure_proj_database(verbose = FALSE, force = TRUE)
 }
 \arguments{
 \item{verbose}{Logical. Print the selected PROJ path when found.}
+
+\item{force}{Logical. When \code{TRUE} (the default for a direct call), search
+and set the variables whatever they currently hold. When \code{FALSE}, an
+existing \code{PROJ_DATA} or \code{PROJ_LIB} that already points at a directory
+containing \code{proj.db} is left untouched, and nothing is warned about if no
+database is found. The package's load hook uses \code{FALSE}, so that attaching
+DroneBioR does not replace a configuration the user or another geospatial
+package chose.}
 }
 \value{
 Invisibly returns \code{TRUE} if \code{proj.db} was found, otherwise \code{FALSE}.
@@ -16,6 +24,8 @@ Invisibly returns \code{TRUE} if \code{proj.db} was found, otherwise \code{FALSE
 Some macOS R installations can load sf or terra without a valid pointer to
 \code{proj.db}. This helper searches common locations and sets \code{PROJ_DATA} and
 \code{PROJ_LIB} before spatial packages need CRS transformations.
+
+Whatever this changes is recorded and restored when the package is unloaded.
 }
 \examples{
 configure_proj_database(verbose = FALSE)
