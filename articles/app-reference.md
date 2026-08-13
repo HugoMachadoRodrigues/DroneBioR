@@ -114,7 +114,7 @@ Sidebar accordions: **Project paths**, **Map layers**, **Display**,
       at a 5 cm/px ortho); without GCPs, GPS-EXIF-only photogrammetry
       typically delivers **1–5 m** absolute (relative accuracy still 2–5
       × GSD). See OpenDroneMap accuracy notes,
-      <https://docs.opendronemap.org/about/>.
+      <https://docs.opendronemap.org/>.
   - Measure tool: planar distance on the projected CRS; great-circle
     distance via Leaflet on geographic CRS. Precision is shown to 1 mm
     but is meaningful only to the orthomosaic accuracy.
@@ -196,9 +196,9 @@ detected, surfaces drawn.
   - LAS / LAZ / COPC: full sensor precision (LAS 1.2 / 1.4 XYZ as
     int32 + scale/offset; cm-level for typical drone surveys).
   - PLY preview from ODM: photogrammetric vertical RMSE ≈ 1.5–3 × GSD
-    with GCPs (Dandois & Ellis 2013, *Remote Sens.*,
-    <https://doi.org/10.3390/rs5052572>); without GCPs, vertical bias
-    can be tens of cm to a few m.
+    with GCPs (Dandois & Ellis 2013, *Remote Sens. Environ.*,
+    <https://doi.org/10.1016/j.rse.2013.04.005>); without GCPs, vertical
+    bias can be tens of cm to a few m.
 - **Source.** Drone LiDAR (DJI L1 / L2, GreenValley, Riegl, etc.) or ODM
   photogrammetric cloud.
 
@@ -597,7 +597,7 @@ Biomass proxy mean / CHM mean).
 
 | Source | Role | Reference / link | Native accuracy |
 |----|----|----|----|
-| MicaSense RedEdge / Altum / Sequoia | Multispectral imagery | <https://micasense.com/> | Per-band relative reflectance ±1–3 % after panel calibration |
+| MicaSense RedEdge / Altum / Sequoia | Multispectral imagery | <https://eaglenxt.com/> | Per-band relative reflectance ±1–3 % after panel calibration |
 | Generic RGB drone cameras (Sony, DJI, Phantom) | RGB imagery | sensor-specific | RGB radiometry is not absolute; use RGB-only indices (VARI, ExG, GLI, MGRVI, RGBVI) for relative comparisons |
 | OpenDroneMap (local Docker) | Structure-from-Motion + MVS | <https://docs.opendronemap.org/> | Horizontal RMSE 2–5 × GSD with GCPs; vertical RMSE 1.5–3 × GSD |
 | WebODM (REST) | Remote ODM | <https://github.com/WebODM/WebODM> | Same engine as local ODM |

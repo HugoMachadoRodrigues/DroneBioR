@@ -51,9 +51,8 @@ as `ppk_cli` to
     `dji_bin_to_rinex_cmd` (a user-supplied CLI that knows DJI's
     proprietary binary; **rtklib's `convbin` does NOT handle DJI .bin
     out of the box**, so this must be a tool the user installed
-    separately — for example
-    [`klauppk`](https://github.com/heliopas/klauppk) or any DJI Smart
-    Farm-compatible converter).
+    separately — for example [KlauPPK](https://klauppk.com/) or any DJI
+    Smart Farm-compatible converter).
 
 2.  Runs rtklib's `rnx2rtkp` with the rover RINEX, the `_PPKNAV.nav`
     ephemerides and the **user-supplied base station RINEX** to produce

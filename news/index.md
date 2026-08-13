@@ -1,5 +1,218 @@
 # Changelog
 
+## DroneBioR 0.6.0
+
+This release makes the DJI Mavic 3M a first-class sensor. The
+reconstruction path for it existed in 0.5.1 but could not be reached
+from the application, and several folder- and band-level assumptions
+written for MicaSense quietly gave the wrong answer for a two-camera
+rig. A Mavic 3M flight now goes from a folder of images to a seven-band
+orthomosaic and the full index stack without the user classifying the
+camera, editing a path, or knowing that the rig has two cameras at all.
+
+### DJI Mavic 3M
+
+- **The Studio now runs the multispectral reconstruction.** Nothing did.
+  Step 2 correctly builds the point cloud from the colour camera - that
+  is where a Mavic 3M’s geometry comes from, since the spectral runs use
+  `--fast-orthophoto` and produce no dense cloud - but the four aligned
+  spectral bands live in a second reconstruction that no live button
+  ever triggered.
+  [`run_odm_dji_mavic_3m()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_dji_mavic_3m.md)
+  existed, was correct, and was unreachable from the interface, so a
+  flight finished with a three-band orthomosaic and NDVI, NDRE and every
+  other NIR index simply absent. Step 4 now runs it.
+
+- **The camera is identified, not asked for.** The camera-type selector
+  offered “RGB (Sony / DJI / Phantom / generic)”, which is false for a
+  Mavic 3M: it is a multispectral rig carrying green, red, red-edge and
+  NIR - no blue - alongside a separate 20 MP colour camera, and the
+  label pointed users at the path that reconstructs the colour camera
+  alone. `detect_camera_from_folder()` now recognises the rig by name
+  rather than by guessing from extension counts, which had happened to
+  answer “multispectral” only because the rig writes four TIFFs per JPG;
+  a flight with more colour frames than spectral frames would have been
+  called RGB and reconstructed as such. Detection requires at least one
+  `_MS_` band file, so a folder of colour frames alone is not mistaken
+  for a spectral flight. The new `detect_sensor_label()` names the rig
+  and the bands actually on disk - “DJI Mavic 3M - multispectral (G, R,
+  RE, NIR) + RGB camera” - so a user can check it against the drone in
+  their hand.
+
+- [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
+  no longer rejects a Mavic 3M flight with “Some image names do not
+  match the expected MicaSense pattern”. The function already detected
+  the sensor, but the manifest was still chosen by
+  `switch(camera_type, ...)`, and a DJI flight is `"multispectral"`, so
+  it reached
+  [`list_micasense_images()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/list_micasense_images.md).
+  DJI names the band with a letter (`_MS_NIR`), not the numeric suffix
+  that lister requires. It now takes the permissive lister whenever the
+  sensor test says DJI.
+
+- [`run_odm_project()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_project.md)
+  warns when a Mavic 3M flight is reconstructed from its colour images
+  alone. A direct call is still handed those images by the permissive
+  lister - correctly, since ODM cannot reconstruct from single-band
+  TIFFs - and used to produce a three-band orthomosaic without comment,
+  so the indices turned out to be uncomputable two steps later with
+  nothing to explain why. The warning names
+  [`run_odm_dji_mavic_3m()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_odm_dji_mavic_3m.md)
+  as the route to the seven-band product.
+
+- Blue is no longer demanded of a band map that does not have it. Both
+  Spectral Analytics previews asked for `c("Blue","Green","Red")` and
+  failed with `[subset] invalid name(s)`, and the natural-colour
+  orthomosaic silently stopped drawing for the same reason. The
+  multispectral map omits Blue by design - the only blue available comes
+  from the colour camera, and mixing it with calibrated spectral bands
+  would make an index wrong. A new internal `display_rgb_bands()` falls
+  back through canonical names, any case, then the first three layers,
+  and marks the result when it is false colour, so a panel says so
+  rather than calling an infrared composite “RGB”.
+
+- The GIS tab no longer reports a multispectral flight as RGB-only. The
+  orthomosaic path was refilled from `project$odm_orthomosaic`, which
+  always names `odm_orthophoto.tif`, while a DJI run writes its
+  seven-band stack beside it as `odm_orthophoto_dji.tif`; that observer
+  overwrote the correct path set elsewhere, so every multispectral index
+  stayed greyed out on a flight that had just produced NIR and red edge.
+  It resolves through
+  [`odm_product_paths()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/odm_product_paths.md)
+  now.
+
+### Finding the images
+
+- The photos folder is resolved before anything is decided from it,
+  once, in the Studio’s project object. Every folder-level test -
+  [`has_djim3m_images()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/has_djim3m_images.md),
+  `detect_camera_from_folder()`, the image listers - reads one directory
+  and does not descend, so with the field pointed at the *parent* of the
+  photos they all saw an empty folder and answered as though the flight
+  were something else. Nothing failed: the run took hours and produced a
+  three-band orthomosaic from a multispectral flight. The new
+  `resolve_images_dir()` finds images one level down when the choice is
+  unambiguous, says so when it does, and refuses the run outright when
+  there are none.
+
+- `launch_odm_run()` and the WebODM branch inside it are marked
+  unreachable. They read like the code that runs, so a fix applied there
+  looks right and changes nothing - which is exactly what happened to
+  the first version of the fix above.
+
+### Running a reconstruction
+
+- Process step 2 gains a **Stop the reconstruction** button. Docker runs
+  a reconstruction detached, so closing the Studio never stopped one:
+  the container kept every core and tens of gigabytes, and the only way
+  out was `docker ps` and `docker stop` in a terminal. Containers are
+  now named after the project (`dronebior-<dataset>-<project>`) through
+  the new `odm_container_name()`, so the application can find and stop
+  the run it started.
+
+- A **Parallel workers** slider governs steps 2 and 4. The worker count
+  is what actually decides whether a large flight finishes - the dense
+  stage gives each worker its own working set - so it is a control
+  rather than a hidden default. It initially reached step 2 only, so a
+  user who chose 3 workers to survive a memory kill watched step 4
+  quietly start 9, on the same machine, against the same ceiling, and on
+  a DJI flight the heavier of the two runs.
+
+- Step 2 says *why* a reconstruction produced no point cloud. It used to
+  report “The run finished but no point cloud was written; check the ODM
+  log” as a transient amber toast - easy to miss, and useless once seen,
+  since it asks the user to read a log to find out what the application
+  already knows. The new internal `diagnose_odm_failure()` reads
+  `log.json` and the docker log and names the cause: exit 137 is an
+  out-of-memory kill, and the message points at the Detail-level setting
+  that fixes it. The notification is red and sticky.
+
+- Background steps check the working directory before launching.
+  `future` captures it to restore in the worker, so a directory deleted
+  underneath the session made every background step die on `setwd(NULL)`
+  with “character argument expected” - a message that names neither the
+  cause nor the cure.
+
+- Fixed “object ‘dronebior_pkg_path’ not found” when starting step 2.
+  Moving that step into the background copied the `globals` list from
+  step 4 without the assignment that precedes it in every other handler,
+  so the future was told to export a variable that did not exist in the
+  launching scope. It failed only on the click, after the banner had
+  gone up.
+
+### Keeping the products
+
+- A finished DJI run no longer deletes its own point cloud.
+  `keep_only_final_odm_products()` treated `odm_georeferencing/` as an
+  intermediate, but the georeferenced cloud is a final product: the 3-D
+  editor, the CSF terrain refinement and every point-cloud metric read
+  it, and it cannot be recovered without repeating the whole
+  reconstruction. It is kept now, minus the uncompressed `.las` when its
+  `.laz` twin is present - the same points at a ninth of the size.
+
+- Process step 4 no longer refuses to run because its own success
+  removed the working cloud. When the maps are already on disk there is
+  nothing left to rebuild, so it exports the covariates instead of
+  asking for step 2 again.
+
+### CRAN
+
+- **The package no longer writes into the user’s home directory.** Four
+  things outlive a session - the flight registry, the flight-metric
+  cache, the ODM stage history that drives the run-time estimates, and
+  the active-run record the application reads to recover after a browser
+  refresh - and all four lived in `~/.dronebior`. CRAN does not permit
+  that, and it was not hypothetical: a plain `R CMD check` of this
+  package created the file, because
+  [`flight_ndvi_mean()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/flight_summary_helpers.md)
+  and its two siblings cache every result they compute. All four now
+  live under `tools::R_user_dir("DroneBioR", ...)`, which is the
+  sanctioned location and which honours `R_USER_DATA_DIR` /
+  `R_USER_CACHE_DIR` so a test can confine it. Files already in
+  `~/.dronebior` are neither migrated nor read: a registry kept there
+  must be passed explicitly through `registry_path`, and the caches
+  rebuild on demand.
+
+- Asking where one of those files lives no longer creates a directory.
+  `odm_history_path()` and `active_run_record_path()` called
+  [`dir.create()`](https://rdrr.io/r/base/files2.html) while merely
+  computing a path, so a read-only call such as
+  `read_odm_stage_history()` left a directory behind on a machine that
+  had never run a reconstruction.
+
+- **Attaching the package no longer rewrites `PROJ_DATA` and
+  `PROJ_LIB`.** `.onLoad()` set both unconditionally, so loading
+  DroneBioR could replace a PROJ configuration that another geospatial
+  package - or the user - had deliberately chosen, and could emit a
+  warning from a load hook on a machine where `proj.db` was not found.
+  It now steps in only when nothing usable is set, which is the case the
+  code exists for: a system where `sf` and `terra` cannot find `proj.db`
+  and fail with an error that names nothing useful. What it does change
+  is recorded and put back by a new `.onUnload()`.
+
+- *Drone Biomass Studio* restores the session it borrowed.
+  [`run_drone_biomass_studio()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_drone_biomass_studio.md)
+  capped terra’s `memfrac` and `memmax` so the application runs on a
+  laptop, and set `dronebior.project_dir` - and restored neither.
+  [`shiny::runApp()`](https://rdrr.io/pkg/shiny/man/runApp.html) blocks
+  and then returns to the console, so closing the app left terra clamped
+  to a quarter of memory for the rest of the session. Both are restored
+  on exit.
+
+- [`run_dronebio_workflow()`](https://hugomachadorodrigues.github.io/DroneBioR/reference/run_dronebio_workflow.md)
+  says where it is writing when the caller did not name a directory. It
+  falls back to the project’s output folder, which defaults to the
+  working directory, and several hundred megabytes appearing somewhere
+  unannounced is worth one line of output.
+
+### Documentation
+
+- `inst/manuscript/build/` carries the machinery that builds the
+  accompanying manuscript: a pandoc filter that splices each table in
+  from its HTML source so tables reach Word as tables rather than as
+  pictures of tables, and the column-width, type-size and style handling
+  that goes with it.
+
 ## DroneBioR 0.5.1
 
 Reproduction fixes found by an independent audit of the submission
