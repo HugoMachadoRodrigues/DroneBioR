@@ -7,6 +7,8 @@
 build_odm_args(
   dataset_dir,
   project_name = "micasense",
+  mount_dir = NULL,
+  project_path = NULL,
   image = "opendronemap/odm",
   camera_type = c("multispectral", "rgb"),
   radiometric_calibration = NULL,
@@ -34,6 +36,18 @@ build_odm_args(
 }
 \arguments{
 \item{dataset_dir}{Host folder mounted to \verb{/datasets}.}
+
+\item{mount_dir}{Host directory to bind at \code{/datasets}. Defaults to
+\code{dataset_dir}, which is right on a single-user machine. A multi-user
+deployment must pass a directory the user cannot influence: the project path is
+user-supplied and a symbolic link in it would otherwise redirect the bind
+mount.}
+
+\item{project_path}{Where the project lives \emph{inside} the container,
+passed to ODM as \code{--project-path}. Defaults to \code{/datasets}. Setting
+it lets the mount stay pinned to a fixed directory while the project is
+addressed below it, so a link planted in the mount resolves against the
+container's filesystem rather than the host's.}
 
 \item{project_name}{ODM project name inside \code{dataset_dir}.}
 

@@ -1,3 +1,34 @@
+# DroneBioR (development version)
+
+## Hosting the application for more than one person
+
+* **A reconstruction can now be handed to a broker instead of run directly.**
+  The three entry points shell out to Docker, which is right on a laptop and
+  wrong on a server: the project directory is user-supplied and lands in
+  `-v <dir>:/datasets` against a container that runs as root, so a container
+  that can reach the Docker socket lets any user mount any host path. When
+  `DRONEBIOR_JOB_DIR` is set they write a job request instead, and a privileged
+  process the user cannot reach runs the reconstruction. `deploy/` carries that
+  process and the rest of the deployment.
+
+* `build_odm_args()` gains `mount_dir` and `project_path`, separating what is
+  bind-mounted from where the project lives inside the container. Both default
+  to today's behaviour, so nothing changes for a single-user install. A
+  multi-user deployment pins the mount to a directory the user cannot influence
+  and addresses the project below it, so a symbolic link planted in the mount
+  resolves against the container's filesystem rather than the host's.
+
+* Setting `DRONEBIOR_REQUIRE_PINNED_MOUNT` makes a missing `mount_dir` an error
+  rather than a default. This matters more than it sounds: `build_odm_args()`
+  falling back to the project path meant any code path that forgot to pass the
+  pin was silently vulnerable, and one did. `build_point_cloud_only()` branches
+  on the *contents* of the images folder, so naming a single file
+  `DJI_0001_0001_D.JPG` reached a branch that dropped the pin. Failing closed
+  turns the next such path into a loud error instead of a hole.
+
+  Two adversarial reviews found these; `tests/testthat/test-pinned-mount.R` and
+  `deploy/test/isolation-test.R` keep them found.
+
 # DroneBioR 0.6.0
 
 This release makes the DJI Mavic 3M a first-class sensor. The reconstruction

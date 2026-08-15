@@ -1,0 +1,96 @@
+# ShinyProxy: one container per logged-in user, each as its own UID.
+#
+# Two barriers separate users, and they are independent on purpose:
+#
+#   1. Volumes. A container is given only that user's data and that user's job
+#      spool. Nothing else is mounted, so there is no path to another user's
+#      files even with a shell in the container.
+#
+#   2. Ownership. Each user's host directory belongs to a DIFFERENT uid, and
+#      the container runs as that uid (docker-user). If a volume is ever
+#      mis-specified - the sort of mistake that is one typo away - the file
+#      permissions still refuse. A single shared uid, which is what this file
+#      used to do, made barrier 2 do nothing at all.
+#
+# The specs are repeated per user rather than computed from #{proxy.userId}.
+# The uid mapping is the thing an auditor most wants to read at a glance, and a
+# SpEL lookup that silently yields an empty user would start the container as
+# root - a clever line that fails open is worse than three explicit ones.
+
+proxy:
+  title: Drone Biomass Studio
+  port: 8080
+  landing-page: /
+  hide-navbar: false
+  heartbeat-rate: 10000
+  # A reconstruction runs for hours; the 60s default would reap the container
+  # while ODM was still working.
+  heartbeat-timeout: 172800000
+  container-wait-time: 60000
+
+  # Cloudflare Access authenticates at the edge. This is the second layer, so
+  # that a mistake in an Access policy does not by itself expose the data.
+  authentication: simple
+  users:
+    - name: hugo
+      password: CHANGE_ME_hugo
+      groups: [u_hugo]
+    - name: ana
+      password: CHANGE_ME_ana
+      groups: [u_ana]
+    - name: carlos
+      password: CHANGE_ME_carlos
+      groups: [u_carlos]
+
+  docker:
+    internal-networking: true
+
+  specs:
+    - id: studio-hugo
+      display-name: Drone Biomass Studio
+      container-image: dronebior/studio:0.6.0
+      container-network: dronebior_net
+      access-groups: [u_hugo]
+      port: 3838
+      docker-user: "10001"
+      container-volumes:
+        - "/srv/dronebior/users/hugo:/data"
+        - "/srv/dronebior/spool/hugo:/spool"
+      container-env: { DRONEBIOR_DATA_ROOT: /data, DRONEBIOR_JOB_DIR: /spool }
+      container-memory-limit: 12g
+      container-cpu-limit: 4
+
+    - id: studio-ana
+      display-name: Drone Biomass Studio
+      container-image: dronebior/studio:0.6.0
+      container-network: dronebior_net
+      access-groups: [u_ana]
+      port: 3838
+      docker-user: "10002"
+      container-volumes:
+        - "/srv/dronebior/users/ana:/data"
+        - "/srv/dronebior/spool/ana:/spool"
+      container-env: { DRONEBIOR_DATA_ROOT: /data, DRONEBIOR_JOB_DIR: /spool }
+      container-memory-limit: 12g
+      container-cpu-limit: 4
+
+    - id: studio-carlos
+      display-name: Drone Biomass Studio
+      container-image: dronebior/studio:0.6.0
+      container-network: dronebior_net
+      access-groups: [u_carlos]
+      port: 3838
+      docker-user: "10003"
+      container-volumes:
+        - "/srv/dronebior/users/carlos:/data"
+        - "/srv/dronebior/spool/carlos:/spool"
+      container-env: { DRONEBIOR_DATA_ROOT: /data, DRONEBIOR_JOB_DIR: /spool }
+      container-memory-limit: 12g
+      container-cpu-limit: 4
+
+logging:
+  file:
+    name: /var/log/shinyproxy.log
+
+server:
+  forward-headers-strategy: native

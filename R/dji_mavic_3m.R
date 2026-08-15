@@ -1176,6 +1176,17 @@ run_odm_dji_mavic_3m <- function(project,
                                  ppk_cli      = "auto",
                                  rgb_extra_args = character(),
                                  ms_extra_args  = character()) {
+  # Hosted deployment: no Docker in this session, by design. The broker runs
+  # it. See R/hosted.R - the broker itself has DRONEBIOR_JOB_DIR unset, which
+  # is what keeps this from recursing when it calls this same function.
+  if (dronebior_hosted()) {
+    return(submit_odm_job("dji_mavic_3m", project,
+                          args = list(max_concurrency = max_concurrency,
+                                      pc_filter       = pc_filter,
+                                      pc_rectify      = pc_rectify,
+                                      fast_orthophoto = fast_orthophoto)))
+  }
+
   ms_mode <- match.arg(ms_mode)
   if (is.null(max_concurrency)) {
     max_concurrency <- default_max_concurrency()

@@ -32,3 +32,4 @@
 ^DroneBioR_.*\.tar\.gz$
 ^\.RData$
 ^Manuscripts$
+^deploy$

@@ -1,0 +1,68 @@
+# The whole deployment. Three services, and only two of them are trusted.
+#
+#   cloudflared  outbound-only tunnel to Cloudflare. No port is published on the
+#                VM at all - the firewall stays closed, which is also what makes
+#                this work behind a university NAT.
+#   shinyproxy   authenticates, then starts one app container per user. Holds
+#                the Docker socket because starting containers is its job; users
+#                do not run code inside it.
+#   broker       runs the reconstructions. Holds the Docker socket. Has no
+#                port, no network service, and no way in except a file left in
+#                a user's spool directory.
+#
+# The user's own container appears at run time and is in neither list: it has
+# no socket and no network route to the broker.
+
+name: dronebior
+
+networks:
+  dronebior_net:
+    name: dronebior_net
+
+services:
+  shinyproxy:
+    image: openanalytics/shinyproxy:3.1.1
+    container_name: dronebior-shinyproxy
+    restart: unless-stopped
+    networks: [dronebior_net]
+    volumes:
+      - ./shinyproxy/application.yml:/opt/shinyproxy/application.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/dronebior/users:/srv/dronebior/users
+      - /srv/dronebior/spool:/srv/dronebior/spool
+      - /var/log/dronebior:/var/log
+    # No `ports:` - cloudflared reaches it over the shared network.
+
+  broker:
+    build:
+      context: ./broker
+      args:
+        DRONEBIOR_REF: v0.6.0
+    image: dronebior/broker:0.6.0
+    container_name: dronebior-broker
+    restart: unless-stopped
+    # Deliberately NOT on dronebior_net: nothing should be able to address it.
+    network_mode: none
+    environment:
+      DRONEBIOR_SPOOL_ROOT: /spool
+      DRONEBIOR_USERS_ROOT: /srv/dronebior/users
+      DRONEBIOR_MAX_WORKERS: "6"
+      # user:uid, and it must agree with docker-user in application.yml
+      DRONEBIOR_UID_MAP: "hugo:10001,ana:10002,carlos:10003"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and out. The Docker daemon resolves the -v arguments
+      # the broker builds against the HOST filesystem, so a path that means one
+      # thing in here and another out there would mount the wrong directory.
+      - /srv/dronebior/users:/srv/dronebior/users
+      - /srv/dronebior/spool:/spool
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: dronebior-tunnel
+    restart: unless-stopped
+    networks: [dronebior_net]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on: [shinyproxy]
