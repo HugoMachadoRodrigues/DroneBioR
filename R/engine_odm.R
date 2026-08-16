@@ -56,6 +56,16 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' Build an ODM Docker command
 #'
 #' @param dataset_dir Host folder mounted to `/datasets`.
+#' @param mount_dir Host directory to bind at `/datasets`. Defaults to
+#'   `dataset_dir`, which is right on a single-user machine. A multi-user
+#'   deployment must pass a directory the user cannot influence: the project
+#'   path is user-supplied and a symbolic link in it would otherwise redirect
+#'   the bind mount. See `vignette("app-reference")`.
+#' @param project_path Where the project lives *inside* the container, passed
+#'   to ODM as `--project-path`. Defaults to `/datasets`. Setting it lets the
+#'   mount stay pinned to a fixed directory while the project is addressed
+#'   below it, so a link planted in the mount resolves against the container's
+#'   filesystem rather than the host's.
 #' @param project_name ODM project name inside `dataset_dir`.
 #' @param image Docker image name.
 #' @param camera_type One of `"multispectral"` (MicaSense / Sequoia-style 5-band
@@ -125,6 +135,8 @@ clean_incomplete_odm_state <- function(project_dir) {
 #' @export
 build_odm_args <- function(dataset_dir,
                            project_name = "micasense",
+                           mount_dir = NULL,
+                           project_path = NULL,
                            image = "opendronemap/odm",
                            camera_type = c("multispectral", "rgb"),
                            radiometric_calibration = NULL,
@@ -156,8 +168,42 @@ build_odm_args <- function(dataset_dir,
                                       rgb           = NULL)
   }
   dataset_dir <- normalizePath(dataset_dir, mustWork = FALSE)
+
+  # The directory bound to /datasets and the directory ODM works in are the
+  # same thing locally, and must not be on a shared server. There, the mount
+  # source has to be a path the user cannot influence at all - not merely one
+  # that passed a check a moment ago, because they own everything inside their
+  # own tree and can swap a directory for a symlink between the check and the
+  # mount. So the caller may pin the mount to a fixed directory and address the
+  # project *within* the container instead. A symlink planted inside the mount
+  # then resolves against the container's filesystem, where it is harmless,
+  # rather than against the host's.
+  # Fail closed, not open. Defaulting the mount to dataset_dir is right on a
+  # laptop and catastrophic on a server: any code path that forgets to thread
+  # the pin silently reverts to mounting a user-derived path. That is not
+  # hypothetical - build_point_cloud_only() branches on the *contents* of the
+  # images folder, which the user controls, and its DJI branch called
+  # run_one_dji_band() without the pin, so naming one file DJI_0001_0001_D.JPG
+  # was enough to get `-v /:/datasets` back.
+  #
+  # So when a deployment declares that a pin is mandatory, a missing pin is an
+  # error rather than a default. A new un-threaded call site then fails loudly
+  # on the first run instead of quietly handing out the host.
+  if (is.null(mount_dir)) {
+    if (nzchar(Sys.getenv("DRONEBIOR_REQUIRE_PINNED_MOUNT", unset = ""))) {
+      stop("This deployment requires an explicit mount_dir, and this code path ",
+           "did not supply one. Refusing to bind a caller-derived directory ",
+           "into the reconstruction container.", call. = FALSE)
+    }
+    mount_dir <- dataset_dir
+  }
+  mount_dir <- normalizePath(mount_dir, mustWork = FALSE)
+  if (is.null(project_path)) project_path <- "/datasets"
+  stopifnot(is.character(project_path), length(project_path) == 1L,
+            startsWith(project_path, "/datasets"))
+
   odm_args <- c(
-    "--project-path", "/datasets",
+    "--project-path", project_path,
     "--orthophoto-resolution", as.character(orthophoto_resolution_cm),
     "--max-concurrency", as.character(max_concurrency)
   )
@@ -259,7 +305,7 @@ build_odm_args <- function(dataset_dir,
   c(
     "run", "--rm",
     "--name", odm_container_name(dataset_dir, project_name),
-    "-v", paste0(dataset_dir, ":/datasets"),
+    "-v", paste0(mount_dir, ":/datasets"),
     image,
     odm_args,
     project_name
@@ -383,6 +429,15 @@ run_odm_project <- function(project,
                             camera_type = c("multispectral", "rgb"),
                             auto_geoscan = TRUE,
                             ...) {
+  # Hosted deployment: this session has no Docker and must not have any. Hand
+  # the reconstruction to the broker, which holds the socket and is not
+  # reachable from here except by leaving a file. The broker itself runs with
+  # DRONEBIOR_JOB_DIR unset, which is what stops this from recursing when it
+  # calls the very same function.
+  if (dronebior_hosted()) {
+    return(submit_odm_job("odm_project", project, args = list(...)))
+  }
+
   camera_type <- match.arg(camera_type)
   # Record the sensor model, not just the class: a MicaSense set and a DJI
   # Mavic 3M flight are both "multispectral" and cost wildly different amounts
@@ -434,6 +489,12 @@ run_odm_project <- function(project,
   # --geo + --matcher-neighbors 8. The user can still pass extra_args
   # via ...; we merge so explicit user args win when they conflict.
   passthrough <- list(...)
+  # Pulled out here so they are not also spliced in below: build_odm_args would
+  # then receive each of them twice and do.call would refuse the call.
+  hosted_mount <- passthrough$mount_dir
+  hosted_path  <- passthrough$project_path
+  passthrough$mount_dir <- NULL
+  passthrough$project_path <- NULL
   user_extra <- passthrough$extra_args %||% character()
   passthrough$extra_args <- NULL
   auto_extra <- character()
@@ -448,7 +509,8 @@ run_odm_project <- function(project,
         gnss_offset  = geo_meta$gnss_offset_path
       )
       auto_extra <- c(
-        "--geo", paste0("/datasets/", project$odm_project_name, "/geo.txt"),
+        "--geo", paste0(hosted_path %||% "/datasets", "/",
+                        project$odm_project_name, "/geo.txt"),
         "--matcher-neighbors", "8"
       )
       message("[DroneBioR] GeoScan camera metadata detected at ",
@@ -460,6 +522,8 @@ run_odm_project <- function(project,
 
   args <- do.call(build_odm_args, c(list(
     dataset_dir  = project$odm_dataset_dir,
+    mount_dir    = hosted_mount,
+    project_path = hosted_path,
     project_name = project$odm_project_name,
     camera_type  = camera_type,
     extra_args   = c(auto_extra, user_extra)
@@ -717,6 +781,19 @@ build_point_cloud_only <- function(project,
                                    pc_sample = NULL,
                                    pc_rectify = FALSE,
                                    ...) {
+  # Hosted deployment: this session has no Docker and must not have any. Hand
+  # the reconstruction to the broker, which holds the socket and is not
+  # reachable from here except by leaving a file. The broker itself runs with
+  # DRONEBIOR_JOB_DIR unset, which is what stops this from recursing when it
+  # calls the very same function.
+  if (dronebior_hosted()) {
+    return(submit_odm_job("point_cloud", project,
+                          args = c(list(pc_quality = pc_quality,
+                                        pc_filter  = pc_filter,
+                                        pc_rectify = pc_rectify),
+                                   list(...))))
+  }
+
   dots <- list(...)
   if (isTRUE(dots$fast_orthophoto)) {
     stop("`fast_orthophoto` skips the dense reconstruction, so there would be ",
