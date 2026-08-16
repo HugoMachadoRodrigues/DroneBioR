@@ -42,10 +42,16 @@ test_that("mount_dir pins the bind mount away from the project path", {
                             mount_dir = root,
                             project_path = "/datasets/voo/outputs/odm_micasense_dataset")
   expect_identical(mount_of(pinned$command), normalizePath(root))
-  expect_match(pinned$command, "--project-path' '/datasets/voo/outputs", fixed = TRUE)
+  expect_match(pinned$command,
+               "--project-path.\\s*.?/datasets/voo/outputs/odm_micasense_dataset")
 })
 
 test_that("a symbolic link under the project cannot redirect a pinned mount", {
+  # Creating a symbolic link on Windows needs a privilege the runner does not
+  # have, and file.symlink() there returns FALSE with a warning rather than
+  # failing - so the attack this test describes cannot be staged, and asserting
+  # on it would be asserting on the platform.
+  skip_on_os("windows")
   root <- withr::local_tempdir()
   dir.create(file.path(root, "voo", "outputs"), recursive = TRUE, showWarnings = FALSE)
   # What an attacker plants: a link inside their own tree whose target is the
